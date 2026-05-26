@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { AlertCircle, ArrowRight, FolderOpen, Plus, UserRound, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Project } from "@/lib/types";
 
@@ -25,36 +26,48 @@ export function Home() {
   };
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-12">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-3xl font-bold tracking-tight">项目</h1>
+    <main className="narrow-container">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="eyebrow">Projects</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-stone-950">项目</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-500">
+            把需求按项目收口，后续澄清、接单、交付都从这里进入。
+          </p>
+        </div>
         <button
-          className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white"
+          className={creating ? "button-secondary" : "button-primary"}
           onClick={() => setCreating((v) => !v)}
         >
-          {creating ? "取消" : "+ 新建项目"}
+          {creating ? <X className="h-4 w-4" aria-hidden="true" /> : <Plus className="h-4 w-4" aria-hidden="true" />}
+          {creating ? "取消" : "新建项目"}
         </button>
       </div>
 
       {creating && (
-        <div className="mt-6 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="grid grid-cols-2 gap-3">
+        <div className="paper-surface mt-6 p-5">
+          <div className="grid gap-3 sm:grid-cols-2">
             <input
-              className="rounded border border-slate-300 px-3 py-2"
+              className="field"
               placeholder="项目名（可中文）"
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
             <input
-              className="rounded border border-slate-300 px-3 py-2 font-mono"
+              className="field font-mono"
               placeholder="slug (a-z0-9-_，用于路径/编号前缀)"
               value={slug}
               onChange={(e) => setSlug(e.target.value.toLowerCase())}
             />
           </div>
-          {err && <p className="mt-3 text-sm text-red-600">{err}</p>}
+          {err && (
+            <p className="mt-3 flex items-center gap-2 text-sm text-red-700">
+              <AlertCircle className="h-4 w-4" aria-hidden="true" />
+              {err}
+            </p>
+          )}
           <button
-            className="mt-3 rounded bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50"
+            className="button-primary mt-4"
             disabled={!name.trim() || !slug.trim()}
             onClick={submit}
           >
@@ -63,18 +76,37 @@ export function Home() {
         </div>
       )}
 
-      <ul className="mt-8 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+      {!creating && err && (
+        <p className="mt-5 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <AlertCircle className="h-4 w-4" aria-hidden="true" />
+          {err}
+        </p>
+      )}
+
+      <ul className="paper-surface mt-8 divide-y divide-stone-200/80 overflow-hidden">
         {projects.length === 0 && (
-          <li className="px-5 py-8 text-center text-sm text-slate-500">还没有项目，点右上角"新建项目"开始。</li>
+          <li className="empty-state m-4">还没有项目，点右上角“新建项目”开始。</li>
         )}
         {projects.map((p) => (
-          <li key={p.id} className="flex items-center justify-between px-5 py-4">
-            <div>
-              <Link to={`/p/${p.id}`} className="text-base font-medium hover:underline">{p.name}</Link>
-              <span className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-xs font-mono text-slate-600">{p.slug}</span>
-              {p.description && <p className="mt-1 text-sm text-slate-500">{p.description}</p>}
+          <li key={p.id} className="group flex flex-col gap-3 px-4 py-4 transition hover:bg-white sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <div className="min-w-0">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <FolderOpen className="h-4 w-4 shrink-0 text-stone-400" aria-hidden="true" />
+                <Link to={`/p/${p.id}`} className="truncate text-base font-semibold text-stone-950 group-hover:underline">
+                  {p.name}
+                </Link>
+                <span className="pill font-mono">{p.slug}</span>
+              </div>
+              {p.description && <p className="mt-2 line-clamp-2 text-sm text-stone-500">{p.description}</p>}
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-stone-400">
+                <UserRound className="h-3.5 w-3.5" aria-hidden="true" />
+                {p.owner_nickname}
+              </p>
             </div>
-            <span className="text-xs text-slate-400">by {p.owner_nickname}</span>
+            <Link to={`/p/${p.id}`} className="button-secondary w-full sm:w-auto">
+              打开
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
           </li>
         ))}
       </ul>

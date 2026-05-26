@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { BrowserRouter, Link, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Link, NavLink, Route, Routes } from "react-router-dom";
+import { FolderKanban, Gauge, Settings, UserRound } from "lucide-react";
 import { useIdentity } from "./hooks/useIdentity";
 import { NicknameDialog } from "./components/NicknameDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -14,7 +15,13 @@ export function App() {
   const { me, identify, loading } = useIdentity();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  if (loading) return <main className="p-12 text-slate-500">加载中…</main>;
+  if (loading) {
+    return (
+      <main className="app-shell grid place-items-center px-6 text-stone-500">
+        <div className="paper-surface px-5 py-4 text-sm">加载工作台...</div>
+      </main>
+    );
+  }
 
   if (!me) {
     return <NicknameDialog onSubmit={async (n) => { await identify(n); }} />;
@@ -23,32 +30,62 @@ export function App() {
   return (
     <>
       <BrowserRouter>
-        <header className="border-b border-slate-200 bg-white">
-          <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
-            <div className="flex items-baseline gap-5">
-              <Link to="/" className="text-base font-semibold tracking-tight">需求管理大师</Link>
-              <Link to="/dashboard" className="text-xs text-slate-500 hover:text-slate-900">接单看板</Link>
+        <div className="app-shell">
+          <header className="sticky top-0 z-40 border-b border-stone-200/90 bg-[#fffdf8]/90 backdrop-blur-xl">
+            <div className="mx-auto flex w-full max-w-[1760px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+              <div className="flex min-w-0 items-center gap-4">
+                <Link to="/" className="flex min-w-0 items-center gap-2 text-base font-semibold text-stone-950">
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-stone-300 bg-stone-950 text-[#fffdf8]">
+                    <FolderKanban className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <span className="truncate">需求管理大师</span>
+                </Link>
+                <nav className="flex items-center gap-1">
+                  <NavLink
+                    to="/"
+                    className={({ isActive }) =>
+                      `button-ghost min-h-9 px-3 py-1.5 text-xs ${isActive ? "bg-stone-900/10 text-stone-950" : ""}`
+                    }
+                  >
+                    <FolderKanban className="h-4 w-4" aria-hidden="true" />
+                    项目
+                  </NavLink>
+                  <NavLink
+                    to="/dashboard"
+                    className={({ isActive }) =>
+                      `button-ghost min-h-9 px-3 py-1.5 text-xs ${isActive ? "bg-stone-900/10 text-stone-950" : ""}`
+                    }
+                  >
+                    <Gauge className="h-4 w-4" aria-hidden="true" />
+                    看板
+                  </NavLink>
+                </nav>
+              </div>
+              <div className="flex min-w-0 items-center gap-2 text-xs text-stone-500">
+                <span className="pill max-w-[48vw] sm:max-w-none">
+                  <UserRound className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{me.nickname}</span>
+                </span>
+                <button
+                  className="button-ghost min-h-9 w-9 px-0"
+                  title="设置"
+                  aria-label="设置"
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  <Settings className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-3 text-xs text-slate-500">
-              <span>👤 {me.nickname}</span>
-              <button
-                className="rounded px-2 py-1 hover:bg-slate-100"
-                title="设置"
-                onClick={() => setSettingsOpen(true)}
-              >
-                ⚙️
-              </button>
-            </div>
-          </div>
-        </header>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/p/:id" element={<ProjectView />} />
-          <Route path="/p/:id/new" element={<NewRequirement />} />
-          <Route path="/r/:id" element={<RequirementDetail />} />
-          <Route path="/r/:id/clarify" element={<Clarify />} />
-        </Routes>
+          </header>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/p/:id" element={<ProjectView />} />
+            <Route path="/p/:id/new" element={<NewRequirement />} />
+            <Route path="/r/:id" element={<RequirementDetail />} />
+            <Route path="/r/:id/clarify" element={<Clarify />} />
+          </Routes>
+        </div>
       </BrowserRouter>
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </>

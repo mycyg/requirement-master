@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { Loader2, Mic, Square } from "lucide-react";
 
 /**
  * Press-and-hold to record. On release, POSTs the blob to /api/voice/transcribe
@@ -18,6 +19,9 @@ export function VoiceButton({ onText }: { onText: (text: string) => void }) {
   const start = async () => {
     setErr(null);
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("当前浏览器不支持录音");
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mr = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
       chunksRef.current = [];
@@ -58,22 +62,28 @@ export function VoiceButton({ onText }: { onText: (text: string) => void }) {
   };
 
   return (
-    <div className="inline-flex items-center gap-2">
+    <div className="inline-flex min-w-0 flex-wrap items-center gap-2">
       <button
         type="button"
-        className={`rounded-full px-4 py-2 text-sm transition ${
-          recording ? "bg-red-600 text-white" : "bg-slate-200 text-slate-700 hover:bg-slate-300"
+        className={`button min-h-9 touch-none px-3 py-1.5 text-xs ${
+          recording ? "border-red-700 bg-red-700 text-white" : "border-stone-300 bg-[#fffdf8] text-stone-700 hover:border-stone-500"
         } ${busy ? "opacity-50" : ""}`}
         disabled={busy}
-        onMouseDown={start}
-        onMouseUp={stop}
-        onMouseLeave={() => recording && stop()}
-        onTouchStart={start}
-        onTouchEnd={stop}
+        onPointerDown={start}
+        onPointerUp={stop}
+        onPointerCancel={stop}
+        onPointerLeave={() => recording && stop()}
       >
-        {busy ? "转写中…" : recording ? "● 录音中（松手停止）" : "🎙️ 按住说话"}
+        {busy ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+        ) : recording ? (
+          <Square className="h-3.5 w-3.5" aria-hidden="true" />
+        ) : (
+          <Mic className="h-3.5 w-3.5" aria-hidden="true" />
+        )}
+        {busy ? "转写中..." : recording ? "松手停止" : "按住说话"}
       </button>
-      {err && <span className="text-xs text-red-600">{err}</span>}
+      {err && <span className="max-w-[220px] truncate text-xs text-red-700" title={err}>{err}</span>}
     </div>
   );
 }

@@ -1,13 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { ArrowLeft, ArrowRight, CalendarClock, ClipboardList, Plus, UserRound } from "lucide-react";
+import { StatusBadge } from "@/components/StatusBadge";
 import { api } from "@/lib/api";
 import type { Project, Requirement } from "@/lib/types";
-
-const STATUS_ZH: Record<string, string> = {
-  draft: "草稿", clarifying: "澄清中", ready: "待接单", claimed: "已接单",
-  doing: "处理中", delivered: "已交付", revision_requested: "返工中",
-  accepted: "已验收", cancelled: "已取消",
-};
 
 export function ProjectView() {
   const { id } = useParams<{ id: string }>();
@@ -20,38 +16,60 @@ export function ProjectView() {
     api.listRequirements({ project_id: id }).then(setReqs);
   }, [id]);
 
-  if (!project) return <main className="p-12">加载中…</main>;
+  if (!project) return <main className="narrow-container text-stone-500">加载中...</main>;
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-12">
-      <Link to="/" className="text-sm text-slate-500 hover:underline">← 全部项目</Link>
-      <div className="mt-4 flex items-baseline justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">{project.name}</h1>
-          <p className="mt-1 font-mono text-xs text-slate-500">{project.slug}</p>
+    <main className="narrow-container">
+      <Link to="/" className="link-subtle">
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        全部项目
+      </Link>
+      <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <p className="eyebrow">Project</p>
+          <h1 className="mt-2 break-words text-3xl font-semibold tracking-tight text-stone-950">{project.name}</h1>
+          <p className="mt-2 inline-flex items-center rounded-full border border-stone-200 bg-[#fffdf8] px-2.5 py-1 font-mono text-xs text-stone-500">{project.slug}</p>
         </div>
         <Link
           to={`/p/${project.id}/new`}
-          className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white"
+          className="button-primary"
         >
-          + 提一个需求
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          提一个需求
         </Link>
       </div>
 
-      <ul className="mt-8 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+      <ul className="paper-surface mt-8 divide-y divide-stone-200/80 overflow-hidden">
         {reqs.length === 0 && (
-          <li className="px-5 py-8 text-center text-sm text-slate-500">还没有需求</li>
+          <li className="empty-state m-4">还没有需求</li>
         )}
         {reqs.map((r) => (
-          <li key={r.id} className="px-5 py-4">
-            <div className="flex items-center justify-between">
-              <Link to={`/r/${r.id}`} className="font-medium hover:underline">
-                <span className="mr-2 font-mono text-xs text-slate-500">{r.code}</span>
-                {r.title || r.raw_description?.slice(0, 60) || "(无标题)"}
-              </Link>
-              <span className="rounded-full bg-slate-100 px-3 py-0.5 text-xs">{STATUS_ZH[r.status] ?? r.status}</span>
+          <li key={r.id} className="group px-4 py-4 transition hover:bg-white sm:px-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <Link to={`/r/${r.id}`} className="flex min-w-0 items-start gap-2 font-semibold text-stone-950 hover:underline">
+                  <ClipboardList className="mt-0.5 h-4 w-4 shrink-0 text-stone-400" aria-hidden="true" />
+                  <span className="min-w-0 break-words">
+                    <span className="mr-2 font-mono text-xs text-stone-500">{r.code}</span>
+                    {r.title || r.raw_description?.slice(0, 60) || "(无标题)"}
+                  </span>
+                </Link>
+                <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-400">
+                  <span className="inline-flex items-center gap-1.5">
+                    <UserRound className="h-3.5 w-3.5" aria-hidden="true" />
+                    {r.submitter_nickname}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
+                    {new Date(r.created_at + "Z").toLocaleString("zh-CN")}
+                  </span>
+                </p>
+              </div>
+              <div className="flex items-center justify-between gap-2 sm:justify-end">
+                <StatusBadge status={r.status} />
+                <ArrowRight className="h-4 w-4 text-stone-300 transition group-hover:translate-x-0.5 group-hover:text-stone-600" aria-hidden="true" />
+              </div>
             </div>
-            <p className="mt-1 text-xs text-slate-400">by {r.submitter_nickname}  ·  {new Date(r.created_at + "Z").toLocaleString("zh-CN")}</p>
           </li>
         ))}
       </ul>
