@@ -31,6 +31,7 @@ def issue_cookie(response: Response, user: User) -> None:
         max_age=60 * 60 * 24 * 365,
         httponly=True,
         samesite="lax",
+        secure=settings.cookie_secure,
     )
 
 

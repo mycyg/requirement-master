@@ -38,7 +38,9 @@ async def trigger_auto(
         raise HTTPException(status_code=404, detail="requirement not found")
     if not r.summary_md:
         raise HTTPException(status_code=400, detail="no summary yet")
-    if r.status not in {"ready", "clarifying"}:
+    if r.submitter_user_id != user.id:
+        raise HTTPException(status_code=403, detail="only the requester can choose AI processing")
+    if r.status not in {"summary_ready", "ready"}:
         raise HTTPException(status_code=400, detail=f"cannot auto-process from status {r.status}")
 
     r.status = "ai_processing"
@@ -55,9 +57,13 @@ async def trigger_auto(
 async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str) -> None:
     """Background task. On success → wrap as Delivery, status=delivered. On failure → status=ready."""
     workdir = _workdir(req_id)
-    outcome = await auto_process(
-        req_id=req_id, req_title=title, summary_md=summary_md, workdir=workdir,
-    )
+    try:
+        outcome = await auto_process(
+            req_id=req_id, req_title=title, summary_md=summary_md, workdir=workdir,
+        )
+    except Exception as e:
+        await _mark_auto_failed(req_id, actor, title, f"{type(e).__name__}: {e}")
+        return
 
     db = SessionLocal()
     try:
@@ -101,6 +107,7 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
             db.add(d)
             r.status = "delivered"
             r.delivered_at = datetime.utcnow()
+            r.delivery_doc_ready_at = r.delivered_at
             log_activity(
                 db, requirement_id=req_id, actor_nickname=f"AI ({settings.llm_model})",
                 action="ai_delivered",
@@ -122,6 +129,8 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
             await bus.publish(f"req:{req_id}", "ai.failed", {
                 "reason": outcome.reason, "notes": outcome.notes,
             })
+            await bus.publish(f"req:{req_id}", "requirement.updated", {"status": "ready"})
+            await bus.publish("all", "requirement.updated", {"requirement_id": req_id, "status": "ready"})
             await bus.publish("all", "requirement.ready", {
                 "requirement_id": req_id, "title": title, "ai_failed": True,
                 "reason": outcome.reason,
@@ -131,5 +140,28 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
 
         # success → workdir already zipped; we can keep or remove
         shutil.rmtree(workdir, ignore_errors=True)
+    finally:
+        db.close()
+
+
+async def _mark_auto_failed(req_id: str, actor: str, title: str, reason: str) -> None:
+    db = SessionLocal()
+    try:
+        r = db.query(Requirement).filter(Requirement.id == req_id).first()
+        if not r:
+            return
+        r.status = "ready"
+        log_activity(
+            db, requirement_id=req_id, actor_nickname=actor,
+            action="ai_failed", detail={"reason": reason},
+        )
+        db.commit()
+        await bus.publish(f"req:{req_id}", "ai.failed", {"reason": reason, "notes": ""})
+        await bus.publish(f"req:{req_id}", "requirement.updated", {"status": "ready"})
+        await bus.publish("all", "requirement.updated", {"requirement_id": req_id, "status": "ready"})
+        await bus.publish("all", "requirement.ready", {
+            "requirement_id": req_id, "title": title, "ai_failed": True,
+            "reason": reason,
+        })
     finally:
         db.close()

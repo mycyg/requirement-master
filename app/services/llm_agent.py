@@ -39,15 +39,15 @@ class AgentEvent:
 
 def _attachments_block(attachments: list[Attachment]) -> str:
     if not attachments:
-        return "（无附件）"
+        return "(no attachments)"
     parts = []
     for a in attachments:
         preview = (a.parsed_text or "")[:PREVIEW_BUDGET]
         if a.parsed_text and len(a.parsed_text) > PREVIEW_BUDGET:
             preview += f"\n... [truncated]"
         parts.append(
-            f"### 附件 id={a.id}  filename={a.filename}  size={a.size_bytes}B  mime={a.mime or '?'}  role={a.role_in_req or '未确定'}\n"
-            f"```\n{preview or '(无可解析文本)'}\n```"
+            f"### Attachment id={a.id}  filename={a.filename}  size={a.size_bytes}B  mime={a.mime or '?'}  role={a.role_in_req or 'unknown'}\n"
+            f"```\n{preview or '(no parseable text)'}\n```"
         )
     return "\n\n".join(parts)
 
@@ -73,9 +73,9 @@ def _history_block(messages: list[ChatMessage]) -> list[dict]:
 
 def _format_user_message(payload: dict, m: ChatMessage) -> str:
     if m.selected_option_key:
-        bits = [f"[用户选择] key={m.selected_option_key}"]
+        bits = [f"[user selected] key={m.selected_option_key}"]
         if m.user_other_text:
-            bits.append(f"[用户补充] {m.user_other_text}")
+            bits.append(f"[user added] {m.user_other_text}")
         return "\n".join(bits)
     if "text" in payload:
         return str(payload["text"])
@@ -84,9 +84,9 @@ def _format_user_message(payload: dict, m: ChatMessage) -> str:
 
 def build_user_turn(req: Requirement, attachments: list[Attachment]) -> str:
     return (
-        f"# 用户提交的需求原文\n{req.raw_description or '(空)'}\n\n"
-        f"# 用户上传的附件解析摘要\n{_attachments_block(attachments)}\n\n"
-        f"请按规则输出下一步：澄清问题（ask_choice / ask_open）或最终总结（summarize）。"
+        f"# Original Request From User\n{req.raw_description or '(empty)'}\n\n"
+        f"# Parsed Attachment Previews\n{_attachments_block(attachments)}\n\n"
+        f"Follow the system instructions and output the next step: a clarification question (`ask_choice` or `ask_open`) or the final summary (`summarize`)."
     )
 
 
@@ -111,7 +111,7 @@ async def step(
     if force_summarize:
         messages.append({
             "role": "user",
-            "content": '（用户已点击"够了，开始整理"，请直接产出 summarize JSON。）',
+            "content": 'The user clicked "enough, start organizing". Produce the `summarize` JSON directly.',
         })
 
     text_accum: list[str] = []
@@ -131,14 +131,14 @@ async def step(
             messages.append({"role": "assistant", "content": raw[:500]})
             messages.append({
                 "role": "user",
-                "content": "你上一次的输出不是合法的 JSON。请严格按契约重新输出单个 JSON 对象，不要任何额外文字、不要 markdown 围栏。",
+                "content": "Your previous output was not valid JSON. Re-output exactly one JSON object that follows the contract. Do not add extra text or markdown fences.",
             })
         except Exception as e:
             last_err = e
             logger.exception("llm step failed (attempt %d)", attempt)
 
     if json_payload is None:
-        msg = f"LLM 输出无法解析为 JSON（重试 1 次后仍失败）{': ' + repr(last_err) if last_err else ''}"
+        msg = f"LLM output could not be parsed as JSON after one retry{': ' + repr(last_err) if last_err else ''}"
         yield AgentEvent(kind="error", data=msg)
         return
 

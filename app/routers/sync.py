@@ -29,8 +29,10 @@ async def submit(req_id: str, db: Session = Depends(get_db), user: User = Depend
         raise HTTPException(status_code=404, detail="requirement not found")
     if not r.summary_md:
         raise HTTPException(status_code=400, detail="no summary yet; complete clarification first")
+    if r.submitter_user_id != user.id:
+        raise HTTPException(status_code=403, detail="only the requester can submit this requirement")
 
-    if r.status not in {"clarifying", "ready"}:
+    if r.status not in {"summary_ready", "ready"}:
         raise HTTPException(status_code=400, detail=f"cannot submit from status {r.status}")
 
     r.status = "ready"
@@ -47,6 +49,7 @@ async def submit(req_id: str, db: Session = Depends(get_db), user: User = Depend
     }
     await bus.publish("all", "requirement.ready", payload)
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status})
+    await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status})
 
     return {"ok": True, "status": r.status}
 
@@ -79,8 +82,13 @@ async def claim(req_id: str, db: Session = Depends(get_db), user: User = Depends
         raise HTTPException(status_code=400, detail=f"cannot claim from status {r.status}")
     r.status = "claimed"
     r.claimed_at = datetime.utcnow()
+    r.claimed_by_user_id = user.id
+    r.claimed_by_nickname = user.nickname
     log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="claimed", detail={})
     db.commit()
     db.refresh(r)
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status, "claimed_by": user.nickname})
+    await bus.publish("all", "requirement.updated", {
+        "requirement_id": r.id, "status": r.status, "claimed_by": user.nickname,
+    })
     return {"ok": True, "status": r.status}

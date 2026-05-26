@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AlertCircle, CheckCircle2, Download, FileText, Package, RotateCcw } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Delivery, Requirement } from "@/lib/types";
 import { VoiceButton } from "@/components/VoiceButton";
@@ -13,9 +14,17 @@ export function DeliverablesTab({ req, onChange }: { req: Requirement; onChange:
   const refresh = () => api.listDeliveries(req.id).then(setDeliveries).catch((e) => setErr(String(e)));
   useEffect(() => { refresh(); }, [req.id, req.status]);
 
-  if (!deliveries) return <div className="p-6 text-slate-500">加载中…</div>;
+  if (!deliveries && err) {
+    return (
+      <div className="empty-state flex items-center justify-center gap-2 text-red-700">
+        <AlertCircle className="h-4 w-4" aria-hidden="true" />
+        {err}
+      </div>
+    );
+  }
+  if (!deliveries) return <div className="p-6 text-stone-500">加载中...</div>;
   if (deliveries.length === 0) {
-    return <div className="rounded-lg border border-dashed border-slate-200 p-12 text-center text-slate-500">还没有交付物</div>;
+    return <div className="empty-state">还没有交付物</div>;
   }
 
   const accept = async () => {
@@ -48,45 +57,53 @@ export function DeliverablesTab({ req, onChange }: { req: Requirement; onChange:
   return (
     <div className="space-y-6">
       {deliveries.map((d, idx) => (
-        <div key={d.id} className="rounded-xl border border-slate-200 bg-white p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-xs uppercase text-slate-500">第 {d.round} 轮交付</div>
+        <div key={d.id} className="paper-surface p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
+                <Package className="h-4 w-4" aria-hidden="true" />
+                第 {d.round} 轮交付
+              </div>
               <div className="mt-1 text-sm">
-                <b>{d.submitted_by_nickname}</b>
-                <span className="ml-2 text-slate-500">{new Date(d.created_at + "Z").toLocaleString("zh-CN")}</span>
+                <b className="text-stone-900">{d.submitted_by_nickname}</b>
+                <span className="ml-2 text-stone-500">{new Date(d.created_at + "Z").toLocaleString("zh-CN")}</span>
               </div>
             </div>
             <a
               href={`/api/deliveries/${d.id}/package`}
-              className="rounded bg-slate-900 px-4 py-2 text-xs text-white"
+              className="button-primary min-h-9 px-3 py-1.5 text-xs"
               download
             >
-              ⬇ 下载整包 ({(d.package_size / 1024).toFixed(1)} KB)
+              <Download className="h-3.5 w-3.5" aria-hidden="true" />
+              下载整包 ({(d.package_size / 1024).toFixed(1)} KB)
             </a>
           </div>
 
           {d.delivery_doc_md && (
             <details open={idx === 0} className="mt-4">
-              <summary className="cursor-pointer text-xs font-medium uppercase text-emerald-600">交付文档</summary>
-              <pre className="mt-2 whitespace-pre-wrap rounded bg-slate-50 p-4 text-sm leading-relaxed">{d.delivery_doc_md}</pre>
+              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.12em] text-[#4e7146]">
+                <FileText className="mr-1.5 inline h-3.5 w-3.5" aria-hidden="true" />
+                交付文档
+              </summary>
+              <pre className="mt-2 overflow-auto whitespace-pre-wrap rounded-lg border border-stone-200 bg-[#fffaf1] p-4 text-sm leading-relaxed text-stone-700">{d.delivery_doc_md}</pre>
             </details>
           )}
 
           {d.files.length > 0 && (
             <details className="mt-3">
-              <summary className="cursor-pointer text-xs font-medium uppercase text-slate-500">文件清单 ({d.files.length})</summary>
+              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">文件清单 ({d.files.length})</summary>
               <ul className="mt-2 space-y-1">
                 {d.files.map((f) => (
-                  <li key={f.name} className="flex items-center justify-between rounded px-2 py-1 text-sm hover:bg-slate-50">
-                    <span className="font-mono">{f.name}</span>
-                    <span className="flex items-center gap-3">
-                      <span className="text-xs text-slate-400">{f.size}B</span>
+                  <li key={f.name} className="flex flex-col gap-2 rounded-lg px-2 py-2 text-sm hover:bg-stone-900/5 sm:flex-row sm:items-center sm:justify-between">
+                    <span className="min-w-0 break-all font-mono">{f.name}</span>
+                    <span className="flex shrink-0 items-center gap-3">
+                      <span className="text-xs text-stone-400">{f.size}B</span>
                       <a
                         href={`/api/deliveries/${d.id}/files/${encodeURI(f.name)}`}
-                        className="text-xs text-blue-600 hover:underline"
+                        className="link-subtle text-xs text-[#405f78]"
                         download
                       >
+                        <Download className="h-3.5 w-3.5" aria-hidden="true" />
                         下载
                       </a>
                     </span>
@@ -97,35 +114,37 @@ export function DeliverablesTab({ req, onChange }: { req: Requirement; onChange:
           )}
 
           {idx === 0 && req.status === "delivered" && (
-            <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4">
+            <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-stone-200 pt-4">
               <button
-                className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white disabled:opacity-50"
+                className="button border-[#4e7146] bg-[#5f8358] text-white hover:bg-[#4e7146]"
                 disabled={busy}
                 onClick={accept}
               >
-                ✅ 接受交付
+                <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                接受交付
               </button>
               <button
-                className="rounded-lg bg-amber-500 px-5 py-2 text-sm font-medium text-white disabled:opacity-50"
+                className="button-accent"
                 disabled={busy}
                 onClick={() => setShowRevision((v) => !v)}
               >
-                ↺ 申请返工
+                <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                申请返工
               </button>
               {showRevision && (
                 <div className="mt-3 w-full">
-                  <div className="flex gap-2">
+                  <div className="flex flex-col gap-3 lg:flex-row">
                     <textarea
-                      className="flex-1 rounded border border-slate-300 p-2 text-sm"
+                      className="textarea-field min-h-24 flex-1"
                       rows={3}
-                      placeholder="说说哪里需要返工…（语音也行）"
+                      placeholder="说说哪里需要返工...（语音也行）"
                       value={reason}
                       onChange={(e) => setReason(e.target.value)}
                     />
-                    <div className="flex flex-col gap-2">
+                    <div className="flex flex-col gap-2 sm:flex-row lg:w-36 lg:flex-col">
                       <VoiceButton onText={(t) => setReason((s) => (s ? s + " " : "") + t)} />
                       <button
-                        className="rounded bg-amber-500 px-3 py-1 text-xs text-white disabled:opacity-50"
+                        className="button-accent min-h-9 px-3 py-1.5 text-xs"
                         disabled={!reason.trim() || busy}
                         onClick={submitRevision}
                       >
@@ -135,7 +154,12 @@ export function DeliverablesTab({ req, onChange }: { req: Requirement; onChange:
                   </div>
                 </div>
               )}
-              {err && <div className="w-full text-sm text-red-600">{err}</div>}
+              {err && (
+                <div className="flex w-full items-center gap-2 text-sm text-red-700">
+                  <AlertCircle className="h-4 w-4" aria-hidden="true" />
+                  {err}
+                </div>
+              )}
             </div>
           )}
         </div>

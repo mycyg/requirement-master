@@ -38,6 +38,8 @@ class RequirementOut(BaseModel):
     project_id: str
     project_slug: str
     submitter_nickname: str
+    claimed_by_user_id: Optional[str]
+    claimed_by_nickname: Optional[str]
     title: Optional[str]
     raw_description: Optional[str]
     summary_md: Optional[str]
@@ -48,6 +50,7 @@ class RequirementOut(BaseModel):
     claimed_at: Optional[datetime]
     done_at: Optional[datetime]
     delivered_at: Optional[datetime]
+    delivery_doc_ready_at: Optional[datetime]
     accepted_at: Optional[datetime]
     sync_state: str
     created_at: datetime
@@ -55,7 +58,7 @@ class RequirementOut(BaseModel):
 
 
 class StatusUpdateIn(BaseModel):
-    status: str = Field(pattern=r"^(draft|clarifying|ready|claimed|doing|ai_processing|delivered|revision_requested|accepted|cancelled)$")
+    status: str = Field(pattern=r"^(draft|clarifying|summary_ready|ready|claimed|doing|ai_processing|delivery_doc_pending|delivered|revision_requested|accepted|cancelled)$")
 
 
 # ---------- Attachment ----------

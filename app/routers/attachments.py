@@ -42,6 +42,16 @@ def _meta_path(upload_id: str) -> Path:
     return _partial_dir(upload_id) / "_meta.json"
 
 
+def _expected_chunks(total_size: int) -> int:
+    return max(1, (total_size + CHUNK_SIZE - 1) // CHUNK_SIZE)
+
+
+def _expected_chunk_size(meta: dict, idx: int) -> int:
+    if idx < meta["total_chunks"] - 1:
+        return CHUNK_SIZE
+    return meta["total_size"] - (CHUNK_SIZE * (meta["total_chunks"] - 1))
+
+
 def _req_dir(req_id: str) -> Path:
     d = settings.data_dir / "uploads" / req_id
     d.mkdir(parents=True, exist_ok=True)
@@ -71,6 +81,8 @@ def init_upload(
     _require_req(db, req_id)
     if payload.total_size > MAX_BYTES:
         raise HTTPException(status_code=413, detail=f"file too large (>{MAX_BYTES} bytes)")
+    if payload.total_chunks != _expected_chunks(payload.total_size):
+        raise HTTPException(status_code=400, detail="total_chunks does not match configured chunk size")
 
     upload_id = uuid.uuid4().hex
     pdir = _partial_dir(upload_id)
@@ -101,13 +113,29 @@ async def upload_chunk(req_id: str, upload_id: str, idx: int, request: Request,
         raise HTTPException(status_code=400, detail="chunk index out of range")
 
     target = pdir / f"{idx:06d}.bin"
+    if target.exists():
+        raise HTTPException(status_code=409, detail="chunk already uploaded")
+
+    expected_size = _expected_chunk_size(meta, idx)
     written = 0
     h = hashlib.sha256()
-    with open(target, "wb") as f:
-        async for piece in request.stream():
-            f.write(piece)
-            h.update(piece)
-            written += len(piece)
+    try:
+        with open(target, "wb") as f:
+            async for piece in request.stream():
+                if written + len(piece) > expected_size:
+                    raise HTTPException(status_code=413, detail="chunk too large")
+                f.write(piece)
+                h.update(piece)
+                written += len(piece)
+    except HTTPException:
+        try:
+            target.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+    if written != expected_size:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"chunk size mismatch: got {written}, expected {expected_size}")
     return {"idx": idx, "bytes": written, "sha256": h.hexdigest()}
 
 
@@ -128,6 +156,17 @@ def finalize_upload(
     chunks = sorted(p for p in pdir.iterdir() if p.suffix == ".bin")
     if len(chunks) != meta["total_chunks"]:
         raise HTTPException(status_code=400, detail=f"missing chunks: have {len(chunks)}, expected {meta['total_chunks']}")
+    expected_names = {f"{i:06d}.bin" for i in range(meta["total_chunks"])}
+    actual_names = {p.name for p in chunks}
+    if actual_names != expected_names:
+        raise HTTPException(status_code=400, detail="chunk set is incomplete or invalid")
+    for idx, c in enumerate(chunks):
+        expected_size = _expected_chunk_size(meta, idx)
+        if c.stat().st_size != expected_size:
+            raise HTTPException(
+                status_code=400,
+                detail=f"chunk {idx} size mismatch: got {c.stat().st_size}, expected {expected_size}",
+            )
 
     safe_filename = Path(meta["filename"]).name
     final_path = _req_dir(req_id) / safe_filename

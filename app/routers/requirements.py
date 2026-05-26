@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import current_user
@@ -8,6 +9,7 @@ from db import get_db
 from models import Project, Requirement, User
 from schemas import RequirementCreateIn, RequirementOut, StatusUpdateIn
 from services.activity import log_activity
+from services.push_bus import bus
 
 router = APIRouter(prefix="/api", tags=["requirements"])
 
@@ -16,11 +18,14 @@ def _to_out(r: Requirement, *, submitter_nickname: str, project_slug: str) -> Re
     return RequirementOut(
         id=r.id, code=r.code, project_id=r.project_id, project_slug=project_slug,
         submitter_nickname=submitter_nickname,
+        claimed_by_user_id=r.claimed_by_user_id,
+        claimed_by_nickname=r.claimed_by_nickname,
         title=r.title, raw_description=r.raw_description, summary_md=r.summary_md,
         status=r.status, priority=r.priority,
         start_at=r.start_at, due_at=r.due_at,
         claimed_at=r.claimed_at, done_at=r.done_at,
         delivered_at=r.delivered_at, accepted_at=r.accepted_at,
+        delivery_doc_ready_at=r.delivery_doc_ready_at,
         sync_state=r.sync_state,
         created_at=r.created_at, updated_at=r.updated_at,
     )
@@ -43,27 +48,33 @@ def create_requirement(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> RequirementOut:
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="project not found")
+    for _ in range(5):
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="project not found")
 
-    project.next_seq += 1
-    code = f"{project.slug.upper()}-{project.next_seq:03d}"
+        project.next_seq += 1
+        code = f"{project.slug.upper()}-{project.next_seq:03d}"
 
-    r = Requirement(
-        code=code,
-        project_id=project.id,
-        submitter_user_id=user.id,
-        raw_description=payload.raw_description,
-        priority=payload.priority,
-        status="draft",
-    )
-    db.add(r)
-    db.flush()
-    log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="created", detail={"code": code})
-    db.commit()
-    db.refresh(r)
-    return _enrich(db, r)
+        r = Requirement(
+            code=code,
+            project_id=project.id,
+            submitter_user_id=user.id,
+            raw_description=payload.raw_description,
+            priority=payload.priority,
+            status="draft",
+        )
+        db.add(r)
+        try:
+            db.flush()
+            log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="created", detail={"code": code})
+            db.commit()
+            db.refresh(r)
+            return _enrich(db, r)
+        except IntegrityError:
+            db.rollback()
+
+    raise HTTPException(status_code=409, detail="could not allocate requirement code; please retry")
 
 
 @router.get("/requirements", response_model=list[RequirementOut])
@@ -71,18 +82,28 @@ def list_requirements(
     project_id: str | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
     mine: bool = Query(default=False),
+    assigned_to_me: bool = Query(default=False),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> list[RequirementOut]:
-    q = db.query(Requirement)
+    q = (
+        db.query(Requirement, Project.slug, User.nickname)
+        .join(Project, Project.id == Requirement.project_id)
+        .join(User, User.id == Requirement.submitter_user_id)
+    )
     if project_id:
         q = q.filter(Requirement.project_id == project_id)
     if status_filter:
         q = q.filter(Requirement.status == status_filter)
     if mine:
         q = q.filter(Requirement.submitter_user_id == user.id)
+    if assigned_to_me:
+        q = q.filter(Requirement.claimed_by_user_id == user.id)
     rows = q.order_by(Requirement.created_at.desc()).limit(500).all()
-    return [_enrich(db, r) for r in rows]
+    return [
+        _to_out(r, submitter_nickname=submitter_nickname, project_slug=project_slug)
+        for r, project_slug, submitter_nickname in rows
+    ]
 
 
 @router.get("/requirements/{req_id}", response_model=RequirementOut)
@@ -94,7 +115,7 @@ def get_requirement(req_id: str, db: Session = Depends(get_db), _: User = Depend
 
 
 @router.patch("/requirements/{req_id}/status", response_model=RequirementOut)
-def update_status(
+async def update_status(
     req_id: str,
     payload: StatusUpdateIn,
     db: Session = Depends(get_db),
@@ -109,11 +130,45 @@ def update_status(
     if old == new:
         return _enrich(db, r)
 
+    allowed = {
+        "draft": {"clarifying", "cancelled"},
+        "clarifying": {"summary_ready", "cancelled"},
+        "summary_ready": {"clarifying", "cancelled"},
+        "ready": {"claimed", "cancelled"},
+        "claimed": {"doing", "cancelled"},
+        "doing": {"cancelled"},
+        "ai_processing": {"cancelled"},
+        "delivery_doc_pending": {"cancelled"},
+        "delivered": set(),
+        "revision_requested": {"doing", "cancelled"},
+        "accepted": set(),
+        "cancelled": set(),
+    }
+    if new not in allowed.get(old, set()):
+        raise HTTPException(status_code=400, detail=f"cannot change status from {old} to {new}")
+    if old in {"draft", "clarifying", "summary_ready"} and r.submitter_user_id != user.id:
+        raise HTTPException(status_code=403, detail="only the requester can change this status")
+    if old in {"claimed", "doing", "revision_requested"} and r.claimed_by_user_id and r.claimed_by_user_id != user.id:
+        raise HTTPException(status_code=403, detail="only the assignee can change this status")
+    if new == "cancelled" and user.id not in {r.submitter_user_id, r.claimed_by_user_id}:
+        raise HTTPException(status_code=403, detail="only the requester or assignee can cancel this requirement")
+
     r.status = new
     now = datetime.utcnow()
-    if new == "claimed" and not r.claimed_at:
-        r.claimed_at = now
+    if new == "claimed":
+        if not r.claimed_at:
+            r.claimed_at = now
+        r.claimed_by_user_id = user.id
+        r.claimed_by_nickname = user.nickname
+    elif new == "doing":
+        if not r.claimed_at:
+            r.claimed_at = now
+        if not r.claimed_by_user_id:
+            r.claimed_by_user_id = user.id
+            r.claimed_by_nickname = user.nickname
     elif new == "delivered" and not r.delivered_at:
+        r.delivered_at = now
+    elif new == "delivery_doc_pending" and not r.delivered_at:
         r.delivered_at = now
     elif new == "accepted" and not r.accepted_at:
         r.accepted_at = now
@@ -125,4 +180,6 @@ def update_status(
     )
     db.commit()
     db.refresh(r)
+    await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status})
+    await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status})
     return _enrich(db, r)

@@ -10,7 +10,6 @@ import asyncio
 import json
 import logging
 import shutil
-import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +25,6 @@ logger = logging.getLogger("yqgl.auto_agent")
 _client = AsyncAnthropic(base_url=settings.llm_base_url, api_key=settings.llm_api_key)
 
 MAX_TURNS = 15
-BASH_TIMEOUT = 60
 TOTAL_TIMEOUT_DEFAULT = 5 * 60  # 5 minutes
 
 
@@ -57,15 +55,6 @@ TOOLS = [
                 "content": {"type": "string"},
             },
             "required": ["path", "content"],
-        },
-    },
-    {
-        "name": "run_bash",
-        "description": "Run a bash command in the workdir, 60s timeout. Returns combined stdout+stderr.",
-        "input_schema": {
-            "type": "object",
-            "properties": {"cmd": {"type": "string"}},
-            "required": ["cmd"],
         },
     },
     {
@@ -119,23 +108,6 @@ def _tool_write_file(workdir: Path, path: str, content: str) -> str:
     return f"wrote {p.relative_to(workdir).as_posix()}  ({len(content)} bytes)"
 
 
-def _tool_run_bash(workdir: Path, cmd: str) -> str:
-    try:
-        r = subprocess.run(
-            ["bash", "-c", cmd],
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=BASH_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired:
-        return f"[timeout after {BASH_TIMEOUT}s]"
-    out = (r.stdout or "") + (r.stderr or "")
-    head = out[:3000]
-    extra = f"\n... [truncated, total {len(out)} chars]" if len(out) > 3000 else ""
-    return f"[exit={r.returncode}]\n{head}{extra}"
-
-
 # ---------- agent loop ----------
 
 @dataclass
@@ -165,9 +137,9 @@ async def run_auto(
         {
             "role": "user",
             "content": (
-                f"# 需求标题\n{req_title}\n\n"
-                f"# 需求详情\n{summary_md}\n\n"
-                f"现在工作目录是空的。请开始。"
+                f"# Requirement Title\n{req_title}\n\n"
+                f"# Requirement Details\n{summary_md}\n\n"
+                f"The working directory is currently empty. Start implementing now."
             ),
         }
     ]
@@ -236,8 +208,6 @@ async def run_auto(
                             content = _tool_read_file(workdir, str(inp.get("path", "")))
                         elif name == "write_file":
                             content = _tool_write_file(workdir, str(inp.get("path", "")), str(inp.get("content", "")))
-                        elif name == "run_bash":
-                            content = _tool_run_bash(workdir, str(inp.get("cmd", "")))
                         else:
                             content = f"[error] unknown tool: {name}"
                     except Exception as e:
@@ -281,8 +251,13 @@ def _result(success: bool, reason: str, notes: str, turn: int, started: float, w
 
 # ---------- LLM review (4th failure-mode check) ----------
 
-REVIEW_SYSTEM = """你是质量评审员。给你一份需求和 AI 产出的文件清单+主要内容，
-判断是否真的满足了需求。只输出 JSON: {"meets_requirement": true/false, "reason": "..."}"""
+REVIEW_SYSTEM = """You are a quality reviewer. You will receive a requirement and the files produced by an AI worker.
+Judge whether the deliverables truly satisfy the requirement.
+
+Output exactly one JSON object and no extra text:
+{"meets_requirement": true/false, "reason": "..."}
+
+Write the `reason` in the user's language. If the requirement is in Chinese, write the reason in Chinese. If it is in English, write it in English."""
 
 
 async def llm_review(req_title: str, summary_md: str, workdir: Path) -> tuple[bool, str]:
@@ -305,9 +280,9 @@ async def llm_review(req_title: str, summary_md: str, workdir: Path) -> tuple[bo
             messages=[{
                 "role": "user",
                 "content": (
-                    f"# 需求\n{req_title}\n\n{summary_md}\n\n"
-                    f"# AI 产出的文件\n{file_dump}\n\n"
-                    f"请判断。"
+                    f"# Requirement\n{req_title}\n\n{summary_md}\n\n"
+                    f"# Files Produced By The AI Worker\n{file_dump}\n\n"
+                    f"Judge whether the produced files satisfy the requirement."
                 ),
             }],
         )

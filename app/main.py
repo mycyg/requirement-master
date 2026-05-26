@@ -21,17 +21,33 @@ from routers import push as push_router
 from routers import requirements as requirements_router
 from routers import sync as sync_router
 from routers import voice as voice_router
+from services.partial_uploads import cleanup_stale_partials
+from services.schema_migrations import ensure_runtime_schema
+
+
+def _validate_runtime_config() -> None:
+    if settings.app_env.lower() != "production":
+        return
+    if settings.cookie_secret in {"", "dev-change-me", "change-me-to-a-long-random-string"}:
+        raise RuntimeError("COOKIE_SECRET must be set to a strong non-default value in production")
+    if "*" in settings.cors_allow_origins:
+        raise RuntimeError("CORS_ALLOW_ORIGINS must be explicit in production")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    _validate_runtime_config()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     (settings.data_dir / "uploads").mkdir(exist_ok=True)
+    (settings.data_dir / "uploads" / "_partial").mkdir(parents=True, exist_ok=True)
     (settings.data_dir / "voice").mkdir(exist_ok=True)
     (settings.data_dir / "outputs").mkdir(exist_ok=True)
     (settings.data_dir / "deliveries").mkdir(exist_ok=True)
+    (settings.data_dir / "deliveries" / "_partial").mkdir(parents=True, exist_ok=True)
     (settings.data_dir / "auto").mkdir(exist_ok=True)
     Base.metadata.create_all(engine)
+    ensure_runtime_schema(engine)
+    cleanup_stale_partials(settings.data_dir)
     yield
 
 

@@ -16,18 +16,21 @@ export type Requirement = {
   project_id: string;
   project_slug: string;
   submitter_nickname: string;
+  claimed_by_user_id: string | null;
+  claimed_by_nickname: string | null;
   title: string | null;
   raw_description: string | null;
   summary_md: string | null;
   status:
-    | "draft" | "clarifying" | "ready" | "claimed" | "doing" | "ai_processing"
-    | "delivered" | "revision_requested" | "accepted" | "cancelled";
+    | "draft" | "clarifying" | "summary_ready" | "ready" | "claimed" | "doing" | "ai_processing"
+    | "delivery_doc_pending" | "delivered" | "revision_requested" | "accepted" | "cancelled";
   priority: string;
   start_at: string | null;
   due_at: string | null;
   claimed_at: string | null;
   done_at: string | null;
   delivered_at: string | null;
+  delivery_doc_ready_at: string | null;
   accepted_at: string | null;
   sync_state: string;
   created_at: string;

@@ -14,6 +14,7 @@ from db import SessionLocal, get_db
 from models import Attachment, ChatMessage, Requirement, User
 from services.activity import log_activity
 from services.llm_agent import AgentEvent, step
+from services.push_bus import bus
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -64,6 +65,8 @@ async def chat_step(
     db_sync: Session = SessionLocal()
     try:
         req = _require_req(db_sync, req_id)
+        if req.submitter_user_id != user.id:
+            raise HTTPException(status_code=403, detail="only the requester can clarify this requirement")
         if req.status not in {"draft", "clarifying"}:
             raise HTTPException(status_code=400, detail=f"requirement not in clarifying state (status={req.status})")
         attachments = list(req.attachments)
@@ -119,7 +122,7 @@ async def chat_step(
                     if req2:
                         req2.title = payload_d.get("title") or req2.title
                         req2.summary_md = payload_d.get("summary_md") or req2.summary_md
-                        req2.status = "ready"
+                        req2.status = "summary_ready"
                     log_activity(
                         db2, requirement_id=req_id, actor_nickname=actor,
                         action="clarified", detail={"final": True},
@@ -127,6 +130,8 @@ async def chat_step(
                 db2.commit()
                 db2.refresh(msg)
                 chat_msg_id = msg.id
+                if kind == "summary":
+                    await bus.publish(f"req:{req_id}", "requirement.updated", {"status": "summary_ready"})
             finally:
                 db2.close()
 
@@ -148,7 +153,9 @@ def chat_answer(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> dict:
-    _require_req(db, req_id)
+    req = _require_req(db, req_id)
+    if req.submitter_user_id != user.id:
+        raise HTTPException(status_code=403, detail="only the requester can answer clarification questions")
     if not any([payload.selected_option_key, payload.other_text, payload.text]):
         raise HTTPException(status_code=400, detail="empty answer")
 

@@ -1,14 +1,12 @@
 """Delivery listing, single-file download from package, accept/revision actions."""
 from __future__ import annotations
 
-import io
-import json
 import zipfile
 from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -16,6 +14,7 @@ from auth import current_user
 from db import get_db
 from models import Delivery, Requirement, RevisionRequest, User
 from services.activity import log_activity
+from services.delivery_doc import inspect_zip_entries
 from services.push_bus import bus
 
 router = APIRouter(prefix="/api", tags=["deliveries"])
@@ -47,8 +46,10 @@ def _require_req(db: Session, req_id: str) -> Requirement:
 
 def _zip_filelist(path: str) -> list[dict]:
     try:
-        with zipfile.ZipFile(path) as z:
-            return [{"name": i.filename, "size": i.file_size} for i in z.infolist() if not i.is_dir()]
+        return [
+            {"name": e["safe_name"], "size": e["size"]}
+            for e in inspect_zip_entries(Path(path))
+        ]
     except Exception:
         return []
 
@@ -98,17 +99,28 @@ def download_file_from_package(delivery_id: str, filename: str, db: Session = De
     if not p.exists():
         raise HTTPException(status_code=410, detail="package missing on disk")
     try:
-        with zipfile.ZipFile(p) as z:
-            data = z.read(filename)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"file not in package: {filename}")
+        entries = inspect_zip_entries(p)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"zip read error: {e}")
-    return Response(
-        content=data,
+        raise HTTPException(status_code=400, detail=f"invalid zip package: {e}")
+    entry = next((e for e in entries if e["safe_name"] == filename), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"file not in package: {filename}")
+
+    return StreamingResponse(
+        _iter_zip_member(p, str(entry["name"])),
         media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{Path(filename).name}"'},
     )
+
+
+def _iter_zip_member(path: Path, member_name: str):
+    with zipfile.ZipFile(path) as z:
+        with z.open(member_name) as f:
+            while True:
+                chunk = f.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
 
 
 @router.post("/requirements/{req_id}/accept")
@@ -116,6 +128,8 @@ async def accept_delivery(req_id: str, db: Session = Depends(get_db), user: User
     r = _require_req(db, req_id)
     if r.status != "delivered":
         raise HTTPException(status_code=400, detail=f"cannot accept from status {r.status}")
+    if r.submitter_user_id != user.id:
+        raise HTTPException(status_code=403, detail="only the requester can accept this delivery")
     r.status = "accepted"
     r.accepted_at = datetime.utcnow()
     r.done_at = r.accepted_at
@@ -137,6 +151,8 @@ async def request_revision(
     r = _require_req(db, req_id)
     if r.status != "delivered":
         raise HTTPException(status_code=400, detail=f"cannot request revision from status {r.status}")
+    if r.submitter_user_id != user.id:
+        raise HTTPException(status_code=403, detail="only the requester can request a revision")
 
     latest = (
         db.query(Delivery)
@@ -166,4 +182,5 @@ async def request_revision(
         "requested_by": user.nickname,
     })
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status})
+    await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status})
     return {"ok": True, "status": r.status}

@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
+from typing import Any
 
 from anthropic import AsyncAnthropic
 
@@ -20,25 +21,34 @@ logger = logging.getLogger("yqgl.delivery_doc")
 
 _client = AsyncAnthropic(base_url=settings.llm_base_url, api_key=settings.llm_api_key)
 
-SYSTEM = """你是交付文档撰写助理。基于原始需求和接单方提交的交付物清单，
-写一份对提需求方友好的 markdown 交付说明。
+MAX_ZIP_FILES = 2000
+MAX_ZIP_ENTRY_BYTES = 100 * 1024 * 1024
+MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_ZIP_COMPRESSION_RATIO = 200
 
-输出格式（直接给 markdown，无 JSON 包装）：
-## 交付概述
-（一两句话说清楚做完了什么）
+SYSTEM = """You are a delivery-documentation assistant. Based on the original requirement and the package submitted by the implementer, write a requester-friendly markdown delivery note.
 
-## 交付物清单
-- `file1.ext` —— 这是什么 / 怎么用
-- `file2.ext` —— ...
+Use the user's language for all output. If the original requirement is in Chinese, write the markdown in Chinese. If it is in English, write it in English. Translate section headings accordingly.
 
-## 如何使用 / 验收
-（步骤，命令，预期结果）
+Output markdown directly. Do not wrap it in JSON.
 
-## 原始需求映射
-（针对需求里每条要点，说明在哪个文件 / 怎么实现了）
+Required structure:
 
-## 已知限制 / 后续建议
-（可选；若都满足就写"无"）
+## Delivery Overview
+One or two sentences explaining what was completed.
+
+## Delivered Files
+- `file1.ext`: what it is and how to use it.
+- `file2.ext`: ...
+
+## How To Use / Verify
+Steps, commands, expected results, and acceptance checks.
+
+## Mapping To The Original Requirement
+For each important requirement point, explain which file or behavior satisfies it.
+
+## Known Limits / Follow-Up Suggestions
+Optional. If there are no known limits, say so in the user's language.
 """
 
 
@@ -48,8 +58,9 @@ async def generate_doc(req_title: str, req_summary_md: str, zip_path: Path,
     with tempfile.TemporaryDirectory(prefix="yqgl-deliv-") as td:
         tmp = Path(td)
         try:
+            entries = inspect_zip_entries(zip_path)
             with zipfile.ZipFile(zip_path) as z:
-                z.extractall(tmp)
+                _safe_extract_entries(z, entries, tmp)
         except Exception as e:
             return f"## 交付文档生成失败\n\n解包失败: {e}"
 
@@ -63,20 +74,20 @@ async def generate_doc(req_title: str, req_summary_md: str, zip_path: Path,
             try:
                 if is_parseable(p.name, None):
                     preview, _ = parse_file(p)
-                    body = preview or "(空)"
+                    body = preview or "(empty)"
                 else:
                     try:
                         body = p.read_text(encoding="utf-8")[:2000]
                     except Exception:
-                        body = f"(二进制文件, {p.stat().st_size}B)"
+                        body = f"(binary file, {p.stat().st_size}B)"
             except Exception as e:
-                body = f"(读取失败: {e})"
+                body = f"(read failed: {e})"
             chunks.append(f"### {rel}  ({p.stat().st_size}B)\n```\n{body[:2000]}\n```")
             if files_seen >= 25:
-                chunks.append(f"... (还有更多文件未展示)")
+                chunks.append(f"... (more files omitted)")
                 break
 
-        files_block = "\n\n".join(chunks) or "(空交付包)"
+        files_block = "\n\n".join(chunks) or "(empty delivery package)"
 
         diff_block = ""
         if prior_round_files:
@@ -84,11 +95,11 @@ async def generate_doc(req_title: str, req_summary_md: str, zip_path: Path,
             added = sorted(new_files - set(prior_round_files))
             removed = sorted(set(prior_round_files) - new_files)
             if added or removed:
-                diff_block = f"\n\n# 与上一轮交付的差异\n新增: {added}\n移除: {removed}"
+                diff_block = f"\n\n# Difference From Previous Delivery Round\nAdded: {added}\nRemoved: {removed}"
 
         user_msg = (
-            f"# 原始需求\n标题: {req_title}\n\n{req_summary_md}\n\n"
-            f"# 接单方提交的交付包文件清单 + 内容预览\n{files_block}"
+            f"# Original Requirement\nTitle: {req_title}\n\n{req_summary_md}\n\n"
+            f"# Submitted Delivery Package: File List And Content Previews\n{files_block}"
             f"{diff_block}"
         )
 
@@ -111,7 +122,61 @@ async def generate_doc(req_title: str, req_summary_md: str, zip_path: Path,
 
 def list_zip_files(zip_path: Path) -> list[str]:
     try:
-        with zipfile.ZipFile(zip_path) as z:
-            return [i.filename for i in z.infolist() if not i.is_dir()]
+        return [str(e["safe_name"]) for e in inspect_zip_entries(zip_path)]
     except Exception:
         return []
+
+
+def inspect_zip_entries(zip_path: Path) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    total_uncompressed = 0
+
+    with zipfile.ZipFile(zip_path) as z:
+        for info in z.infolist():
+            if info.is_dir():
+                continue
+
+            safe_name = _safe_zip_name(info.filename)
+            if not safe_name:
+                raise ValueError(f"unsafe zip path: {info.filename}")
+            if info.file_size > MAX_ZIP_ENTRY_BYTES:
+                raise ValueError(f"zip entry too large: {safe_name}")
+
+            total_uncompressed += info.file_size
+            if total_uncompressed > MAX_ZIP_TOTAL_UNCOMPRESSED_BYTES:
+                raise ValueError("zip uncompressed size too large")
+
+            if info.compress_size > 0 and info.file_size > 1024 * 1024:
+                ratio = info.file_size / info.compress_size
+                if ratio > MAX_ZIP_COMPRESSION_RATIO:
+                    raise ValueError(f"suspicious compression ratio: {safe_name}")
+
+            entries.append({
+                "name": info.filename,
+                "safe_name": safe_name,
+                "size": info.file_size,
+            })
+
+    if len(entries) > MAX_ZIP_FILES:
+        raise ValueError(f"too many files in zip: {len(entries)}")
+    return entries
+
+
+def _safe_zip_name(name: str) -> str | None:
+    if name.startswith(("/", "\\")) or (len(name) >= 2 and name[1] == ":"):
+        return None
+    parts = [p for p in name.replace("\\", "/").split("/") if p not in {"", "."}]
+    if not parts or any(p == ".." for p in parts):
+        return None
+    return "/".join(parts)
+
+
+def _safe_extract_entries(z: zipfile.ZipFile, entries: list[dict[str, Any]], target_dir: Path) -> None:
+    root = target_dir.resolve()
+    for entry in entries:
+        dest = (root / str(entry["safe_name"])).resolve()
+        if root not in dest.parents and dest != root:
+            raise ValueError(f"unsafe zip path: {entry['safe_name']}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with z.open(str(entry["name"])) as src, open(dest, "wb") as out:
+            shutil.copyfileobj(src, out, length=1024 * 1024)

@@ -8,7 +8,9 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:////srv/yqgl/data/yqgl.db"
     data_dir: Path = Path("/srv/yqgl/data")
+    app_env: str = "development"
     cookie_secret: str = "dev-change-me"
+    cookie_secure: bool = False
 
     llm_base_url: str = "https://api.deepseek.com/anthropic"
     llm_model: str = "deepseek-v4-pro"

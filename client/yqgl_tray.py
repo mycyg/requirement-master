@@ -1,4 +1,4 @@
-"""需求管理大师 · 托盘客户端 (Windows)
+r"""需求管理大师 · 托盘客户端 (Windows)
 
 后台职责：
   1. 维持 SSE 长连接 (/api/push/stream)
@@ -50,6 +50,7 @@ class Config:
     sync_root: str = str(DEFAULT_SYNC_ROOT)
     paused: bool = False
     known_reqs: dict[str, str] = field(default_factory=dict)  # req_id -> code (avoid duplicate downloads)
+    known_revision_requests: dict[str, str] = field(default_factory=dict)  # req_id -> updated_at marker
 
 
 def load_config() -> Config:
@@ -149,11 +150,14 @@ class ServerClient:
             log(f"list_my_pending failed: {e}")
             return []
 
-    def list_all_with_statuses(self, statuses: list[str]) -> list[dict]:
+    def list_all_with_statuses(self, statuses: list[str], *, assigned_to_me: bool = False) -> list[dict]:
         out: list[dict] = []
         for s in statuses:
             try:
-                r = self._client.get("/api/requirements", params={"status": s})
+                params: dict[str, Any] = {"status": s}
+                if assigned_to_me:
+                    params["assigned_to_me"] = "true"
+                r = self._client.get("/api/requirements", params=params)
                 r.raise_for_status()
                 out.extend(r.json())
             except Exception:
@@ -200,11 +204,12 @@ class ServerClient:
         with open(zip_path, "rb") as f:
             for idx in range(total_chunks):
                 buf = f.read(CHUNK)
-                self._client.put(
+                cr = self._client.put(
                     f"/api/requirements/{req_id}/delivery/{upload_id}/chunk/{idx}",
                     content=buf,
                     headers={"Content-Type": "application/octet-stream"},
                 )
+                cr.raise_for_status()
                 sent += len(buf)
                 if progress:
                     progress(sent, size)
@@ -530,6 +535,10 @@ class TrayApp:
                     log(f"sync failed: {e}")
                     notify("同步失败", str(e))
         elif event == "revision.requested" and isinstance(data, dict):
+            req_id = data.get("requirement_id")
+            if req_id:
+                self.cfg.known_revision_requests[req_id] = data.get("reason_preview", "")
+                save_config(self.cfg)
             notify("需要返工",
                    f"{data.get('requested_by','?')}：{data.get('reason_preview','')}")
 
@@ -544,9 +553,25 @@ class TrayApp:
             except Exception as e:
                 log(f"sync {r['id']} failed: {e}")
 
+        revisions = self.client.list_all_with_statuses(["revision_requested"], assigned_to_me=True)
+        new_revisions = [
+            r for r in revisions
+            if self.cfg.known_revision_requests.get(r["id"]) != (r.get("updated_at") or r["status"])
+        ]
+        if new_revisions:
+            log(f"catchup: {len(new_revisions)} revision requests to notify")
+        for r in new_revisions:
+            marker = r.get("updated_at") or r["status"]
+            self.cfg.known_revision_requests[r["id"]] = marker
+            notify("需要返工", f"{r['code']} · {r.get('title','')}")
+        if new_revisions:
+            save_config(self.cfg)
+
     # ─── deliver flow ───
     def _deliver_flow(self) -> None:
-        candidates = self.client.list_all_with_statuses(["doing", "claimed", "ready", "revision_requested"])
+        candidates = self.client.list_all_with_statuses(
+            ["doing", "claimed", "revision_requested"], assigned_to_me=True,
+        )
         if not candidates:
             notify("没有进行中的任务", "在 web 端先把需求接单后再来。")
             return

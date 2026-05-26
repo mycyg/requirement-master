@@ -20,12 +20,13 @@ from config import settings
 from db import SessionLocal, get_db
 from models import Delivery, Requirement, User
 from services.activity import log_activity
-from services.delivery_doc import generate_doc, list_zip_files
+from services.delivery_doc import generate_doc, inspect_zip_entries, list_zip_files
 from services.push_bus import bus
 
 router = APIRouter(prefix="/api", tags=["delivery-upload"])
 
 MAX_BYTES = 1024 * 1024 * 1024  # 1 GB
+CHUNK_SIZE = 5 * 1024 * 1024  # 5 MB
 
 
 class DeliveryInitIn(BaseModel):
@@ -42,11 +43,35 @@ def _meta_path(upload_id: str) -> Path:
     return _partial_dir(upload_id) / "_meta.json"
 
 
+def _expected_chunks(total_size: int) -> int:
+    return max(1, (total_size + CHUNK_SIZE - 1) // CHUNK_SIZE)
+
+
+def _expected_chunk_size(meta: dict, idx: int) -> int:
+    if idx < meta["total_chunks"] - 1:
+        return CHUNK_SIZE
+    return meta["total_size"] - (CHUNK_SIZE * (meta["total_chunks"] - 1))
+
+
 def _require_req(db: Session, req_id: str) -> Requirement:
     r = db.query(Requirement).filter(Requirement.id == req_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
     return r
+
+
+def _ensure_assignee(db: Session, r: Requirement, user: User) -> None:
+    if r.claimed_by_user_id and r.claimed_by_user_id != user.id:
+        raise HTTPException(status_code=403, detail="only the assignee can deliver this requirement")
+    if not r.claimed_by_user_id:
+        r.claimed_by_user_id = user.id
+        r.claimed_by_nickname = user.nickname
+        if not r.claimed_at:
+            r.claimed_at = datetime.utcnow()
+        log_activity(
+            db, requirement_id=r.id, actor_nickname=user.nickname,
+            action="claimed", detail={"source": "delivery_upload_backfill"},
+        )
 
 
 @router.post("/requirements/{req_id}/delivery/init")
@@ -57,8 +82,11 @@ def init(
     user: User = Depends(current_user),
 ) -> dict:
     r = _require_req(db, req_id)
-    if r.status in {"accepted", "cancelled"}:
+    if r.status not in {"claimed", "doing", "revision_requested"}:
         raise HTTPException(status_code=400, detail=f"requirement is {r.status}; cannot deliver")
+    if payload.total_chunks != _expected_chunks(payload.total_size):
+        raise HTTPException(status_code=400, detail="total_chunks does not match configured chunk size")
+    _ensure_assignee(db, r, user)
 
     upload_id = uuid.uuid4().hex
     pdir = _partial_dir(upload_id)
@@ -73,7 +101,8 @@ def init(
         }),
         encoding="utf-8",
     )
-    return {"upload_id": upload_id, "chunk_size": 5 * 1024 * 1024}
+    db.commit()
+    return {"upload_id": upload_id, "chunk_size": CHUNK_SIZE}
 
 
 @router.put("/requirements/{req_id}/delivery/{upload_id}/chunk/{idx}")
@@ -91,13 +120,29 @@ async def chunk(
         raise HTTPException(status_code=400, detail="chunk index out of range")
 
     target = pdir / f"{idx:06d}.bin"
+    if target.exists():
+        raise HTTPException(status_code=409, detail="chunk already uploaded")
+
+    expected_size = _expected_chunk_size(meta, idx)
     written = 0
     h = hashlib.sha256()
-    with open(target, "wb") as f:
-        async for piece in request.stream():
-            f.write(piece)
-            h.update(piece)
-            written += len(piece)
+    try:
+        with open(target, "wb") as f:
+            async for piece in request.stream():
+                if written + len(piece) > expected_size:
+                    raise HTTPException(status_code=413, detail="chunk too large")
+                f.write(piece)
+                h.update(piece)
+                written += len(piece)
+    except HTTPException:
+        try:
+            target.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+    if written != expected_size:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"chunk size mismatch: got {written}, expected {expected_size}")
     return {"idx": idx, "bytes": written, "sha256": h.hexdigest()}
 
 
@@ -114,10 +159,24 @@ async def finalize(
     if meta["req_id"] != req_id:
         raise HTTPException(status_code=400, detail="upload_id mismatch")
     r = _require_req(db, req_id)
+    if r.status not in {"claimed", "doing", "revision_requested"}:
+        raise HTTPException(status_code=400, detail=f"requirement is {r.status}; cannot deliver")
+    _ensure_assignee(db, r, user)
 
     chunks = sorted(p for p in pdir.iterdir() if p.suffix == ".bin")
     if len(chunks) != meta["total_chunks"]:
         raise HTTPException(status_code=400, detail=f"missing chunks: have {len(chunks)}, expected {meta['total_chunks']}")
+    expected_names = {f"{i:06d}.bin" for i in range(meta["total_chunks"])}
+    actual_names = {p.name for p in chunks}
+    if actual_names != expected_names:
+        raise HTTPException(status_code=400, detail="chunk set is incomplete or invalid")
+    for idx, c in enumerate(chunks):
+        expected_size = _expected_chunk_size(meta, idx)
+        if c.stat().st_size != expected_size:
+            raise HTTPException(
+                status_code=400,
+                detail=f"chunk {idx} size mismatch: got {c.stat().st_size}, expected {expected_size}",
+            )
 
     round_num = 1 + db.query(Delivery).filter(Delivery.requirement_id == req_id).count()
     out_dir = settings.data_dir / "deliveries" / req_id
@@ -139,7 +198,11 @@ async def finalize(
         os.unlink(out_path)
         raise HTTPException(status_code=400, detail=f"size mismatch: got {total}, expected {meta['total_size']}")
 
-    file_count = len(list_zip_files(out_path))
+    try:
+        file_count = len(inspect_zip_entries(out_path))
+    except Exception as e:
+        os.unlink(out_path)
+        raise HTTPException(status_code=400, detail=f"invalid delivery zip: {e}")
 
     d = Delivery(
         requirement_id=req_id, round=round_num,
@@ -149,19 +212,19 @@ async def finalize(
         submitted_by_nickname=user.nickname,
     )
     db.add(d)
-    r.status = "delivered"
+    r.status = "delivery_doc_pending"
     r.delivered_at = datetime.utcnow()
     log_activity(
         db, requirement_id=req_id, actor_nickname=user.nickname,
-        action="status_changed", detail={"to": "delivered", "round": round_num, "files": file_count},
+        action="status_changed", detail={"to": "delivery_doc_pending", "round": round_num, "files": file_count},
     )
     db.commit()
     db.refresh(d)
 
     shutil.rmtree(pdir, ignore_errors=True)
 
-    await bus.publish(f"req:{req_id}", "requirement.updated", {"status": "delivered"})
-    await bus.publish("all", "requirement.updated", {"requirement_id": req_id, "status": "delivered"})
+    await bus.publish(f"req:{req_id}", "requirement.updated", {"status": "delivery_doc_pending"})
+    await bus.publish("all", "requirement.updated", {"requirement_id": req_id, "status": "delivery_doc_pending"})
 
     # Kick off async LLM doc generation
     prior_files: list[str] = []
@@ -191,9 +254,17 @@ async def _finalize_doc(delivery_id: str, title: str, summary_md: str, zip_path:
         d = db.query(Delivery).filter(Delivery.id == delivery_id).first()
         if d:
             d.delivery_doc_md = doc
+            r = db.query(Requirement).filter(Requirement.id == d.requirement_id).first()
+            if r and r.status == "delivery_doc_pending":
+                r.status = "delivered"
+                r.delivery_doc_ready_at = datetime.utcnow()
             db.commit()
             await bus.publish(f"req:{d.requirement_id}", "delivery.doc_ready", {
                 "delivery_id": d.id, "round": d.round,
+            })
+            await bus.publish(f"req:{d.requirement_id}", "requirement.updated", {"status": "delivered"})
+            await bus.publish("all", "requirement.updated", {
+                "requirement_id": d.requirement_id, "status": "delivered",
             })
     finally:
         db.close()

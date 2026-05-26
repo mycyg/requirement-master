@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+  ArrowLeft,
+  Bot,
+  CheckCircle2,
+  FileText,
+  Paperclip,
+  Send,
+  Sparkles,
+} from "lucide-react";
 import { api } from "@/lib/api";
 import { useChatStream } from "@/hooks/useChatStream";
 import { VoiceButton } from "@/components/VoiceButton";
@@ -47,14 +56,21 @@ export function Clarify() {
   // auto-start the first turn if no assistant messages yet
   useEffect(() => {
     if (!req || stream.running || stream.parsed) return;
-    if (history.length === 0 && req.status !== "ready") {
+    if (history.length === 0 && req.status !== "ready" && req.status !== "summary_ready") {
       stream.run({ force_summarize: false });
     }
   }, [req, history.length]);
 
-  if (!reqId || !req) return <main className="p-12">加载中…</main>;
+  if (!reqId || !req) return <main className="narrow-container text-stone-500">加载中...</main>;
 
-  const isFinal = req.status === "ready" || stream.parsed?.action === "summarize";
+  const storedSummary = [...history]
+    .reverse()
+    .find((m) => m.kind === "summary" && m.content?.action === "summarize")
+    ?.content as AgentParsed | undefined;
+  const activeParsed = stream.parsed ??
+    (req.status === "summary_ready" && storedSummary?.action === "summarize" ? storedSummary : null);
+  const showingSummaryCard = activeParsed?.action === "summarize";
+  const isFinal = req.status === "ready" || req.status === "summary_ready" || showingSummaryCard;
 
   const answer = async (body: { selected_option_key?: string; other_text?: string; text?: string }) => {
     await api.postAnswer(reqId, body);
@@ -63,42 +79,52 @@ export function Clarify() {
   };
 
   return (
-    <main className="mx-auto grid max-w-6xl grid-cols-[280px_1fr] gap-6 px-6 py-8">
+    <main className="app-container grid grid-cols-1 gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
       {/* left: attachments + meta */}
-      <aside className="space-y-4">
-        <Link to={`/p/${req.project_id}`} className="text-sm text-slate-500 hover:underline">← 项目</Link>
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
-          <div className="font-mono text-xs text-slate-500">{req.code}</div>
-          <div className="mt-1 text-lg font-semibold">{req.title || "(澄清中)"}</div>
-          <div className="mt-2 text-xs text-slate-500">状态: {req.status}</div>
+      <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
+        <Link to={`/p/${req.project_id}`} className="link-subtle">
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          项目
+        </Link>
+        <div className="paper-surface p-4">
+          <div className="font-mono text-xs text-stone-500">{req.code}</div>
+          <div className="mt-1 break-words text-lg font-semibold text-stone-950">{req.title || "(澄清中)"}</div>
+          <div className="mt-3 flex items-center gap-2 text-xs text-stone-500">
+            <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+            {req.status}
+          </div>
         </div>
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
-          <div className="text-xs font-medium uppercase text-slate-500">附件</div>
+        <div className="paper-surface p-4">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
+            <Paperclip className="h-4 w-4" aria-hidden="true" />
+            附件
+          </div>
           <ul className="mt-2 space-y-1 text-sm">
-            {attachments.length === 0 && <li className="text-slate-400">（无）</li>}
+            {attachments.length === 0 && <li className="text-stone-400">（无）</li>}
             {attachments.map((a) => (
-              <li key={a.id} className="flex items-center justify-between">
-                <span className="truncate">{a.filename}</span>
-                {a.has_parsed_text && <span className="ml-1 rounded bg-emerald-50 px-1 text-xs text-emerald-700">已解析</span>}
+              <li key={a.id} className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate">{a.filename}</span>
+                {a.has_parsed_text && <span className="pill shrink-0 border-[#bdd2b7] bg-[#f1f7ed] px-2 py-0.5 text-[#4e7146]">已解析</span>}
               </li>
             ))}
           </ul>
         </div>
         {!isFinal && (
           <button
-            className="w-full rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            className="button-accent w-full"
             disabled={stream.running}
             onClick={() => { stream.reset(); stream.run({ force_summarize: true }); }}
           >
-            ✅ 够了，开始整理
+            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+            够了，开始整理
           </button>
         )}
       </aside>
 
       {/* right: chat thread */}
-      <section className="space-y-4">
+      <section className="min-w-0 space-y-4">
         {history.map((m) => (
-          <Bubble key={m.id} msg={m} />
+          showingSummaryCard && m.kind === "summary" ? null : <Bubble key={m.id} msg={m} />
         ))}
 
         {/* live stream */}
@@ -107,10 +133,10 @@ export function Clarify() {
         )}
 
         {/* current parsed question / summary */}
-        {stream.parsed && !stream.running && (
-          stream.parsed.action === "summarize"
+        {activeParsed && !stream.running && (
+          activeParsed.action === "summarize"
             ? <SummaryCard
-                parsed={stream.parsed}
+                parsed={activeParsed}
                 onDeliver={async ({ tryAi }) => {
                   if (tryAi) {
                     await api.autoProcess(reqId);
@@ -120,7 +146,7 @@ export function Clarify() {
                   nav(`/r/${reqId}`);
                 }}
               />
-            : <QuestionCard parsed={stream.parsed} onAnswer={answer} />
+            : <QuestionCard parsed={activeParsed} onAnswer={answer} />
         )}
 
         {/* hidden autoplay driver — re-fires whenever a new parsed arrives */}
@@ -160,8 +186,8 @@ function Bubble({ msg }: { msg: StoredChatMessage }) {
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div className={`max-w-[80%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-        isUser ? "bg-slate-900 text-white" : "bg-white text-slate-900 ring-1 ring-slate-200"
+      <div className={`max-w-[min(86%,760px)] whitespace-pre-wrap rounded-lg px-4 py-3 text-sm leading-relaxed shadow-sm ${
+        isUser ? "bg-stone-950 text-[#fffdf8]" : "border border-stone-200 bg-[#fffdf8] text-stone-900"
       }`}>
         {text}
         {!isUser && text && (
@@ -176,15 +202,18 @@ function Bubble({ msg }: { msg: StoredChatMessage }) {
 
 function LiveBubble({ thinking, text, done }: { thinking: string; text: string; done: boolean }) {
   return (
-    <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+    <div className="paper-surface p-4">
       {thinking && (
         <details open className="mb-2">
-          <summary className="cursor-pointer text-xs font-medium text-slate-500">💭 思考中…</summary>
-          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-2 text-xs text-slate-600">{thinking}</pre>
+          <summary className="cursor-pointer text-xs font-semibold text-stone-500">
+            <Bot className="mr-1.5 inline h-3.5 w-3.5" aria-hidden="true" />
+            思考中...
+          </summary>
+          <pre className="scrollbar-thin-warm mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-stone-200 bg-[#fffaf1] p-3 text-xs text-stone-600">{thinking}</pre>
         </details>
       )}
-      {!done && !text && !thinking && <div className="text-sm text-slate-400">等待回应…</div>}
-      {text && <pre className="whitespace-pre-wrap text-xs text-slate-500">{text}</pre>}
+      {!done && !text && !thinking && <div className="text-sm text-stone-400">等待回应...</div>}
+      {text && <pre className="whitespace-pre-wrap text-xs text-stone-500">{text}</pre>}
     </div>
   );
 }
@@ -196,16 +225,16 @@ function QuestionCard({ parsed, onAnswer }: { parsed: AgentParsed; onAnswer: (b:
   if (parsed.action === "ask_choice") {
     const p = parsed.payload;
     return (
-      <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+      <div className="paper-surface p-5">
         <div className="flex items-start gap-2">
-          <div className="flex-1 text-base font-medium">{p.question}</div>
+          <div className="flex-1 text-base font-semibold leading-7 text-stone-950">{p.question}</div>
           <SpeakButton text={p.question} size="xs" />
         </div>
         <div className="mt-4 space-y-2">
           {p.options.map((o) => (
             <button
               key={o.key}
-              className="w-full rounded-lg border border-slate-200 px-4 py-3 text-left text-sm hover:border-slate-900"
+              className="w-full rounded-lg border border-stone-200 bg-[#fffdf8] px-4 py-3 text-left text-sm text-stone-800 transition hover:border-stone-900 hover:bg-white"
               onClick={() => onAnswer({ selected_option_key: o.key })}
             >
               {o.label}
@@ -214,20 +243,21 @@ function QuestionCard({ parsed, onAnswer }: { parsed: AgentParsed; onAnswer: (b:
         </div>
         {p.allow_other && (
           <div className="mt-4">
-            <div className="text-xs font-medium uppercase text-slate-500">其他</div>
-            <div className="mt-2 flex gap-2">
+            <div className="eyebrow">其他</div>
+            <div className="mt-2 flex flex-col gap-2 md:flex-row">
               <input
-                className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="field flex-1"
                 placeholder="写一个自己的答案"
                 value={other}
                 onChange={(e) => setOther(e.target.value)}
               />
               <VoiceButton onText={(t) => setOther((s) => (s ? s + " " : "") + t)} />
               <button
-                className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50"
+                className="button-primary"
                 disabled={!other.trim()}
                 onClick={() => onAnswer({ selected_option_key: "other", other_text: other.trim() })}
               >
+                <Send className="h-4 w-4" aria-hidden="true" />
                 提交
               </button>
             </div>
@@ -240,26 +270,27 @@ function QuestionCard({ parsed, onAnswer }: { parsed: AgentParsed; onAnswer: (b:
   if (parsed.action === "ask_open") {
     const p = parsed.payload;
     return (
-      <div className="rounded-2xl bg-white p-5 ring-1 ring-slate-200">
+      <div className="paper-surface p-5">
         <div className="flex items-start gap-2">
-          <div className="flex-1 text-base font-medium">{p.question}</div>
+          <div className="flex-1 text-base font-semibold leading-7 text-stone-950">{p.question}</div>
           <SpeakButton text={p.question} size="xs" />
         </div>
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 flex flex-col gap-3 md:flex-row">
           <textarea
-            className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            className="textarea-field min-h-24 flex-1"
             rows={2}
             placeholder={p.placeholder || ""}
             value={open}
             onChange={(e) => setOpen(e.target.value)}
           />
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row md:w-32 md:flex-col">
             <VoiceButton onText={(t) => setOpen((s) => (s ? s + " " : "") + t)} />
             <button
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50"
+              className="button-primary"
               disabled={!open.trim()}
               onClick={() => onAnswer({ text: open.trim() })}
             >
+              <Send className="h-4 w-4" aria-hidden="true" />
               发送
             </button>
           </div>
@@ -279,51 +310,53 @@ function SummaryCard({ parsed, onDeliver }: { parsed: AgentParsed; onDeliver: (o
   const finalTryAi = tryAi === null ? recommended : tryAi;
 
   return (
-    <div className="rounded-2xl bg-white p-6 ring-1 ring-slate-200">
-      <div className="flex items-baseline justify-between">
+    <div className="paper-surface p-5 sm:p-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex-1">
-          <div className="flex items-center gap-2 text-xs font-medium uppercase">
-            <span className="text-emerald-600">最终需求</span>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em]">
+            <span className="text-[#4e7146]">最终需求</span>
             {p.complexity && (
-              <span className={`rounded px-2 py-0.5 text-[10px] ${
-                p.complexity === "low" ? "bg-emerald-100 text-emerald-700"
-                : p.complexity === "medium" ? "bg-amber-100 text-amber-700"
-                : "bg-rose-100 text-rose-700"
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                p.complexity === "low" ? "border-[#bdd2b7] bg-[#f1f7ed] text-[#4e7146]"
+                : p.complexity === "medium" ? "border-[#e0c895] bg-[#fff6dc] text-[#8a5d10]"
+                : "border-[#e0b8ad] bg-[#fff0ec] text-[#9f4129]"
               }`}>
                 复杂度 · {p.complexity}
               </span>
             )}
             {p.ai_doable && (
-              <span className="rounded bg-violet-100 px-2 py-0.5 text-[10px] text-violet-700">
-                🤖 AI 可处理
+              <span className="inline-flex items-center gap-1 rounded-full border border-[#cbb8d8] bg-[#f5eef8] px-2 py-0.5 text-[10px] text-[#684b7a]">
+                <Bot className="h-3 w-3" aria-hidden="true" />
+                AI 可处理
               </span>
             )}
           </div>
-          <h2 className="mt-1 text-2xl font-bold">{p.title}</h2>
-          {p.ai_reason && <p className="mt-1 text-xs text-slate-500">AI 判断：{p.ai_reason}</p>}
+          <h2 className="mt-2 break-words text-2xl font-semibold text-stone-950">{p.title}</h2>
+          {p.ai_reason && <p className="mt-2 text-xs leading-5 text-stone-500">AI 判断：{p.ai_reason}</p>}
         </div>
         <SpeakButton text={`${p.title}。${p.summary_md.split("\n\n").slice(0, 2).join("\n\n").replace(/[#*`>\-]/g, "")}`} />
       </div>
 
-      <pre className="mt-5 whitespace-pre-wrap rounded-lg bg-slate-50 p-4 text-sm leading-relaxed">{p.summary_md}</pre>
+      <pre className="mt-5 overflow-auto whitespace-pre-wrap rounded-lg border border-stone-200 bg-[#fffaf1] p-4 text-sm leading-relaxed text-stone-700">{p.summary_md}</pre>
 
-      <div className="mt-5 flex items-center justify-between">
-        <label className="flex items-center gap-2 text-sm">
+      <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <label className="flex items-center gap-2 text-sm text-stone-700">
           <input
             type="checkbox"
-            className="h-4 w-4 accent-violet-600"
+            className="h-4 w-4 accent-[#684b7a]"
             checked={finalTryAi}
             onChange={(e) => setTryAi(e.target.checked)}
           />
-          <span>让 AI 先试一下（失败自动转人工）{recommended && tryAi === null && <span className="text-violet-600">· AI 推荐</span>}</span>
+          <span>让 AI 先试一下（失败自动转人工）{recommended && tryAi === null && <span className="text-[#684b7a]"> · AI 推荐</span>}</span>
         </label>
         <button
-          className={`rounded-lg px-5 py-2 text-sm font-medium text-white ${
-            finalTryAi ? "bg-violet-600 hover:bg-violet-700" : "bg-emerald-600 hover:bg-emerald-700"
+          className={`button w-full sm:w-auto ${
+            finalTryAi ? "border-[#684b7a] bg-[#684b7a] text-white hover:bg-[#563d65]" : "border-[#4e7146] bg-[#5f8358] text-white hover:bg-[#4e7146]"
           }`}
           onClick={() => onDeliver({ tryAi: finalTryAi })}
         >
-          {finalTryAi ? "🤖 投递并交给 AI" : "投递给我（人工处理）"} →
+          {finalTryAi ? <Bot className="h-4 w-4" aria-hidden="true" /> : <FileText className="h-4 w-4" aria-hidden="true" />}
+          {finalTryAi ? "投递并交给 AI" : "投递给我（人工处理）"}
         </button>
       </div>
     </div>

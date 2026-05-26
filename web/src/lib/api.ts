@@ -37,10 +37,11 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
     }),
-  listRequirements: (params: { project_id?: string; mine?: boolean; status?: string } = {}) => {
+  listRequirements: (params: { project_id?: string; mine?: boolean; assigned_to_me?: boolean; status?: string } = {}) => {
     const q = new URLSearchParams();
     if (params.project_id) q.set("project_id", params.project_id);
     if (params.mine) q.set("mine", "true");
+    if (params.assigned_to_me) q.set("assigned_to_me", "true");
     if (params.status) q.set("status", params.status);
     return json<Requirement[]>(`/api/requirements?${q.toString()}`);
   },

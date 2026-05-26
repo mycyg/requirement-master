@@ -53,13 +53,16 @@ class Requirement(Base, TimestampMixin):
     code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     submitter_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    claimed_by_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), index=True)
+    claimed_by_nickname: Mapped[Optional[str]] = mapped_column(String(64))
 
     title: Mapped[Optional[str]] = mapped_column(String(256))
     raw_description: Mapped[Optional[str]] = mapped_column(Text)
     summary_md: Mapped[Optional[str]] = mapped_column(Text)
 
     status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False, index=True)
-    # draft | clarifying | ready | claimed | doing | delivered | revision_requested | accepted | cancelled
+    # draft | clarifying | summary_ready | ready | ai_processing | claimed | doing
+    # delivery_doc_pending | delivered | revision_requested | accepted | cancelled
     priority: Mapped[str] = mapped_column(String(16), default="normal", nullable=False)
 
     start_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
@@ -67,6 +70,7 @@ class Requirement(Base, TimestampMixin):
     claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     done_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    delivery_doc_ready_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     accepted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     sync_state: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
