@@ -49,14 +49,22 @@ export function Clarify() {
   const [req, setReq] = useState<Requirement | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [history, setHistory] = useState<StoredChatMessage[]>([]);
+  const [loadedReqId, setLoadedReqId] = useState<string | null>(null);
   const autoStartedRef = useRef<string | null>(null);
   const stream = useChatStream(reqId || "");
 
   const refresh = async () => {
     if (!reqId) return;
-    setReq(await api.getRequirement(reqId));
-    setAttachments(await api.listAttachments(reqId));
-    setHistory(await api.listChatMessages(reqId));
+    setLoadedReqId(null);
+    const [nextReq, nextAttachments, nextHistory] = await Promise.all([
+      api.getRequirement(reqId),
+      api.listAttachments(reqId),
+      api.listChatMessages(reqId),
+    ]);
+    setReq(nextReq);
+    setAttachments(nextAttachments);
+    setHistory(nextHistory);
+    setLoadedReqId(reqId);
   };
 
   useEffect(() => { refresh(); }, [reqId]);
@@ -70,12 +78,13 @@ export function Clarify() {
   // auto-start the first turn if no assistant messages yet
   useEffect(() => {
     if (!req || stream.running || stream.parsed) return;
+    if (loadedReqId !== req.id) return;
     if (history.length === 0 && (req.status === "draft" || req.status === "clarifying")) {
       if (autoStartedRef.current === req.id) return;
       autoStartedRef.current = req.id;
       stream.run({ force_summarize: false });
     }
-  }, [req, history.length]);
+  }, [req, loadedReqId, history.length, stream.running, stream.parsed]);
 
   if (!reqId || !req) return <main className="narrow-container text-stone-500">加载中...</main>;
 
@@ -90,9 +99,7 @@ export function Clarify() {
   const activeParsed = stream.parsed ??
     (req.status === "summary_ready" && storedSummary?.action === "summarize" ? storedSummary : restoredParsed);
   const showingSummaryCard = activeParsed?.action === "summarize";
-  const activeHistoryMsgId = activeParsed && latestHistoryParsed?.action === activeParsed.action
-    ? latestHistoryMsg?.id
-    : null;
+  const activeParsedKey = activeParsed ? parsedKey(activeParsed) : null;
   const isFinal = req.status === "ready" || req.status === "summary_ready" || showingSummaryCard;
   const canRequestSummary = req.status === "draft" || req.status === "clarifying";
 
@@ -146,9 +153,11 @@ export function Clarify() {
 
       {/* right: chat thread */}
       <section className="min-w-0 space-y-4">
-        {history.map((m) => (
-          m.id === activeHistoryMsgId || (showingSummaryCard && m.kind === "summary") ? null : <Bubble key={m.id} msg={m} />
-        ))}
+        {history.map((m) => {
+          const msgParsed = parsedFromHistory(m);
+          const isActiveHistoryMsg = activeParsedKey && msgParsed && parsedKey(msgParsed) === activeParsedKey;
+          return isActiveHistoryMsg || (showingSummaryCard && m.kind === "summary") ? null : <Bubble key={m.id} msg={m} />;
+        })}
 
         {/* live stream */}
         {!activeParsed && (stream.running || stream.thinking || stream.text) && (

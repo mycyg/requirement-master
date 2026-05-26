@@ -25,9 +25,9 @@
         ↓
    结构化需求文档 + 复杂度评估
         ↓
-   ┌─ 简单 → AI 自己写代码 → 自动交付 (你压根不知道有过这事)
+   ┌─ 纯文件小活 → AI 先试着写交付物 (只读写文件，不给它 shell，免得它膨胀)
    │
-   └─ 复杂 → 推到你本地 → 你做完 → 一键打包 → LLM 给客户写说明文档
+   └─ 复杂/不确定 → 你确认投递 → 接单人开干 → 一键打包 → LLM 给客户写说明文档
 ```
 
 ## 它解决你哪些痛
@@ -36,9 +36,10 @@
 |---|---|
 | "需求像谜语，不澄清不知道做啥" | **LLM Agent 反问澄清**——选项式问答 + Other 自由补充 + 语音回答，问到 AI 自己觉得够了为止 |
 | "拿到需求就 3 行字，附件还是图片" | 上传 PDF/Word/Excel/PPT 都解析成文本，对话历史 + 原始文件 + 摘要一起打包推过来 |
-| "简单的需求也排队几天" | LLM 自评 `ai_doable`，简单的直接交给 AI agent 在沙箱里跑（写文件 + 跑 bash + 自测），失败自动转人工，你**完全无感** |
+| "简单的需求也排队几天" | LLM 自评 `ai_doable`，纯文件小活交给 AI agent 先试试（list/read/write/submit，不准跑 shell，不准联网，不准半夜修仙），失败自动转人工 |
 | "交付完了客户问'怎么用'" | 你打包上传后，LLM 自动读所有交付文件写**面向客户的交付文档**（含原需求映射表 + 已知局限） |
 | "不知道现在多少单要处理" | 副屏挂个 dashboard 自动刷新，按状态分卡片，新需求弹 Windows 通知 |
+| "草稿还没想清楚就被围观" | 草稿 / 澄清 / 待确认投递阶段默认仅提交人可见；投递后才进公共看板。先把裤子穿上，再开会。 |
 
 ## 功能
 
@@ -46,12 +47,17 @@
 - 🎙️ **语音输入**：浏览器按住录音 → Qwen3-ASR 转写到输入框
 - 🔊 **语音输出**：CosyVoice 3 个音色，可设置 AI 消息自动朗读
 - 📦 **附件理解**：上传 PDF/Word/Excel/PPT/图片，markitdown 解析后喂给 LLM
-- 🤖 **AI 自动处理**：summarize 判定 `ai_doable=true` → Anthropic SDK tool_use 自建 agent（5 个工具：list/read/write/run_bash/submit + 沙箱）→ 6 轮搞定 FizzBuzz / 单词频率统计这类小活
-- 🗂️ **项目管理**：状态机 9 态，Kanban 风格 dashboard，评论 / 活动时间轴
+- 🤖 **AI 自动处理**：summarize 判定 `ai_doable=true` → Anthropic SDK tool_use 自建 agent（list/read/write/submit + 隔离工作目录）→ 适合静态 HTML、Markdown、配置模板这类“别折腾运行环境”的小活
+- ✅ **确认投递**：AI 汇总后先停在 `summary_ready`，提交人确认后才进入 `ready`；不再把半熟需求直接扔进同事工位
+- 🔐 **权限防串单**：草稿隐私、附件/交付包访问控制、分片上传归属校验、同步 ACK 权限校验。它不是银行系统，但也不该像公共留言板
+- 🧯 **防重复点击**：澄清 SSE 并发锁、投递/接单/开始处理 busy 态，专治“我点了三下怎么出了三份需求”
+- 🗂️ **项目管理**：从 draft 到 accepted 的完整状态机，Kanban 风格 dashboard，评论 / 活动时间轴
 - 🔔 **本地托盘**：Python pystray，SSE 长连接 + Windows 通知，文件同步到本地目录
 - 🔄 **完整交付闭环**：本地做完 → 一键打包上传 → LLM 写交付文档 → 提需求方接受 / 申请返工
 
 ## 截图
+
+新鲜截图，刚从浏览器 E2E 现场逮回来的，不是设计稿，不是“仅供参考”，也不是老板画在白板上的精神胜利。
 
 | 主页项目列表 | 接单看板 |
 |---|---|
@@ -60,6 +66,14 @@
 | AI 澄清对话 | 最终汇总（含 AI 复杂度判断） |
 |---|---|
 | ![clarify](screenshots/03_clarify.png) | ![summary](screenshots/04_summary.png) |
+
+| 移动端看板 | 超宽屏看板 |
+|---|---|
+| ![mobile dashboard](screenshots/ui-dashboard-mobile.png) | ![ultrawide dashboard](screenshots/ui-dashboard-ultrawide.png) |
+
+| 移动端提需求 |
+|---|
+| ![new requirement mobile](screenshots/ui-new-requirement-mobile.png) |
 
 ## 架构
 
@@ -154,13 +168,17 @@ python yqgl_tray.py    # 首次启动有配置向导
 ### 端到端冒烟测试
 
 ```bash
+# 本地快速核心流，不依赖 LLM / ASR / TTS。适合提交前先摸一下脉搏。
+python scripts/smoke_workflow.py
+
+# 下面这些打真实服务，跑起来更像真的上班。
 export YQGL_BASE=http://your.server.ip:8080
 export DEEPSEEK_API_KEY=sk-...
 python scripts/smoke_m3.py     # 项目+需求+上传+解析
 python scripts/smoke_m4.py     # LLM 澄清
 python scripts/smoke_m6.py     # submit + push
 python scripts/smoke_m8.py     # 人工 delivery + LLM 文档
-python scripts/smoke_m12.py    # AI 自动处理
+python scripts/smoke_m12.py    # AI 自动处理（受限文件工具，不执行 shell）
 ```
 
 ## ASR / TTS 一些坑（社区参考）
@@ -205,7 +223,9 @@ python scripts/smoke_m12.py    # AI 自动处理
 **yqgl** is an AI-native **intranet requirement management hub** built for small teams:
 - Submitters describe what they need; an LLM agent asks clarifying questions (multiple choice + free text + voice).
 - Structured markdown spec + original files + full chat history sync to the assignee's local folder.
-- An LLM judges complexity. If "low / AI-doable", an in-process Anthropic-tool_use agent runs sandboxed (write_file / run_bash / submit) and delivers a zip — typically in a few turns. On failure, gracefully falls back to human.
+- After summarization, the requester explicitly confirms dispatch before the requirement appears on the shared board.
+- An LLM judges complexity. If "low / AI-doable", an in-process Anthropic-tool_use worker can list/read/write files and submit notes inside an isolated workspace. It cannot run shell commands, install dependencies, use the network, or verify runtime behavior. On failure, it falls back to human.
+- Drafts, clarification conversations, attachments, deliveries, chunk uploads, and sync acknowledgements now have workflow-aware permission checks, because "LAN-only" is not a personality trait.
 - Voice in (Qwen3-ASR) and voice out (CosyVoice, 3 presets) wired throughout.
 - After human delivery: zip → chunked upload → LLM auto-writes a customer-facing delivery doc with original-requirement mapping table.
 
