@@ -20,6 +20,7 @@ from routers import projects as projects_router
 from routers import push as push_router
 from routers import requirements as requirements_router
 from routers import sync as sync_router
+from routers import users as users_router
 from routers import voice as voice_router
 from services.partial_uploads import cleanup_stale_partials
 from services.schema_migrations import ensure_runtime_schema
@@ -73,6 +74,7 @@ app.include_router(auto_router.router)
 app.include_router(comments_router.router)
 app.include_router(deliveries_router.router)
 app.include_router(delivery_upload_router.router)
+app.include_router(users_router.router)
 
 
 @app.get("/api/health")

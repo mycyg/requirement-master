@@ -4,7 +4,11 @@ import { api } from "@/lib/api";
 import type { Delivery, Requirement } from "@/lib/types";
 import { VoiceButton } from "@/components/VoiceButton";
 
-export function DeliverablesTab({ req, onChange }: { req: Requirement; onChange: () => void }) {
+export function DeliverablesTab({ req, canReview = false, onChange }: {
+  req: Requirement;
+  canReview?: boolean;
+  onChange: () => void;
+}) {
   const [deliveries, setDeliveries] = useState<Delivery[] | null>(null);
   const [showRevision, setShowRevision] = useState(false);
   const [reason, setReason] = useState("");
@@ -113,7 +117,7 @@ export function DeliverablesTab({ req, onChange }: { req: Requirement; onChange:
             </details>
           )}
 
-          {idx === 0 && req.status === "delivered" && (
+          {idx === 0 && req.status === "delivered" && canReview && (
             <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-stone-200 pt-4">
               <button
                 className="button border-[#4e7146] bg-[#5f8358] text-white hover:bg-[#4e7146]"

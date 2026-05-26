@@ -272,7 +272,8 @@ def sync_requirement(client: ServerClient, cfg: Config, req_id: str) -> Path:
     )
     # metadata.json
     meta_keep = {k: m.get(k) for k in (
-        "code", "title", "submitter_nickname", "priority", "created_at", "raw_description", "chat"
+        "code", "title", "submitter_nickname", "priority", "created_at",
+        "raw_description", "chat", "assignees",
     )}
     (target / "metadata.json").write_text(
         json.dumps(meta_keep, ensure_ascii=False, indent=2), encoding="utf-8",
@@ -598,6 +599,13 @@ class TrayApp:
                                             progress=lambda s, t: log(f"  uploaded {s}/{t}"))
             log(f"upload ok: {d}")
             notify("交付成功", f"{code} 已上传，AI 正在写交付文档…")
+        except httpx.HTTPStatusError as e:
+            if e.response is not None and e.response.status_code == 403:
+                msg = "你不是这条需求的负责人/协作者，不能交付。"
+            else:
+                msg = str(e)
+            log(f"delivery failed: {msg}")
+            notify("交付失败", msg)
         except Exception as e:
             log(f"delivery failed: {e}")
             notify("交付失败", str(e))

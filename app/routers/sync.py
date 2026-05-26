@@ -2,7 +2,7 @@
   - submit:        提需求方点"确认投递" → status ready + push
   - sync-manifest: client pulls per-requirement file list + metadata
   - sync-ack:      client confirms it has all files locally
-  - claim:         接单人 (the only one) takes the work
+  - claim:         eligible assignee takes the work; public pool creates a lead
 """
 from __future__ import annotations
 
@@ -14,11 +14,13 @@ from sqlalchemy.orm import Session
 
 from auth import current_user
 from db import get_db
-from models import Requirement, User
+from models import Requirement, RequirementAssignment, User
 from services.activity import log_activity
-from services.permissions import can_ack_requirement_sync, can_view_requirement_assets
+from services.assignments import ensure_public_claim_assignment, sync_legacy_lead
+from services.permissions import can_ack_requirement_sync, can_claim_requirement, can_view_requirement_assets
 from services.push_bus import bus
 from services.sync_manifest import build as build_manifest
+from sqlalchemy.orm import selectinload
 
 router = APIRouter(prefix="/api", tags=["sync"])
 
@@ -80,15 +82,25 @@ async def sync_ack(req_id: str, db: Session = Depends(get_db), user: User = Depe
 
 @router.post("/requirements/{req_id}/claim")
 async def claim(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
-    r = db.query(Requirement).filter(Requirement.id == req_id).first()
+    r = (
+        db.query(Requirement)
+        .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
+        .filter(Requirement.id == req_id)
+        .first()
+    )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
     if r.status not in {"ready"}:
         raise HTTPException(status_code=400, detail=f"cannot claim from status {r.status}")
+    if not can_claim_requirement(r, user):
+        raise HTTPException(status_code=403, detail="only assigned users can claim this requirement")
     r.status = "claimed"
-    r.claimed_at = datetime.utcnow()
-    r.claimed_by_user_id = user.id
-    r.claimed_by_nickname = user.nickname
+    if not r.claimed_at:
+        r.claimed_at = datetime.utcnow()
+    if not r.assignments:
+        ensure_public_claim_assignment(db, r, user)
+    else:
+        sync_legacy_lead(r)
     log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="claimed", detail={})
     db.commit()
     db.refresh(r)

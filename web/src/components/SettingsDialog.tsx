@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Settings, Volume2, X } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 
-type VoicesResp = { ready: boolean; voices: string[]; default: string | null };
+type VoicesResp = { ready: boolean; voices: string[]; default: string | null; error?: string };
 
 const VOICE_LABEL: Record<string, string> = {
   male: "男声 · male",
@@ -18,13 +18,35 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
   useEffect(() => {
     if (!open) return;
     setVoicesErr(null);
-    fetch("/api/voice/voices", { credentials: "include" })
-      .then((r) => r.json() as Promise<VoicesResp>)
-      .then((d) => {
-        if (d.ready) setVoices(d.voices);
-        else setVoicesErr("TTS 服务不可用");
-      })
-      .catch((e) => setVoicesErr(String(e)));
+    setVoices([]);
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/voice/voices", { credentials: "include" });
+        const text = await r.text();
+        if (!alive) return;
+        if (!r.ok) {
+          setVoicesErr("无法读取 TTS 音色，服务可能没启动。");
+          return;
+        }
+        if (!text.trim()) {
+          setVoicesErr("无法读取 TTS 音色，接口返回为空。");
+          return;
+        }
+        let d: VoicesResp;
+        try {
+          d = JSON.parse(text) as VoicesResp;
+        } catch {
+          setVoicesErr("无法读取 TTS 音色，接口返回格式异常。");
+          return;
+        }
+        if (d.ready) setVoices(Array.isArray(d.voices) ? d.voices : []);
+        else setVoicesErr("无法读取 TTS 音色，服务可能没启动。");
+      } catch {
+        if (alive) setVoicesErr("无法读取 TTS 音色，服务可能没启动。");
+      }
+    })();
+    return () => { alive = false; };
   }, [open]);
 
   if (!open) return null;

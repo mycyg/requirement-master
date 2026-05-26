@@ -10,6 +10,7 @@ import {
   RefreshCw,
   RotateCcw,
   UserRound,
+  Users,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { api } from "@/lib/api";
@@ -167,6 +168,11 @@ function BucketCard({ bucket, items }: { bucket: Bucket; items: Requirement[] })
 
 function Card({ r }: { r: Requirement }) {
   const age = ageString(new Date(r.created_at + "Z"));
+  const lead = r.assignees?.find((a) => a.role === "lead");
+  const collaboratorCount = r.assignees?.filter((a) => a.role === "collaborator").length ?? 0;
+  const assigneeText = lead
+    ? `负责人 ${lead.nickname}${collaboratorCount > 0 ? ` +${collaboratorCount}` : ""}`
+    : "公开待接单池";
   const priorityColor =
     r.priority === "urgent" ? "text-red-700"
     : r.priority === "high" ? "text-[#8a5d10]"
@@ -190,6 +196,10 @@ function Card({ r }: { r: Requirement }) {
           <span className="truncate">{r.submitter_nickname} · {r.project_slug}</span>
         </span>
         <span title={new Date(r.created_at + "Z").toLocaleString("zh-CN")}>{age}</span>
+      </div>
+      <div className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full border border-stone-200 bg-[#fffdf8] px-2 py-1 text-xs text-stone-500">
+        <Users className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <span className="truncate">{assigneeText}</span>
       </div>
     </Link>
   );

@@ -1,5 +1,14 @@
 export type Identity = { id: string; nickname: string; created: boolean };
 
+export type UserOption = { id: string; nickname: string };
+
+export type RequirementAssignee = {
+  user_id: string;
+  nickname: string;
+  role: "lead" | "collaborator";
+  assigned_at: string;
+};
+
 export type Project = {
   id: string;
   name: string;
@@ -33,6 +42,7 @@ export type Requirement = {
   delivery_doc_ready_at: string | null;
   accepted_at: string | null;
   sync_state: string;
+  assignees: RequirementAssignee[];
   created_at: string;
   updated_at: string;
 };

@@ -1,19 +1,35 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_
+from sqlalchemy import and_, exists, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from auth import current_user
 from db import get_db
-from models import Project, Requirement, User
-from schemas import RequirementCreateIn, RequirementOut, StatusUpdateIn
+from models import Project, Requirement, RequirementAssignment, User
+from schemas import RequirementAssigneeOut, RequirementAssigneesUpdateIn, RequirementCreateIn, RequirementOut, StatusUpdateIn
 from services.activity import log_activity
-from services.permissions import PRIVATE_REQUIREMENT_STATUSES, can_view_requirement_record
+from services.assignments import ensure_public_claim_assignment, replace_assignments, sorted_assignments, sync_legacy_lead
+from services.permissions import (
+    PRIVATE_REQUIREMENT_STATUSES,
+    can_manage_requirement_assignees,
+    can_claim_requirement,
+    can_view_requirement_record,
+    can_work_requirement,
+)
 from services.push_bus import bus
 
 router = APIRouter(prefix="/api", tags=["requirements"])
+
+
+def _assignee_out(a: RequirementAssignment) -> RequirementAssigneeOut:
+    return RequirementAssigneeOut(
+        user_id=a.user_id,
+        nickname=a.user.nickname,
+        role=a.role,
+        assigned_at=a.created_at,
+    )
 
 
 def _to_out(r: Requirement, *, submitter_nickname: str, project_slug: str) -> RequirementOut:
@@ -29,11 +45,21 @@ def _to_out(r: Requirement, *, submitter_nickname: str, project_slug: str) -> Re
         delivered_at=r.delivered_at, accepted_at=r.accepted_at,
         delivery_doc_ready_at=r.delivery_doc_ready_at,
         sync_state=r.sync_state,
+        assignees=[_assignee_out(a) for a in sorted_assignments(r)],
         created_at=r.created_at, updated_at=r.updated_at,
     )
 
 
 def _enrich(db: Session, r: Requirement) -> RequirementOut:
+    if "assignments" not in r.__dict__:
+        r = (
+            db.query(Requirement)
+            .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
+            .filter(Requirement.id == r.id)
+            .first()
+        )
+        if not r:
+            raise HTTPException(status_code=404, detail="requirement not found")
     project = db.query(Project).filter(Project.id == r.project_id).first()
     submitter = db.query(User).filter(User.id == r.submitter_user_id).first()
     return _to_out(
@@ -69,6 +95,14 @@ def create_requirement(
         db.add(r)
         try:
             db.flush()
+            if payload.lead_user_id or payload.collaborator_user_ids:
+                replace_assignments(
+                    db,
+                    r,
+                    lead_user_id=payload.lead_user_id,
+                    collaborator_user_ids=payload.collaborator_user_ids,
+                    actor=user,
+                )
             log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="created", detail={"code": code})
             db.commit()
             db.refresh(r)
@@ -88,10 +122,15 @@ def list_requirements(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> list[RequirementOut]:
+    assigned_exists = exists().where(and_(
+        RequirementAssignment.requirement_id == Requirement.id,
+        RequirementAssignment.user_id == user.id,
+    ))
     q = (
         db.query(Requirement, Project.slug, User.nickname)
         .join(Project, Project.id == Requirement.project_id)
         .join(User, User.id == Requirement.submitter_user_id)
+        .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
     )
     if project_id:
         q = q.filter(Requirement.project_id == project_id)
@@ -100,11 +139,12 @@ def list_requirements(
     if mine:
         q = q.filter(Requirement.submitter_user_id == user.id)
     if assigned_to_me:
-        q = q.filter(Requirement.claimed_by_user_id == user.id)
+        q = q.filter(or_(Requirement.claimed_by_user_id == user.id, assigned_exists))
     q = q.filter(or_(
         ~Requirement.status.in_(PRIVATE_REQUIREMENT_STATUSES),
         Requirement.submitter_user_id == user.id,
         Requirement.claimed_by_user_id == user.id,
+        assigned_exists,
     ))
     rows = q.order_by(Requirement.created_at.desc()).limit(500).all()
     return [
@@ -115,7 +155,12 @@ def list_requirements(
 
 @router.get("/requirements/{req_id}", response_model=RequirementOut)
 def get_requirement(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> RequirementOut:
-    r = db.query(Requirement).filter(Requirement.id == req_id).first()
+    r = (
+        db.query(Requirement)
+        .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
+        .filter(Requirement.id == req_id)
+        .first()
+    )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
     if not can_view_requirement_record(r, user):
@@ -130,7 +175,12 @@ async def update_status(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> RequirementOut:
-    r = db.query(Requirement).filter(Requirement.id == req_id).first()
+    r = (
+        db.query(Requirement)
+        .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
+        .filter(Requirement.id == req_id)
+        .first()
+    )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
 
@@ -157,9 +207,11 @@ async def update_status(
         raise HTTPException(status_code=400, detail=f"cannot change status from {old} to {new}")
     if old in {"draft", "clarifying", "summary_ready"} and r.submitter_user_id != user.id:
         raise HTTPException(status_code=403, detail="only the requester can change this status")
-    if new == "cancelled" and user.id not in {r.submitter_user_id, r.claimed_by_user_id}:
+    if new == "claimed" and not can_claim_requirement(r, user):
+        raise HTTPException(status_code=403, detail="only assigned users can claim this requirement")
+    if new == "cancelled" and user.id != r.submitter_user_id and not can_work_requirement(r, user):
         raise HTTPException(status_code=403, detail="only the requester or assignee can cancel this requirement")
-    if new != "cancelled" and old in {"claimed", "doing", "revision_requested"} and r.claimed_by_user_id and r.claimed_by_user_id != user.id:
+    if new != "cancelled" and old in {"claimed", "doing", "revision_requested"} and not can_work_requirement(r, user):
         raise HTTPException(status_code=403, detail="only the assignee can change this status")
 
     r.status = new
@@ -167,14 +219,17 @@ async def update_status(
     if new == "claimed":
         if not r.claimed_at:
             r.claimed_at = now
-        r.claimed_by_user_id = user.id
-        r.claimed_by_nickname = user.nickname
+        if not r.assignments:
+            ensure_public_claim_assignment(db, r, user)
+        else:
+            sync_legacy_lead(r)
     elif new == "doing":
         if not r.claimed_at:
             r.claimed_at = now
-        if not r.claimed_by_user_id:
-            r.claimed_by_user_id = user.id
-            r.claimed_by_nickname = user.nickname
+        if not r.assignments:
+            ensure_public_claim_assignment(db, r, user)
+        else:
+            sync_legacy_lead(r)
     elif new == "delivered" and not r.delivered_at:
         r.delivered_at = now
     elif new == "delivery_doc_pending" and not r.delivered_at:
@@ -192,3 +247,58 @@ async def update_status(
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status})
     await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status})
     return _enrich(db, r)
+
+
+@router.get("/requirements/{req_id}/assignees", response_model=list[RequirementAssigneeOut])
+def list_assignees(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> list[RequirementAssigneeOut]:
+    r = (
+        db.query(Requirement)
+        .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
+        .filter(Requirement.id == req_id)
+        .first()
+    )
+    if not r:
+        raise HTTPException(status_code=404, detail="requirement not found")
+    if not can_view_requirement_record(r, user):
+        raise HTTPException(status_code=403, detail="you cannot view this requirement yet")
+    return [_assignee_out(a) for a in sorted_assignments(r)]
+
+
+@router.put("/requirements/{req_id}/assignees", response_model=list[RequirementAssigneeOut])
+async def update_assignees(
+    req_id: str,
+    payload: RequirementAssigneesUpdateIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> list[RequirementAssigneeOut]:
+    r = (
+        db.query(Requirement)
+        .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
+        .filter(Requirement.id == req_id)
+        .first()
+    )
+    if not r:
+        raise HTTPException(status_code=404, detail="requirement not found")
+    if not can_manage_requirement_assignees(r, user):
+        raise HTTPException(status_code=403, detail="only the requester can manage assignees in this status")
+    assignments = replace_assignments(
+        db,
+        r,
+        lead_user_id=payload.lead_user_id,
+        collaborator_user_ids=payload.collaborator_user_ids,
+        actor=user,
+    )
+    log_activity(
+        db,
+        requirement_id=r.id,
+        actor_nickname=user.nickname,
+        action="assignees_updated",
+        detail={
+            "lead_user_id": payload.lead_user_id,
+            "collaborator_user_ids": payload.collaborator_user_ids,
+        },
+    )
+    db.commit()
+    await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status, "assignees": len(assignments)})
+    await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status, "assignees": len(assignments)})
+    return [_assignee_out(a) for a in assignments]

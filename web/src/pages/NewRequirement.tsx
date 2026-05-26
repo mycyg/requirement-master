@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AlertCircle, ArrowRight, CheckCircle2, FileText, Paperclip } from "lucide-react";
 import { api } from "@/lib/api";
+import { AssigneeSelector } from "@/components/AssigneeSelector";
 import { FileUpload } from "@/components/FileUpload";
 import { VoiceButton } from "@/components/VoiceButton";
 import type { Attachment } from "@/lib/types";
@@ -11,6 +12,8 @@ export function NewRequirement() {
   const nav = useNavigate();
   const [desc, setDesc] = useState("");
   const [priority, setPriority] = useState("normal");
+  const [leadUserId, setLeadUserId] = useState<string | null>(null);
+  const [collaboratorUserIds, setCollaboratorUserIds] = useState<string[]>([]);
   const [reqId, setReqId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [busy, setBusy] = useState(false);
@@ -20,7 +23,12 @@ export function NewRequirement() {
     if (!projectId || !desc.trim()) return;
     setBusy(true); setErr(null);
     try {
-      const r = await api.createRequirement(projectId, { raw_description: desc.trim(), priority });
+      const r = await api.createRequirement(projectId, {
+        raw_description: desc.trim(),
+        priority,
+        lead_user_id: leadUserId,
+        collaborator_user_ids: collaboratorUserIds,
+      });
       setReqId(r.id);
     } catch (e: any) {
       setErr(String(e));
@@ -61,6 +69,18 @@ export function NewRequirement() {
             <option value="high">优先级：高</option>
             <option value="urgent">优先级：紧急</option>
           </select>
+        </div>
+
+        <div className="mt-5">
+          <AssigneeSelector
+            leadUserId={leadUserId}
+            collaboratorUserIds={collaboratorUserIds}
+            disabled={!!reqId}
+            onChange={(next) => {
+              setLeadUserId(next.leadUserId);
+              setCollaboratorUserIds(next.collaboratorUserIds);
+            }}
+          />
         </div>
 
         {!reqId && (

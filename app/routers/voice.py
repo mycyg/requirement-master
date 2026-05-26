@@ -74,7 +74,22 @@ async def list_voices() -> dict:
     try:
         async with httpx.AsyncClient(timeout=3.0) as c:
             r = await c.get(f"{settings.tts_base_url}/health")
-        h = r.json()
+        if r.status_code != 200:
+            return {
+                "ready": False,
+                "voices": [],
+                "default": None,
+                "error": f"TTS returned {r.status_code}: {r.text[:200]}",
+            }
+        try:
+            h = r.json()
+        except ValueError:
+            return {
+                "ready": False,
+                "voices": [],
+                "default": None,
+                "error": "TTS health returned non-JSON or empty response",
+            }
         return {
             "ready": bool(h.get("ready")),
             "voices": h.get("voices", []),

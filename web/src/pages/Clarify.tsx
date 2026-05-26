@@ -6,14 +6,20 @@ import {
   CheckCircle2,
   FileText,
   Paperclip,
+  Save,
   Send,
+  Settings2,
+  Star,
+  Users,
+  X,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { AssigneeSelector } from "@/components/AssigneeSelector";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useChatStream } from "@/hooks/useChatStream";
 import { VoiceButton } from "@/components/VoiceButton";
 import { SpeakButton } from "@/components/SpeakButton";
-import type { AgentParsed, Attachment, Requirement, StoredChatMessage } from "@/lib/types";
+import type { AgentParsed, Attachment, Identity, Requirement, StoredChatMessage } from "@/lib/types";
 
 function speakableText(parsed: AgentParsed): string {
   if (parsed.action === "ask_choice") {
@@ -49,6 +55,12 @@ export function Clarify() {
   const [req, setReq] = useState<Requirement | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [history, setHistory] = useState<StoredChatMessage[]>([]);
+  const [me, setMe] = useState<Identity | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [manageLeadUserId, setManageLeadUserId] = useState<string | null>(null);
+  const [manageCollaboratorUserIds, setManageCollaboratorUserIds] = useState<string[]>([]);
+  const [manageBusy, setManageBusy] = useState(false);
+  const [manageErr, setManageErr] = useState<string | null>(null);
   const [loadedReqId, setLoadedReqId] = useState<string | null>(null);
   const autoStartedRef = useRef<string | null>(null);
   const stream = useChatStream(reqId || "");
@@ -68,6 +80,9 @@ export function Clarify() {
   };
 
   useEffect(() => { refresh(); }, [reqId]);
+  useEffect(() => {
+    api.me().then(setMe).catch(() => setMe(null));
+  }, []);
   useEffect(() => { autoStartedRef.current = null; }, [reqId]);
 
   // when a stream completes with a `done` event we want to refresh
@@ -102,6 +117,35 @@ export function Clarify() {
   const activeParsedKey = activeParsed ? parsedKey(activeParsed) : null;
   const isFinal = req.status === "ready" || req.status === "summary_ready" || showingSummaryCard;
   const canRequestSummary = req.status === "draft" || req.status === "clarifying";
+  const assignees = req.assignees ?? [];
+  const lead = assignees.find((a) => a.role === "lead");
+  const selectedUsers = assignees.map((a) => ({ id: a.user_id, nickname: a.nickname }));
+  const canManageAssignees = !!me && me.nickname === req.submitter_nickname && canActInClarify;
+
+  const openManage = () => {
+    setManageLeadUserId(lead?.user_id ?? null);
+    setManageCollaboratorUserIds(assignees.filter((a) => a.role === "collaborator").map((a) => a.user_id));
+    setManageOpen(true);
+    setManageErr(null);
+  };
+
+  const saveAssignees = async () => {
+    if (!reqId) return;
+    setManageBusy(true);
+    setManageErr(null);
+    try {
+      await api.updateAssignees(reqId, {
+        lead_user_id: manageLeadUserId,
+        collaborator_user_ids: manageCollaboratorUserIds,
+      });
+      setManageOpen(false);
+      await refresh();
+    } catch (e: any) {
+      setManageErr(String(e));
+    } finally {
+      setManageBusy(false);
+    }
+  };
 
   const answer = async (body: { selected_option_key?: string; other_text?: string; text?: string }) => {
     await api.postAnswer(reqId, body);
@@ -123,6 +167,64 @@ export function Clarify() {
           <div className="mt-3">
             <StatusBadge status={req.status} />
           </div>
+        </div>
+        <div className="paper-surface p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
+              <Users className="h-4 w-4" aria-hidden="true" />
+              接单人
+            </div>
+            {canManageAssignees && !manageOpen && (
+              <button className="button-ghost min-h-8 px-2 py-1 text-xs" onClick={openManage}>
+                <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+                管理
+              </button>
+            )}
+          </div>
+          {!manageOpen && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {assignees.length === 0 ? (
+                <span className="pill border-[#e0c895] bg-[#fff7e2] text-[#8a5d10]">公开池</span>
+              ) : assignees.map((a) => (
+                <span
+                  key={a.user_id}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                    a.role === "lead"
+                      ? "border-[#e0c895] bg-[#fff6dc] text-[#8a5d10]"
+                      : "border-stone-200 bg-[#fffdf8] text-stone-600"
+                  }`}
+                >
+                  {a.role === "lead" && <Star className="h-3.5 w-3.5" aria-hidden="true" />}
+                  {a.nickname}
+                </span>
+              ))}
+            </div>
+          )}
+          {manageOpen && (
+            <div className="mt-3 space-y-3">
+              <AssigneeSelector
+                leadUserId={manageLeadUserId}
+                collaboratorUserIds={manageCollaboratorUserIds}
+                selectedUsers={selectedUsers}
+                surface={false}
+                onChange={(next) => {
+                  setManageLeadUserId(next.leadUserId);
+                  setManageCollaboratorUserIds(next.collaboratorUserIds);
+                }}
+              />
+              <div className="flex gap-2">
+                <button className="button-secondary min-h-9 flex-1 px-3 py-1.5 text-xs" disabled={manageBusy} onClick={() => setManageOpen(false)}>
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                  取消
+                </button>
+                <button className="button-primary min-h-9 flex-1 px-3 py-1.5 text-xs" disabled={manageBusy} onClick={saveAssignees}>
+                  <Save className="h-3.5 w-3.5" aria-hidden="true" />
+                  {manageBusy ? "保存中..." : "保存"}
+                </button>
+              </div>
+              {manageErr && <p className="text-xs text-red-700">{manageErr}</p>}
+            </div>
+          )}
         </div>
         <div className="paper-surface p-4">
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">

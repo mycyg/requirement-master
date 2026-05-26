@@ -1,6 +1,6 @@
 import type {
   Activity, Attachment, Comment, Delivery,
-  Identity, Project, Requirement, StoredChatMessage,
+  Identity, Project, Requirement, RequirementAssignee, StoredChatMessage, UserOption,
 } from "./types";
 
 const COMMON: RequestInit = { credentials: "include" };
@@ -22,6 +22,11 @@ export const api = {
       body: JSON.stringify({ nickname }),
     }),
   me: () => json<Identity | null>("/api/auth/me"),
+  listUsers: (search = "") => {
+    const q = new URLSearchParams();
+    if (search.trim()) q.set("search", search.trim());
+    return json<UserOption[]>(`/api/users?${q.toString()}`);
+  },
 
   listProjects: () => json<Project[]>("/api/projects"),
   createProject: (input: { name: string; slug: string; description?: string }) =>
@@ -31,7 +36,12 @@ export const api = {
       body: JSON.stringify(input),
     }),
 
-  createRequirement: (project_id: string, input: { raw_description: string; priority?: string }) =>
+  createRequirement: (project_id: string, input: {
+    raw_description: string;
+    priority?: string;
+    lead_user_id?: string | null;
+    collaborator_user_ids?: string[];
+  }) =>
     json<Requirement>(`/api/projects/${project_id}/requirements`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -46,6 +56,13 @@ export const api = {
     return json<Requirement[]>(`/api/requirements?${q.toString()}`);
   },
   getRequirement: (id: string) => json<Requirement>(`/api/requirements/${id}`),
+  listAssignees: (id: string) => json<RequirementAssignee[]>(`/api/requirements/${id}/assignees`),
+  updateAssignees: (id: string, input: { lead_user_id?: string | null; collaborator_user_ids?: string[] }) =>
+    json<RequirementAssignee[]>(`/api/requirements/${id}/assignees`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
   patchStatus: (id: string, status: string) =>
     json<Requirement>(`/api/requirements/${id}/status`, {
       method: "PATCH",

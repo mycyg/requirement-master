@@ -12,7 +12,7 @@ from itsdangerous import BadSignature, URLSafeSerializer
 from sqlalchemy.orm import Session
 
 from config import settings
-from db import get_db
+from db import SessionLocal, get_db
 from models import User
 
 COOKIE_NAME = "yqgl_id"
@@ -65,6 +65,21 @@ def optional_current_user(
     if not token:
         return None
     return db.query(User).filter(User.cookie_token == token).first()
+
+
+def require_stream_user_id(yqgl_id: str | None = Cookie(default=None)) -> str:
+    """Authenticate long-lived streams without holding a DB session open."""
+    token = _verify(yqgl_id)
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not identified")
+    db = SessionLocal()
+    try:
+        user_id = db.query(User.id).filter(User.cookie_token == token).scalar()
+        if not user_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not identified")
+        return user_id
+    finally:
+        db.close()
 
 
 def get_or_create_user(db: Session, nickname: str) -> tuple[User, bool]:

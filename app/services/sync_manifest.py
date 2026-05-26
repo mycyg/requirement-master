@@ -5,7 +5,7 @@ import json
 
 from sqlalchemy.orm import Session
 
-from models import Attachment, ChatMessage, Project, Requirement, User
+from models import Attachment, ChatMessage, Project, Requirement, RequirementAssignment, User
 
 
 def build(db: Session, req: Requirement) -> dict:
@@ -23,6 +23,12 @@ def build(db: Session, req: Requirement) -> dict:
         .order_by(ChatMessage.created_at)
         .all()
     )
+    assignments = (
+        db.query(RequirementAssignment)
+        .filter(RequirementAssignment.requirement_id == req.id)
+        .all()
+    )
+    assignments.sort(key=lambda a: (0 if a.role == "lead" else 1, a.user.nickname.lower()))
     return {
         "code": req.code,
         "project_slug": project.slug if project else "unknown",
@@ -32,6 +38,10 @@ def build(db: Session, req: Requirement) -> dict:
         "status": req.status,
         "priority": req.priority,
         "claimed_by_nickname": req.claimed_by_nickname,
+        "assignees": [
+            {"user_id": a.user_id, "nickname": a.user.nickname, "role": a.role}
+            for a in assignments
+        ],
         "created_at": req.created_at.isoformat(),
         "summary_md": req.summary_md or "",
         "raw_description": req.raw_description or "",

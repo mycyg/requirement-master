@@ -12,8 +12,7 @@ import json
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from auth import current_user
-from models import User
+from auth import require_stream_user_id
 from services.push_bus import stream
 
 router = APIRouter(prefix="/api/push", tags=["push"])
@@ -37,7 +36,7 @@ async def _gen(request: Request, topic: str):
 
 
 @router.get("/stream")
-async def stream_all(request: Request, _: User = Depends(current_user)) -> StreamingResponse:
+async def stream_all(request: Request, _: str = Depends(require_stream_user_id)) -> StreamingResponse:
     """Global stream — receives all requirement.* events."""
     return StreamingResponse(
         _gen(request, "all"),
@@ -47,7 +46,7 @@ async def stream_all(request: Request, _: User = Depends(current_user)) -> Strea
 
 
 @router.get("/stream/req/{req_id}")
-async def stream_one(req_id: str, request: Request, _: User = Depends(current_user)) -> StreamingResponse:
+async def stream_one(req_id: str, request: Request, _: str = Depends(require_stream_user_id)) -> StreamingResponse:
     """Per-requirement stream — for web UI watching a single requirement detail."""
     return StreamingResponse(
         _gen(request, f"req:{req_id}"),

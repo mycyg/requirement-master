@@ -80,6 +80,22 @@ class Requirement(Base, TimestampMixin):
     attachments: Mapped[list[Attachment]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
     chat_messages: Mapped[list[ChatMessage]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
     deliveries: Mapped[list[Delivery]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
+    assignments: Mapped[list[RequirementAssignment]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
+
+
+class RequirementAssignment(Base, TimestampMixin):
+    __tablename__ = "requirement_assignments"
+    __table_args__ = (UniqueConstraint("requirement_id", "user_id", name="uq_requirement_assignment_user"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)  # lead | collaborator
+    assigned_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+
+    requirement: Mapped[Requirement] = relationship(back_populates="assignments")
+    user: Mapped[User] = relationship(foreign_keys=[user_id])
+    assigned_by: Mapped[User] = relationship(foreign_keys=[assigned_by_user_id])
 
 
 class Attachment(Base, TimestampMixin):

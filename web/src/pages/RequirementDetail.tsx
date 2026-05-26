@@ -10,10 +10,16 @@ import {
   PackageCheck,
   Paperclip,
   Play,
+  Save,
+  Settings2,
+  Star,
   UserCheck,
+  Users,
+  X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { api } from "@/lib/api";
+import { AssigneeSelector } from "@/components/AssigneeSelector";
 import { useReqStream } from "@/hooks/useReqStream";
 import { AILiveView } from "@/components/AILiveView";
 import { ActivityTimeline } from "@/components/ActivityTimeline";
@@ -21,7 +27,7 @@ import { CommentsPanel } from "@/components/CommentsPanel";
 import { DeliverablesTab } from "@/components/DeliverablesTab";
 import { StatusBadge } from "@/components/StatusBadge";
 import { SpeakButton } from "@/components/SpeakButton";
-import type { Attachment, Requirement } from "@/lib/types";
+import type { Attachment, Identity, Requirement } from "@/lib/types";
 
 type Tab = "overview" | "chat" | "attachments" | "deliveries" | "comments" | "activity";
 const DETAIL_TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
@@ -32,15 +38,20 @@ const DETAIL_TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
   { key: "comments", label: "评论", Icon: MessageSquare },
   { key: "activity", label: "活动", Icon: Activity },
 ];
+const ASSIGNEE_MANAGE_STATUSES = new Set(["ready", "claimed", "doing", "revision_requested"]);
 
 export function RequirementDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
   const [req, setReq] = useState<Requirement | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [me, setMe] = useState<Identity | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
   const [actionBusy, setActionBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [manageLeadUserId, setManageLeadUserId] = useState<string | null>(null);
+  const [manageCollaboratorUserIds, setManageCollaboratorUserIds] = useState<string[]>([]);
   const { events, latestStatus } = useReqStream(id);
   const currentStatus = latestStatus || req?.status;
 
@@ -52,6 +63,9 @@ export function RequirementDetail() {
   };
 
   useEffect(() => { refresh(); }, [id]);
+  useEffect(() => {
+    api.me().then(setMe).catch(() => setMe(null));
+  }, []);
   // Reload from server when SSE says status changed
   useEffect(() => { if (latestStatus) refresh(); }, [latestStatus]);
   useEffect(() => {
@@ -74,12 +88,30 @@ export function RequirementDetail() {
     );
   }
 
+  const assignees = req.assignees ?? [];
+  const lead = assignees.find((a) => a.role === "lead");
+  const collaboratorCount = assignees.filter((a) => a.role === "collaborator").length;
+  const assignedIds = new Set(assignees.map((a) => a.user_id));
+  const isWorker = !!me && (assignedIds.has(me.id) || req.claimed_by_user_id === me.id);
+  const canClaim = currentStatus === "ready" && !!me && (assignees.length === 0 || isWorker);
+  const canStartDoing = currentStatus === "claimed" && isWorker;
+  const canManageAssignees = !!me && me.nickname === req.submitter_nickname && ASSIGNEE_MANAGE_STATUSES.has(currentStatus);
+  const mustKeepLead = ["claimed", "doing", "revision_requested"].includes(currentStatus);
+  const selectedUsers = assignees.map((a) => ({ id: a.user_id, nickname: a.nickname }));
+
+  const openManage = () => {
+    setManageLeadUserId(lead?.user_id ?? null);
+    setManageCollaboratorUserIds(assignees.filter((a) => a.role === "collaborator").map((a) => a.user_id));
+    setManageOpen(true);
+    setActionErr(null);
+  };
+
   const claim = async () => {
     setActionBusy(true);
     setActionErr(null);
     try {
       await api.claimRequirement(req.id);
-      refresh();
+      await refresh();
     } catch (e: any) {
       setActionErr(String(e));
     } finally {
@@ -91,7 +123,24 @@ export function RequirementDetail() {
     setActionErr(null);
     try {
       await api.patchStatus(req.id, "doing");
-      refresh();
+      await refresh();
+    } catch (e: any) {
+      setActionErr(String(e));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const saveAssignees = async () => {
+    setActionBusy(true);
+    setActionErr(null);
+    try {
+      await api.updateAssignees(req.id, {
+        lead_user_id: manageLeadUserId,
+        collaborator_user_ids: manageCollaboratorUserIds,
+      });
+      setManageOpen(false);
+      await refresh();
     } catch (e: any) {
       setActionErr(String(e));
     } finally {
@@ -113,19 +162,49 @@ export function RequirementDetail() {
           <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-stone-500">
             <StatusBadge status={currentStatus} />
             <span>by <b>{req.submitter_nickname}</b></span>
-            {req.claimed_by_nickname && <span>接单 <b>{req.claimed_by_nickname}</b></span>}
+            {lead ? (
+              <span>负责人 <b>{lead.nickname}</b>{collaboratorCount > 0 ? ` +${collaboratorCount}` : ""}</span>
+            ) : (
+              <span>公开待接单池</span>
+            )}
             <span>·</span>
             <span>{new Date(req.created_at + "Z").toLocaleString("zh-CN")}</span>
           </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {assignees.length === 0 ? (
+              <span className="pill border-[#e0c895] bg-[#fff7e2] text-[#8a5d10]">
+                <Users className="h-3.5 w-3.5" aria-hidden="true" />
+                公开池
+              </span>
+            ) : assignees.map((a) => (
+              <span
+                key={a.user_id}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                  a.role === "lead"
+                    ? "border-[#e0c895] bg-[#fff6dc] text-[#8a5d10]"
+                    : "border-stone-200 bg-[#fffdf8] text-stone-600"
+                }`}
+              >
+                {a.role === "lead" ? <Star className="h-3.5 w-3.5" aria-hidden="true" /> : <Users className="h-3.5 w-3.5" aria-hidden="true" />}
+                {a.nickname}
+              </span>
+            ))}
+          </div>
         </div>
-        <div className="flex gap-2">
-          {currentStatus === "ready" && (
+        <div className="flex flex-wrap gap-2">
+          {canManageAssignees && (
+            <button className="button-secondary" disabled={actionBusy} onClick={openManage}>
+              <Settings2 className="h-4 w-4" aria-hidden="true" />
+              管理接单人
+            </button>
+          )}
+          {canClaim && (
             <button className="button-accent" disabled={actionBusy} onClick={claim}>
               <UserCheck className="h-4 w-4" aria-hidden="true" />
               {actionBusy ? "处理中..." : "接单"}
             </button>
           )}
-          {currentStatus === "claimed" && (
+          {canStartDoing && (
             <button className="button-accent" disabled={actionBusy} onClick={startDoing}>
               <Play className="h-4 w-4" aria-hidden="true" />
               {actionBusy ? "处理中..." : "开始处理"}
@@ -139,6 +218,40 @@ export function RequirementDetail() {
         </div>
       </header>
       {actionErr && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{actionErr}</div>}
+
+      {manageOpen && (
+        <section className="mt-5">
+          <AssigneeSelector
+            label="管理接单人"
+            leadUserId={manageLeadUserId}
+            collaboratorUserIds={manageCollaboratorUserIds}
+            selectedUsers={selectedUsers}
+            onChange={(next) => {
+              setManageLeadUserId(next.leadUserId);
+              setManageCollaboratorUserIds(next.collaboratorUserIds);
+            }}
+          />
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-stone-500">
+              {mustKeepLead ? "进行中的需求需要保留负责人；协作者拥有同等处理和交付权限。" : "清空后会回到公开待接单池。"}
+            </p>
+            <div className="flex gap-2">
+              <button className="button-secondary" disabled={actionBusy} onClick={() => setManageOpen(false)}>
+                <X className="h-4 w-4" aria-hidden="true" />
+                取消
+              </button>
+              <button
+                className="button-primary"
+                disabled={actionBusy || (mustKeepLead && !manageLeadUserId)}
+                onClick={saveAssignees}
+              >
+                <Save className="h-4 w-4" aria-hidden="true" />
+                {actionBusy ? "保存中..." : "保存"}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* AI live view banner if processing */}
       {currentStatus === "ai_processing" && (
@@ -185,7 +298,7 @@ export function RequirementDetail() {
             ))}
           </ul>
         )}
-        {tab === "deliveries" && <DeliverablesTab req={req} onChange={refresh} />}
+        {tab === "deliveries" && <DeliverablesTab req={req} canReview={me?.nickname === req.submitter_nickname} onChange={refresh} />}
         {tab === "comments" && <CommentsPanel reqId={id} />}
         {tab === "activity" && <ActivityTimeline reqId={id} />}
       </section>

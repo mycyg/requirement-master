@@ -33,3 +33,45 @@ def ensure_runtime_schema(engine: Engine) -> None:
             "CREATE INDEX IF NOT EXISTS ix_requirements_claimed_by_user_id "
             "ON requirements (claimed_by_user_id)"
         ))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS requirement_assignments (
+                id VARCHAR(32) PRIMARY KEY,
+                requirement_id VARCHAR(32) NOT NULL,
+                user_id VARCHAR(32) NOT NULL,
+                role VARCHAR(16) NOT NULL,
+                assigned_by_user_id VARCHAR(32) NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                CONSTRAINT uq_requirement_assignment_user UNIQUE (requirement_id, user_id),
+                FOREIGN KEY(requirement_id) REFERENCES requirements (id) ON DELETE CASCADE,
+                FOREIGN KEY(user_id) REFERENCES users (id),
+                FOREIGN KEY(assigned_by_user_id) REFERENCES users (id)
+            )
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_requirement_assignments_requirement_id "
+            "ON requirement_assignments (requirement_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_requirement_assignments_user_id "
+            "ON requirement_assignments (user_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_requirement_assignments_assigned_by_user_id "
+            "ON requirement_assignments (assigned_by_user_id)"
+        ))
+        conn.execute(text("""
+            INSERT OR IGNORE INTO requirement_assignments (
+                id, requirement_id, user_id, role, assigned_by_user_id, created_at, updated_at
+            )
+            SELECT
+                lower(hex(randomblob(16))),
+                id,
+                claimed_by_user_id,
+                'lead',
+                submitter_user_id,
+                COALESCE(claimed_at, created_at, CURRENT_TIMESTAMP),
+                COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)
+            FROM requirements
+            WHERE claimed_by_user_id IS NOT NULL
+        """))

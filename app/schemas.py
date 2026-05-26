@@ -25,11 +25,32 @@ class ProjectOut(BaseModel):
     created_at: datetime
 
 
+# ---------- User ----------
+
+class UserOut(BaseModel):
+    id: str
+    nickname: str
+
+
 # ---------- Requirement ----------
 
 class RequirementCreateIn(BaseModel):
     raw_description: str = Field(min_length=1)
     priority: str = Field(default="normal", pattern=r"^(low|normal|high|urgent)$")
+    lead_user_id: Optional[str] = None
+    collaborator_user_ids: list[str] = Field(default_factory=list)
+
+
+class RequirementAssigneeOut(BaseModel):
+    user_id: str
+    nickname: str
+    role: str
+    assigned_at: datetime
+
+
+class RequirementAssigneesUpdateIn(BaseModel):
+    lead_user_id: Optional[str] = None
+    collaborator_user_ids: list[str] = Field(default_factory=list)
 
 
 class RequirementOut(BaseModel):
@@ -53,6 +74,7 @@ class RequirementOut(BaseModel):
     delivery_doc_ready_at: Optional[datetime]
     accepted_at: Optional[datetime]
     sync_state: str
+    assignees: list[RequirementAssigneeOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

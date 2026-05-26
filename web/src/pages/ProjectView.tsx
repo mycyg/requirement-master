@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, CalendarClock, ClipboardList, Plus, UserRound } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarClock, ClipboardList, Plus, UserRound, Users } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import { api } from "@/lib/api";
 import type { Project, Requirement } from "@/lib/types";
@@ -43,7 +43,10 @@ export function ProjectView() {
         {reqs.length === 0 && (
           <li className="empty-state m-4">还没有需求</li>
         )}
-        {reqs.map((r) => (
+        {reqs.map((r) => {
+          const lead = r.assignees?.find((a) => a.role === "lead");
+          const collaboratorCount = r.assignees?.filter((a) => a.role === "collaborator").length ?? 0;
+          return (
           <li key={r.id} className="group px-4 py-4 transition hover:bg-white sm:px-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
@@ -60,6 +63,10 @@ export function ProjectView() {
                     {r.submitter_nickname}
                   </span>
                   <span className="inline-flex items-center gap-1.5">
+                    <Users className="h-3.5 w-3.5" aria-hidden="true" />
+                    {lead ? `负责人 ${lead.nickname}${collaboratorCount > 0 ? ` +${collaboratorCount}` : ""}` : "公开池"}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
                     <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
                     {new Date(r.created_at + "Z").toLocaleString("zh-CN")}
                   </span>
@@ -71,7 +78,8 @@ export function ProjectView() {
               </div>
             </div>
           </li>
-        ))}
+          );
+        })}
       </ul>
     </main>
   );
