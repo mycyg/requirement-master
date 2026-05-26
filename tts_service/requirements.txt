@@ -1,0 +1,24 @@
+# Runtime deps for tts_service/server.py (CosyVoice3)
+# Note: torch/torchaudio installed separately with the right CUDA wheel; see scripts/install_cosy_deps.py
+fastapi>=0.115
+uvicorn[standard]>=0.32
+python-multipart>=0.0.12
+pydantic>=2.9
+soundfile>=0.12
+numpy>=1.26
+
+# CosyVoice3 deps (excluding the heavy/optional ones: deepspeed, tensorrt, gradio, openai-whisper-full)
+HyperPyYAML>=1.2
+conformer
+inflect
+librosa
+hydra-core
+omegaconf
+diffusers
+x-transformers
+pyworld
+wetext
+onnxruntime
+rich
+modelscope
+transformers

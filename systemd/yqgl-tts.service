@@ -3,13 +3,13 @@ Description=YQGL CosyVoice TTS FastAPI server
 After=network.target
 
 [Service]
-User=mycyg
+User={{USER}}
 WorkingDirectory=/srv/yqgl/tts_service
-Environment=PYTHONUSERBASE=/home/mycyg/.local
-Environment=COSY_ROOT=/home/mycyg/CosyVoice
-Environment=COSY_MODEL_DIR=/home/mycyg/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B
+Environment=PYTHONUSERBASE={{HOME}}/.local
+Environment=COSY_ROOT={{HOME}}/CosyVoice
+Environment=COSY_MODEL_DIR={{HOME}}/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B
 Environment=COSY_DEFAULT_VOICE=male
-ExecStart=/home/mycyg/.local/share/uv/python/cpython-3.13-linux-x86_64-gnu/bin/python3.13 -m uvicorn server:app --host 127.0.0.1 --port 8002 --workers 1 --timeout-keep-alive 120
+ExecStart={{PY313}} -m uvicorn server:app --host 127.0.0.1 --port 8002 --workers 1 --timeout-keep-alive 120
 Restart=on-failure
 RestartSec=15
 StandardOutput=append:/srv/yqgl/data/tts.log

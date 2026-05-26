@@ -82,26 +82,32 @@
 
 ```bash
 # 1. 准备
-git clone https://github.com/<you>/yqgl.git
+git clone https://github.com/mycyg/requirement-master.git yqgl
 cd yqgl
 cp scripts/server_creds.example.py scripts/server_creds.py   # 填 SSH 凭据
-cp app/.env.example app/.env                                  # 填 LLM key 等
+cp app/.env.example app/.env                                  # 填 DeepSeek LLM key 等
 
-# 2. 装环境（在能 SSH 到目标机器的本地跑）
-python scripts/provision.py        # 主 web 服务（FastAPI + SQLite）
-python scripts/setup_py313.py      # Python 3.13 给 ASR/TTS 用
-python scripts/install_cosy_deps.py
-python scripts/provision_asr.py    # 启动 Qwen3-ASR
-python scripts/provision_tts.py    # 启动 CosyVoice
+# 2. 主 web 服务（FastAPI + SQLite + systemd）
+#    装到 /srv/yqgl/{app,venv,data}/，建主 systemd unit，开机自启
+python scripts/provision.py
 
-# 3. 推前端 + 启动主服务
+# 3. ASR + TTS 服务（GPU；首次共约 7GB 模型下载 + 5GB torch wheel）
+python scripts/setup_py313.py           # 装独立 Python 3.13 (uv，~30MB)
+python scripts/download_models.py       # 下 Qwen3-ASR-1.7B + CosyVoice repo + 0.5B 模型 (~7GB)
+python scripts/install_cosy_deps.py     # 装 torch + qwen-asr + cosyvoice 所有 deps (~5GB torch)
+python scripts/provision_asr.py         # 模板化 yqgl-asr.service + 启动 (8001)
+python scripts/provision_tts.py         # 模板化 yqgl-tts.service + 启动 (8002)
+
+# 4. 前端构建 + 部署
 cd web && npm install && npm run build && cd ..
 python scripts/deploy_web.py
 
-# 4. 校验
-python scripts/verify_systemd.py
+# 5. 校验
+python scripts/verify_systemd.py        # 三个 unit 都应 enabled + active
 curl http://your.server.ip:8080/api/health
 ```
+
+> **不需要 ASR/TTS？** 跳过步骤 3 即可。主 web 服务和 LLM 澄清不依赖它们；只是语音输入 / 输出会返回 503。
 
 详细步骤、运维命令、风险见 [DEPLOY.md](DEPLOY.md)。
 
@@ -132,6 +138,18 @@ python scripts/smoke_m6.py     # submit + push
 python scripts/smoke_m8.py     # 人工 delivery + LLM 文档
 python scripts/smoke_m12.py    # AI 自动处理
 ```
+
+## ASR / TTS 一些坑（社区参考）
+
+| 组件 | 关键事 |
+|---|---|
+| Python 版本 | 必须 **3.13**（CosyVoice + qwen_asr 的轮子和老版 transformer 链卡死在 3.13） |
+| Python 装哪儿 | 用 `uv python install 3.13`，**别动系统 python**（PEP 668 会拦你） |
+| 包装哪儿 | `pip install --user --break-system-packages` 到 `~/.local/lib/python3.13/site-packages`；systemd unit 通过 `PYTHONUSERBASE=$HOME/.local` 让服务进程找得到 |
+| Qwen3-ASR 调用方式 | **不用 vLLM**；用 `qwen_asr.Qwen3ASRModel.from_pretrained()` Python API。模型 2.6s 加载、转 28s 中文 wav 约 2.8s |
+| CosyVoice 依赖坑 | `inflect` / `rich` / `WeTextProcessing` / `pynini` 容易缺。`install_cosy_deps.py` 末尾的迭代探测 loop 会自动补齐 |
+| 模型路径 | 都在 `~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B` 和 `~/.cache/modelscope/hub/...`；systemd unit 通过 `{{HOME}}` 占位符动态生成 |
+| GPU 显存 | ASR ~5GB + TTS ~3GB + 操作系统/X11 ~200MB，单卡 RTX 3090 (24GB) 富余很多 |
 
 ## 路线图
 

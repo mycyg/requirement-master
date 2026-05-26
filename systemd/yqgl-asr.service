@@ -3,13 +3,13 @@ Description=YQGL Qwen3-ASR FastAPI server
 After=network.target
 
 [Service]
-User=mycyg
+User={{USER}}
 WorkingDirectory=/srv/yqgl/asr_service
-Environment=QWEN_ASR_MODEL_PATH=/home/mycyg/.cache/modelscope/hub/models/Qwen/Qwen3-ASR-1___7B
+Environment=QWEN_ASR_MODEL_PATH={{HOME}}/.cache/modelscope/hub/models/Qwen/Qwen3-ASR-1___7B
 Environment=QWEN_ASR_DEVICE=cuda:0
 Environment=QWEN_ASR_DTYPE=bfloat16
-Environment=PYTHONUSERBASE=/home/mycyg/.local
-ExecStart=/home/mycyg/.local/share/uv/python/cpython-3.13-linux-x86_64-gnu/bin/python3.13 -m uvicorn server:app --host 127.0.0.1 --port 8001 --workers 1 --timeout-keep-alive 120
+Environment=PYTHONUSERBASE={{HOME}}/.local
+ExecStart={{PY313}} -m uvicorn server:app --host 127.0.0.1 --port 8001 --workers 1 --timeout-keep-alive 120
 Restart=on-failure
 RestartSec=15
 StandardOutput=append:/srv/yqgl/data/asr.log
