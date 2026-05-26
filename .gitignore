@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.log
+
+# Tauri
+client/src-tauri/target/
+client/src-tauri/gen/
+
+# Local data
+app/data/
+data/
+*.db
+*.db-journal
+
+# Secrets / local config
+.env
+.env.local
+scripts/server_creds.py
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Claude Code local project config (not project code)
+.claude/
+
+# Local dev artifacts
+_probe*.py

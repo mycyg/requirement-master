@@ -1,0 +1,16 @@
+[Unit]
+Description=YQGL FastAPI Web
+After=network.target
+
+[Service]
+User=mycyg
+WorkingDirectory=/srv/yqgl/app
+EnvironmentFile=/srv/yqgl/app/.env
+ExecStart=/srv/yqgl/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8080 --workers 1 --timeout-keep-alive 120
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/srv/yqgl/data/web.log
+StandardError=append:/srv/yqgl/data/web.log
+
+[Install]
+WantedBy=multi-user.target
