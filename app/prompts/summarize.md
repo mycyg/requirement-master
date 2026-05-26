@@ -32,9 +32,9 @@ Do not copy the English example headings when the user's language is not English
 
 # AI Feasibility Rubric
 
-The autonomous AI worker can write files and run shell commands in an isolated work directory. It is usually suitable for pure file deliverables such as web pages, spreadsheets, command-line scripts, text reports, or static documents when no private systems or real-time human decisions are required.
+The autonomous AI worker can list files, read files, write UTF-8 text files, and submit notes inside an isolated working directory. It cannot run shell commands, install dependencies, use the network, execute generated code, or verify runtime behavior. It is usually suitable for pure file-generation deliverables such as static HTML pages, markdown reports, simple text documents, configuration templates, or other artifacts that can be produced without execution.
 
-Mark `ai_doable` as false if the task requires live internal-system access, confidential data not provided in the request, on-site debugging, extended human decision-making, credentials, deployment privileges, or product judgment that has not been specified.
+Mark `ai_doable` as false if the task requires shell execution, code execution, dependency installation, live internal-system access, confidential data not provided in the request, on-site debugging, extended human decision-making, credentials, deployment privileges, runtime testing, or product judgment that has not been specified.
 
 # JSON Contract
 

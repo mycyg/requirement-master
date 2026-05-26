@@ -41,7 +41,8 @@ export function useChatStream(req_id: string) {
     }
 
     if (!resp.ok || !resp.body) {
-      setState((s) => ({ ...s, running: false, error: `${resp.status} ${resp.statusText}` }));
+      const body = await resp.text().catch(() => "");
+      setState((s) => ({ ...s, running: false, error: `${resp.status} ${resp.statusText}${body ? `: ${body.slice(0, 200)}` : ""}` }));
       return;
     }
 
@@ -58,7 +59,7 @@ export function useChatStream(req_id: string) {
         if (event === "text") return { ...s, text: s.text + data };
         if (event === "parsed") {
           try {
-            return { ...s, parsed: JSON.parse(data) as AgentParsed };
+            return { ...s, parsed: JSON.parse(data) as AgentParsed, running: false };
           } catch {
             return { ...s, error: "parsed event was not valid JSON" };
           }

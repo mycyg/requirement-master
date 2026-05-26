@@ -27,6 +27,7 @@ from models import Attachment, Requirement, User
 from schemas import AttachmentOut, ChunkInitIn, ChunkInitOut
 from services.activity import log_activity
 from services.file_parser import is_parseable, parse_file
+from services.permissions import can_add_requirement_attachment, can_view_requirement_assets
 
 router = APIRouter(prefix="/api", tags=["attachments"])
 
@@ -71,14 +72,25 @@ def _require_req(db: Session, req_id: str) -> Requirement:
     return r
 
 
+def _require_can_add_attachment(req: Requirement, user: User) -> None:
+    if not can_add_requirement_attachment(req, user):
+        raise HTTPException(status_code=403, detail="only the requester can add attachments before dispatch")
+
+
+def _require_can_view_assets(req: Requirement, user: User) -> None:
+    if not can_view_requirement_assets(req, user):
+        raise HTTPException(status_code=403, detail="you cannot access files for this requirement")
+
+
 @router.post("/requirements/{req_id}/upload/init", response_model=ChunkInitOut)
 def init_upload(
     req_id: str,
     payload: ChunkInitIn,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> ChunkInitOut:
-    _require_req(db, req_id)
+    req = _require_req(db, req_id)
+    _require_can_add_attachment(req, user)
     if payload.total_size > MAX_BYTES:
         raise HTTPException(status_code=413, detail=f"file too large (>{MAX_BYTES} bytes)")
     if payload.total_chunks != _expected_chunks(payload.total_size):
@@ -94,6 +106,7 @@ def init_upload(
             "total_size": payload.total_size,
             "total_chunks": payload.total_chunks,
             "mime": payload.mime,
+            "user_id": user.id,
         }),
         encoding="utf-8",
     )
@@ -102,13 +115,15 @@ def init_upload(
 
 @router.put("/requirements/{req_id}/upload/{upload_id}/chunk/{idx}")
 async def upload_chunk(req_id: str, upload_id: str, idx: int, request: Request,
-                       _: User = Depends(current_user)) -> dict:
+                       user: User = Depends(current_user)) -> dict:
     pdir = _partial_dir(upload_id)
     if not pdir.exists():
         raise HTTPException(status_code=404, detail="unknown upload_id")
     meta = json.loads(_meta_path(upload_id).read_text(encoding="utf-8"))
     if meta["req_id"] != req_id:
         raise HTTPException(status_code=400, detail="upload_id does not match requirement")
+    if meta.get("user_id") != user.id:
+        raise HTTPException(status_code=403, detail="only the upload owner can send chunks")
     if idx < 0 or idx >= meta["total_chunks"]:
         raise HTTPException(status_code=400, detail="chunk index out of range")
 
@@ -151,8 +166,11 @@ def finalize_upload(
     meta = json.loads(_meta_path(upload_id).read_text(encoding="utf-8"))
     if meta["req_id"] != req_id:
         raise HTTPException(status_code=400, detail="upload_id does not match requirement")
+    if meta.get("user_id") != user.id:
+        raise HTTPException(status_code=403, detail="only the upload owner can finalize this upload")
 
     r = _require_req(db, req_id)
+    _require_can_add_attachment(r, user)
     chunks = sorted(p for p in pdir.iterdir() if p.suffix == ".bin")
     if len(chunks) != meta["total_chunks"]:
         raise HTTPException(status_code=400, detail=f"missing chunks: have {len(chunks)}, expected {meta['total_chunks']}")
@@ -239,6 +257,7 @@ async def upload_simple(
 ) -> AttachmentOut:
     """Convenience path for small files (no chunking). Streams to disk, max 1 GB."""
     r = _require_req(db, req_id)
+    _require_can_add_attachment(r, user)
     safe_filename = Path(file.filename or "upload.bin").name
     final_path = _req_dir(req_id) / safe_filename
     if final_path.exists():
@@ -296,8 +315,9 @@ async def upload_simple(
 
 
 @router.get("/requirements/{req_id}/attachments", response_model=list[AttachmentOut])
-def list_attachments(req_id: str, db: Session = Depends(get_db), _: User = Depends(current_user)) -> list[AttachmentOut]:
-    _require_req(db, req_id)
+def list_attachments(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> list[AttachmentOut]:
+    req = _require_req(db, req_id)
+    _require_can_view_assets(req, user)
     rows = db.query(Attachment).filter(Attachment.requirement_id == req_id).order_by(Attachment.created_at).all()
     return [
         AttachmentOut(
@@ -310,11 +330,13 @@ def list_attachments(req_id: str, db: Session = Depends(get_db), _: User = Depen
 
 
 @router.get("/files/{att_id}")
-def download_attachment(att_id: str, db: Session = Depends(get_db), _: User = Depends(current_user)):
+def download_attachment(att_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
     from fastapi.responses import FileResponse
     a = db.query(Attachment).filter(Attachment.id == att_id).first()
     if not a:
         raise HTTPException(status_code=404, detail="attachment not found")
+    req = _require_req(db, a.requirement_id)
+    _require_can_view_assets(req, user)
     p = Path(a.storage_path)
     if not p.exists():
         raise HTTPException(status_code=410, detail="file missing on disk")

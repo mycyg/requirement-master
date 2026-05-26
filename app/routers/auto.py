@@ -27,6 +27,26 @@ def _workdir(req_id: str) -> Path:
     return settings.data_dir / "auto" / req_id
 
 
+def _looks_english(text: str) -> bool:
+    letters = sum(1 for c in text if c.isascii() and c.isalpha())
+    cjk = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
+    return letters > cjk * 2
+
+
+def _auto_delivery_doc(summary_md: str, notes: str, seconds: float, file_count: int, review_reason: str) -> str:
+    if _looks_english(summary_md + notes + review_reason):
+        return (
+            f"## Delivery Overview\nThis round was completed automatically by AI ({settings.llm_model}). {notes}\n\n"
+            f"## Processing Time\n{seconds:.1f} seconds, {file_count} delivered files.\n\n"
+            f"## Review\n{review_reason}\n"
+        )
+    return (
+        f"## 交付概述\n本轮由 AI ({settings.llm_model}) 自动完成。{notes}\n\n"
+        f"## 处理时长\n{seconds:.1f} 秒，共 {file_count} 个交付文件\n\n"
+        f"## 复审\n{review_reason}\n"
+    )
+
+
 @router.post("/requirements/{req_id}/auto-process")
 async def trigger_auto(
     req_id: str,
@@ -91,11 +111,7 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
                         file_count += 1
             size = pkg_path.stat().st_size
 
-            doc = (
-                f"## 交付概述\n本轮由 AI ({settings.llm_model}) 自动完成。{outcome.notes}\n\n"
-                f"## 处理时长\n{outcome.seconds:.1f} 秒，共 {file_count} 个交付文件\n\n"
-                f"## 复审\n{outcome.review_reason}\n"
-            )
+            doc = _auto_delivery_doc(summary_md, outcome.notes, outcome.seconds, file_count, outcome.review_reason)
 
             d = Delivery(
                 requirement_id=req_id, round=round_num,

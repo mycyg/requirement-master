@@ -9,6 +9,7 @@ from db import get_db
 from models import ActivityLog, Comment, Requirement, User
 from schemas import ActivityOut, CommentCreateIn, CommentOut
 from services.activity import log_activity
+from services.permissions import can_view_requirement_record
 from services.push_bus import bus
 
 router = APIRouter(prefix="/api", tags=["comments"])
@@ -22,8 +23,10 @@ def _require_req(db: Session, req_id: str) -> Requirement:
 
 
 @router.get("/requirements/{req_id}/comments", response_model=list[CommentOut])
-def list_comments(req_id: str, db: Session = Depends(get_db), _: User = Depends(current_user)) -> list[CommentOut]:
-    _require_req(db, req_id)
+def list_comments(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> list[CommentOut]:
+    req = _require_req(db, req_id)
+    if not can_view_requirement_record(req, user):
+        raise HTTPException(status_code=403, detail="you cannot view comments for this requirement yet")
     rows = (
         db.query(Comment)
         .filter(Comment.requirement_id == req_id)
@@ -43,7 +46,9 @@ async def create_comment(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> CommentOut:
-    _require_req(db, req_id)
+    req = _require_req(db, req_id)
+    if not can_view_requirement_record(req, user):
+        raise HTTPException(status_code=403, detail="you cannot comment on this requirement yet")
     c = Comment(requirement_id=req_id, author_nickname=user.nickname, body=payload.body.strip())
     db.add(c)
     log_activity(
@@ -60,8 +65,10 @@ async def create_comment(
 
 
 @router.get("/requirements/{req_id}/activity", response_model=list[ActivityOut])
-def list_activity(req_id: str, db: Session = Depends(get_db), _: User = Depends(current_user)) -> list[ActivityOut]:
-    _require_req(db, req_id)
+def list_activity(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> list[ActivityOut]:
+    req = _require_req(db, req_id)
+    if not can_view_requirement_record(req, user):
+        raise HTTPException(status_code=403, detail="you cannot view activity for this requirement yet")
     rows = (
         db.query(ActivityLog)
         .filter(ActivityLog.requirement_id == req_id)

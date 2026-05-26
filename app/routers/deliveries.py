@@ -15,6 +15,7 @@ from db import get_db
 from models import Delivery, Requirement, RevisionRequest, User
 from services.activity import log_activity
 from services.delivery_doc import inspect_zip_entries
+from services.permissions import can_view_requirement_assets
 from services.push_bus import bus
 
 router = APIRouter(prefix="/api", tags=["deliveries"])
@@ -44,6 +45,11 @@ def _require_req(db: Session, req_id: str) -> Requirement:
     return r
 
 
+def _require_can_view_assets(req: Requirement, user: User) -> None:
+    if not can_view_requirement_assets(req, user):
+        raise HTTPException(status_code=403, detail="you cannot access deliveries for this requirement")
+
+
 def _zip_filelist(path: str) -> list[dict]:
     try:
         return [
@@ -55,8 +61,9 @@ def _zip_filelist(path: str) -> list[dict]:
 
 
 @router.get("/requirements/{req_id}/deliveries", response_model=list[DeliveryOut])
-def list_deliveries(req_id: str, db: Session = Depends(get_db), _: User = Depends(current_user)) -> list[DeliveryOut]:
-    _require_req(db, req_id)
+def list_deliveries(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> list[DeliveryOut]:
+    req = _require_req(db, req_id)
+    _require_can_view_assets(req, user)
     rows = (
         db.query(Delivery)
         .filter(Delivery.requirement_id == req_id)
@@ -76,10 +83,11 @@ def list_deliveries(req_id: str, db: Session = Depends(get_db), _: User = Depend
 
 
 @router.get("/deliveries/{delivery_id}/package")
-def download_package(delivery_id: str, db: Session = Depends(get_db), _: User = Depends(current_user)):
+def download_package(delivery_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
     d = db.query(Delivery).filter(Delivery.id == delivery_id).first()
     if not d:
         raise HTTPException(status_code=404, detail="delivery not found")
+    _require_can_view_assets(d.requirement, user)
     p = Path(d.package_path)
     if not p.exists():
         raise HTTPException(status_code=410, detail="package missing on disk")
@@ -91,10 +99,11 @@ def download_package(delivery_id: str, db: Session = Depends(get_db), _: User = 
 
 
 @router.get("/deliveries/{delivery_id}/files/{filename:path}")
-def download_file_from_package(delivery_id: str, filename: str, db: Session = Depends(get_db), _: User = Depends(current_user)):
+def download_file_from_package(delivery_id: str, filename: str, db: Session = Depends(get_db), user: User = Depends(current_user)):
     d = db.query(Delivery).filter(Delivery.id == delivery_id).first()
     if not d:
         raise HTTPException(status_code=404, detail="delivery not found")
+    _require_can_view_assets(d.requirement, user)
     p = Path(d.package_path)
     if not p.exists():
         raise HTTPException(status_code=410, detail="package missing on disk")

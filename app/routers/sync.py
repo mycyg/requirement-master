@@ -16,6 +16,7 @@ from auth import current_user
 from db import get_db
 from models import Requirement, User
 from services.activity import log_activity
+from services.permissions import can_ack_requirement_sync, can_view_requirement_assets
 from services.push_bus import bus
 from services.sync_manifest import build as build_manifest
 
@@ -55,10 +56,12 @@ async def submit(req_id: str, db: Session = Depends(get_db), user: User = Depend
 
 
 @router.get("/requirements/{req_id}/sync-manifest")
-def sync_manifest(req_id: str, db: Session = Depends(get_db), _: User = Depends(current_user)) -> dict:
+def sync_manifest(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
     r = db.query(Requirement).filter(Requirement.id == req_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
+    if not can_view_requirement_assets(r, user):
+        raise HTTPException(status_code=403, detail="you cannot sync files for this requirement")
     return build_manifest(db, r)
 
 
@@ -67,6 +70,8 @@ async def sync_ack(req_id: str, db: Session = Depends(get_db), user: User = Depe
     r = db.query(Requirement).filter(Requirement.id == req_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
+    if not can_ack_requirement_sync(r, user):
+        raise HTTPException(status_code=403, detail="you cannot acknowledge sync for this requirement")
     r.sync_state = "synced"
     log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="synced", detail={})
     db.commit()

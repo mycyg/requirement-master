@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -7,9 +7,9 @@ import {
   FileText,
   Paperclip,
   Send,
-  Sparkles,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { StatusBadge } from "@/components/StatusBadge";
 import { useChatStream } from "@/hooks/useChatStream";
 import { VoiceButton } from "@/components/VoiceButton";
 import { SpeakButton } from "@/components/SpeakButton";
@@ -30,6 +30,18 @@ function speakableText(parsed: AgentParsed): string {
   return "";
 }
 
+function parsedFromHistory(msg: StoredChatMessage | undefined): AgentParsed | null {
+  if (!msg || msg.role !== "assistant" || !msg.content || typeof msg.content !== "object") return null;
+  if (msg.kind === "question_choice" && msg.content.action === "ask_choice") return msg.content as AgentParsed;
+  if (msg.kind === "question_open" && msg.content.action === "ask_open") return msg.content as AgentParsed;
+  if (msg.kind === "summary" && msg.content.action === "summarize") return msg.content as AgentParsed;
+  return null;
+}
+
+function parsedKey(parsed: AgentParsed): string {
+  return `${parsed.action}:${JSON.stringify(parsed.payload).slice(0, 160)}`;
+}
+
 export function Clarify() {
   const { id: reqId } = useParams<{ id: string }>();
   const nav = useNavigate();
@@ -37,6 +49,7 @@ export function Clarify() {
   const [req, setReq] = useState<Requirement | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [history, setHistory] = useState<StoredChatMessage[]>([]);
+  const autoStartedRef = useRef<string | null>(null);
   const stream = useChatStream(reqId || "");
 
   const refresh = async () => {
@@ -47,6 +60,7 @@ export function Clarify() {
   };
 
   useEffect(() => { refresh(); }, [reqId]);
+  useEffect(() => { autoStartedRef.current = null; }, [reqId]);
 
   // when a stream completes with a `done` event we want to refresh
   useEffect(() => {
@@ -56,21 +70,31 @@ export function Clarify() {
   // auto-start the first turn if no assistant messages yet
   useEffect(() => {
     if (!req || stream.running || stream.parsed) return;
-    if (history.length === 0 && req.status !== "ready" && req.status !== "summary_ready") {
+    if (history.length === 0 && (req.status === "draft" || req.status === "clarifying")) {
+      if (autoStartedRef.current === req.id) return;
+      autoStartedRef.current = req.id;
       stream.run({ force_summarize: false });
     }
   }, [req, history.length]);
 
   if (!reqId || !req) return <main className="narrow-container text-stone-500">加载中...</main>;
 
+  const latestHistoryMsg = history[history.length - 1];
+  const latestHistoryParsed = parsedFromHistory(latestHistoryMsg);
   const storedSummary = [...history]
     .reverse()
     .find((m) => m.kind === "summary" && m.content?.action === "summarize")
     ?.content as AgentParsed | undefined;
+  const canActInClarify = req.status === "draft" || req.status === "clarifying" || req.status === "summary_ready";
+  const restoredParsed = !stream.running && canActInClarify ? latestHistoryParsed : null;
   const activeParsed = stream.parsed ??
-    (req.status === "summary_ready" && storedSummary?.action === "summarize" ? storedSummary : null);
+    (req.status === "summary_ready" && storedSummary?.action === "summarize" ? storedSummary : restoredParsed);
   const showingSummaryCard = activeParsed?.action === "summarize";
+  const activeHistoryMsgId = activeParsed && latestHistoryParsed?.action === activeParsed.action
+    ? latestHistoryMsg?.id
+    : null;
   const isFinal = req.status === "ready" || req.status === "summary_ready" || showingSummaryCard;
+  const canRequestSummary = req.status === "draft" || req.status === "clarifying";
 
   const answer = async (body: { selected_option_key?: string; other_text?: string; text?: string }) => {
     await api.postAnswer(reqId, body);
@@ -89,9 +113,8 @@ export function Clarify() {
         <div className="paper-surface p-4">
           <div className="font-mono text-xs text-stone-500">{req.code}</div>
           <div className="mt-1 break-words text-lg font-semibold text-stone-950">{req.title || "(澄清中)"}</div>
-          <div className="mt-3 flex items-center gap-2 text-xs text-stone-500">
-            <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-            {req.status}
+          <div className="mt-3">
+            <StatusBadge status={req.status} />
           </div>
         </div>
         <div className="paper-surface p-4">
@@ -109,7 +132,7 @@ export function Clarify() {
             ))}
           </ul>
         </div>
-        {!isFinal && (
+        {!isFinal && canRequestSummary && (
           <button
             className="button-accent w-full"
             disabled={stream.running}
@@ -124,11 +147,11 @@ export function Clarify() {
       {/* right: chat thread */}
       <section className="min-w-0 space-y-4">
         {history.map((m) => (
-          showingSummaryCard && m.kind === "summary" ? null : <Bubble key={m.id} msg={m} />
+          m.id === activeHistoryMsgId || (showingSummaryCard && m.kind === "summary") ? null : <Bubble key={m.id} msg={m} />
         ))}
 
         {/* live stream */}
-        {(stream.running || stream.thinking || stream.text) && (
+        {!activeParsed && (stream.running || stream.thinking || stream.text) && (
           <LiveBubble thinking={stream.thinking} text={stream.text} done={!stream.running && !stream.parsed} />
         )}
 
@@ -136,6 +159,7 @@ export function Clarify() {
         {activeParsed && !stream.running && (
           activeParsed.action === "summarize"
             ? <SummaryCard
+                key={parsedKey(activeParsed)}
                 parsed={activeParsed}
                 onDeliver={async ({ tryAi }) => {
                   if (tryAi) {
@@ -146,7 +170,7 @@ export function Clarify() {
                   nav(`/r/${reqId}`);
                 }}
               />
-            : <QuestionCard parsed={activeParsed} onAnswer={answer} />
+            : <QuestionCard key={parsedKey(activeParsed)} parsed={activeParsed} onAnswer={answer} />
         )}
 
         {/* hidden autoplay driver — re-fires whenever a new parsed arrives */}
@@ -204,10 +228,10 @@ function LiveBubble({ thinking, text, done }: { thinking: string; text: string; 
   return (
     <div className="paper-surface p-4">
       {thinking && (
-        <details open className="mb-2">
+        <details className="mb-2">
           <summary className="cursor-pointer text-xs font-semibold text-stone-500">
             <Bot className="mr-1.5 inline h-3.5 w-3.5" aria-hidden="true" />
-            思考中...
+            正在整理上下文...
           </summary>
           <pre className="scrollbar-thin-warm mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-stone-200 bg-[#fffaf1] p-3 text-xs text-stone-600">{thinking}</pre>
         </details>
@@ -221,6 +245,21 @@ function LiveBubble({ thinking, text, done }: { thinking: string; text: string; 
 function QuestionCard({ parsed, onAnswer }: { parsed: AgentParsed; onAnswer: (b: any) => Promise<void> }) {
   const [other, setOther] = useState("");
   const [open, setOpen] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async (body: any) => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await onAnswer(body);
+    } catch (e: any) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   if (parsed.action === "ask_choice") {
     const p = parsed.payload;
@@ -235,7 +274,8 @@ function QuestionCard({ parsed, onAnswer }: { parsed: AgentParsed; onAnswer: (b:
             <button
               key={o.key}
               className="w-full rounded-lg border border-stone-200 bg-[#fffdf8] px-4 py-3 text-left text-sm text-stone-800 transition hover:border-stone-900 hover:bg-white"
-              onClick={() => onAnswer({ selected_option_key: o.key })}
+              disabled={busy}
+              onClick={() => submit({ selected_option_key: o.key })}
             >
               {o.label}
             </button>
@@ -254,15 +294,16 @@ function QuestionCard({ parsed, onAnswer }: { parsed: AgentParsed; onAnswer: (b:
               <VoiceButton onText={(t) => setOther((s) => (s ? s + " " : "") + t)} />
               <button
                 className="button-primary"
-                disabled={!other.trim()}
-                onClick={() => onAnswer({ selected_option_key: "other", other_text: other.trim() })}
+                disabled={busy || !other.trim()}
+                onClick={() => submit({ selected_option_key: "other", other_text: other.trim() })}
               >
                 <Send className="h-4 w-4" aria-hidden="true" />
-                提交
+                {busy ? "提交中..." : "提交"}
               </button>
             </div>
           </div>
         )}
+        {err && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>}
       </div>
     );
   }
@@ -287,14 +328,15 @@ function QuestionCard({ parsed, onAnswer }: { parsed: AgentParsed; onAnswer: (b:
             <VoiceButton onText={(t) => setOpen((s) => (s ? s + " " : "") + t)} />
             <button
               className="button-primary"
-              disabled={!open.trim()}
-              onClick={() => onAnswer({ text: open.trim() })}
+              disabled={busy || !open.trim()}
+              onClick={() => submit({ text: open.trim() })}
             >
               <Send className="h-4 w-4" aria-hidden="true" />
-              发送
+              {busy ? "发送中..." : "发送"}
             </button>
           </div>
         </div>
+        {err && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>}
       </div>
     );
   }
@@ -302,8 +344,10 @@ function QuestionCard({ parsed, onAnswer }: { parsed: AgentParsed; onAnswer: (b:
   return null;
 }
 
-function SummaryCard({ parsed, onDeliver }: { parsed: AgentParsed; onDeliver: (o: { tryAi: boolean }) => void }) {
+function SummaryCard({ parsed, onDeliver }: { parsed: AgentParsed; onDeliver: (o: { tryAi: boolean }) => Promise<void> }) {
   const [tryAi, setTryAi] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   if (parsed.action !== "summarize") return null;
   const p = parsed.payload;
   const recommended = !!p.ai_doable;
@@ -353,12 +397,24 @@ function SummaryCard({ parsed, onDeliver }: { parsed: AgentParsed; onDeliver: (o
           className={`button w-full sm:w-auto ${
             finalTryAi ? "border-[#684b7a] bg-[#684b7a] text-white hover:bg-[#563d65]" : "border-[#4e7146] bg-[#5f8358] text-white hover:bg-[#4e7146]"
           }`}
-          onClick={() => onDeliver({ tryAi: finalTryAi })}
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setErr(null);
+            try {
+              await onDeliver({ tryAi: finalTryAi });
+            } catch (e: any) {
+              setErr(String(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
         >
           {finalTryAi ? <Bot className="h-4 w-4" aria-hidden="true" /> : <FileText className="h-4 w-4" aria-hidden="true" />}
-          {finalTryAi ? "投递并交给 AI" : "投递给我（人工处理）"}
+          {busy ? "处理中..." : finalTryAi ? "投递并交给 AI" : "投递给我（人工处理）"}
         </button>
       </div>
+      {err && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>}
     </div>
   );
 }

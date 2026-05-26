@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -9,6 +10,7 @@ from db import get_db
 from models import Project, Requirement, User
 from schemas import RequirementCreateIn, RequirementOut, StatusUpdateIn
 from services.activity import log_activity
+from services.permissions import PRIVATE_REQUIREMENT_STATUSES, can_view_requirement_record
 from services.push_bus import bus
 
 router = APIRouter(prefix="/api", tags=["requirements"])
@@ -99,6 +101,11 @@ def list_requirements(
         q = q.filter(Requirement.submitter_user_id == user.id)
     if assigned_to_me:
         q = q.filter(Requirement.claimed_by_user_id == user.id)
+    q = q.filter(or_(
+        ~Requirement.status.in_(PRIVATE_REQUIREMENT_STATUSES),
+        Requirement.submitter_user_id == user.id,
+        Requirement.claimed_by_user_id == user.id,
+    ))
     rows = q.order_by(Requirement.created_at.desc()).limit(500).all()
     return [
         _to_out(r, submitter_nickname=submitter_nickname, project_slug=project_slug)
@@ -107,10 +114,12 @@ def list_requirements(
 
 
 @router.get("/requirements/{req_id}", response_model=RequirementOut)
-def get_requirement(req_id: str, db: Session = Depends(get_db), _: User = Depends(current_user)) -> RequirementOut:
+def get_requirement(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> RequirementOut:
     r = db.query(Requirement).filter(Requirement.id == req_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
+    if not can_view_requirement_record(r, user):
+        raise HTTPException(status_code=403, detail="you cannot view this requirement yet")
     return _enrich(db, r)
 
 
@@ -148,10 +157,10 @@ async def update_status(
         raise HTTPException(status_code=400, detail=f"cannot change status from {old} to {new}")
     if old in {"draft", "clarifying", "summary_ready"} and r.submitter_user_id != user.id:
         raise HTTPException(status_code=403, detail="only the requester can change this status")
-    if old in {"claimed", "doing", "revision_requested"} and r.claimed_by_user_id and r.claimed_by_user_id != user.id:
-        raise HTTPException(status_code=403, detail="only the assignee can change this status")
     if new == "cancelled" and user.id not in {r.submitter_user_id, r.claimed_by_user_id}:
         raise HTTPException(status_code=403, detail="only the requester or assignee can cancel this requirement")
+    if new != "cancelled" and old in {"claimed", "doing", "revision_requested"} and r.claimed_by_user_id and r.claimed_by_user_id != user.id:
+        raise HTTPException(status_code=403, detail="only the assignee can change this status")
 
     r.status = new
     now = datetime.utcnow()

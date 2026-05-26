@@ -98,6 +98,7 @@ def init(
             "total_size": payload.total_size,
             "total_chunks": payload.total_chunks,
             "nickname": user.nickname,
+            "user_id": user.id,
         }),
         encoding="utf-8",
     )
@@ -108,7 +109,7 @@ def init(
 @router.put("/requirements/{req_id}/delivery/{upload_id}/chunk/{idx}")
 async def chunk(
     req_id: str, upload_id: str, idx: int, request: Request,
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
     pdir = _partial_dir(upload_id)
     if not pdir.exists():
@@ -116,6 +117,8 @@ async def chunk(
     meta = json.loads(_meta_path(upload_id).read_text(encoding="utf-8"))
     if meta["req_id"] != req_id:
         raise HTTPException(status_code=400, detail="upload_id mismatch")
+    if meta.get("user_id") != user.id:
+        raise HTTPException(status_code=403, detail="only the upload owner can send chunks")
     if idx < 0 or idx >= meta["total_chunks"]:
         raise HTTPException(status_code=400, detail="chunk index out of range")
 
@@ -158,6 +161,8 @@ async def finalize(
     meta = json.loads(_meta_path(upload_id).read_text(encoding="utf-8"))
     if meta["req_id"] != req_id:
         raise HTTPException(status_code=400, detail="upload_id mismatch")
+    if meta.get("user_id") != user.id:
+        raise HTTPException(status_code=403, detail="only the upload owner can finalize this upload")
     r = _require_req(db, req_id)
     if r.status not in {"claimed", "doing", "revision_requested"}:
         raise HTTPException(status_code=400, detail=f"requirement is {r.status}; cannot deliver")

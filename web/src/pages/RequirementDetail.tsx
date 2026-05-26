@@ -39,6 +39,8 @@ export function RequirementDetail() {
   const [req, setReq] = useState<Requirement | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [tab, setTab] = useState<Tab>("overview");
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionErr, setActionErr] = useState<string | null>(null);
   const { events, latestStatus } = useReqStream(id);
   const currentStatus = latestStatus || req?.status;
 
@@ -73,12 +75,28 @@ export function RequirementDetail() {
   }
 
   const claim = async () => {
-    await api.claimRequirement(req.id);
-    refresh();
+    setActionBusy(true);
+    setActionErr(null);
+    try {
+      await api.claimRequirement(req.id);
+      refresh();
+    } catch (e: any) {
+      setActionErr(String(e));
+    } finally {
+      setActionBusy(false);
+    }
   };
   const startDoing = async () => {
-    await api.patchStatus(req.id, "doing");
-    refresh();
+    setActionBusy(true);
+    setActionErr(null);
+    try {
+      await api.patchStatus(req.id, "doing");
+      refresh();
+    } catch (e: any) {
+      setActionErr(String(e));
+    } finally {
+      setActionBusy(false);
+    }
   };
 
   return (
@@ -102,15 +120,15 @@ export function RequirementDetail() {
         </div>
         <div className="flex gap-2">
           {currentStatus === "ready" && (
-            <button className="button-accent" onClick={claim}>
+            <button className="button-accent" disabled={actionBusy} onClick={claim}>
               <UserCheck className="h-4 w-4" aria-hidden="true" />
-              接单
+              {actionBusy ? "处理中..." : "接单"}
             </button>
           )}
           {currentStatus === "claimed" && (
-            <button className="button-accent" onClick={startDoing}>
+            <button className="button-accent" disabled={actionBusy} onClick={startDoing}>
               <Play className="h-4 w-4" aria-hidden="true" />
-              开始处理
+              {actionBusy ? "处理中..." : "开始处理"}
             </button>
           )}
           {req.summary_md && (
@@ -120,6 +138,7 @@ export function RequirementDetail() {
           )}
         </div>
       </header>
+      {actionErr && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{actionErr}</div>}
 
       {/* AI live view banner if processing */}
       {currentStatus === "ai_processing" && (
