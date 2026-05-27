@@ -58,6 +58,7 @@ class Config:
     nickname: str = ""
     cookie_token: str = ""           # signed cookie (yqgl_id) value
     sync_root: str = str(DEFAULT_SYNC_ROOT)
+    project_save_root: str = str(DEFAULT_SYNC_ROOT)
     paused: bool = False
     known_reqs: dict[str, str] = field(default_factory=dict)  # req_id -> code (avoid duplicate downloads)
     known_revision_requests: dict[str, str] = field(default_factory=dict)  # req_id -> updated_at marker
@@ -118,6 +119,14 @@ def sync_server_fields(cfg: Config, *, prefer_parts: bool) -> Config:
     return cfg
 
 
+def sync_storage_fields(cfg: Config, source: str = "sync_root") -> Config:
+    if source == "project_save_root" and cfg.project_save_root:
+        cfg.sync_root = cfg.project_save_root
+    else:
+        cfg.project_save_root = cfg.sync_root
+    return cfg
+
+
 def load_config() -> Config:
     APP_DIR.mkdir(parents=True, exist_ok=True)
     if CONFIG_PATH.exists():
@@ -125,6 +134,7 @@ def load_config() -> Config:
             d = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
             cfg = Config(**{**Config().__dict__, **d})
             sync_server_fields(cfg, prefer_parts=("server_ip" in d or "server_port" in d))
+            sync_storage_fields(cfg, source="project_save_root" if "project_save_root" in d else "sync_root")
             return cfg
         except Exception:
             pass
@@ -134,6 +144,7 @@ def load_config() -> Config:
 def save_config(cfg: Config) -> None:
     APP_DIR.mkdir(parents=True, exist_ok=True)
     sync_server_fields(cfg, prefer_parts=True)
+    sync_storage_fields(cfg, source="sync_root")
     CONFIG_PATH.write_text(
         json.dumps(cfg.__dict__, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -433,10 +444,15 @@ def show_first_run_dialog(cfg: Config) -> bool:
     e_nick.insert(0, cfg.nickname)
     e_nick.grid(row=3, column=1, sticky="we", pady=4)
 
-    ttk.Label(frm, text="本地同步根目录").grid(row=4, column=0, sticky="w", pady=4)
+    ttk.Label(frm, text="项目保存位置").grid(row=4, column=0, sticky="w", pady=4)
     e_root = ttk.Entry(frm, width=42)
     e_root.insert(0, cfg.sync_root)
     e_root.grid(row=4, column=1, sticky="we", pady=4)
+    ttk.Label(
+        frm,
+        text="需求文件会保存到：项目保存位置\\项目\\需求编号",
+        foreground="#666",
+    ).grid(row=5, column=1, sticky="w", pady=(0, 4))
 
     def browse():
         d = filedialog.askdirectory(initialdir=e_root.get() or ".")
@@ -446,7 +462,7 @@ def show_first_run_dialog(cfg: Config) -> bool:
     ttk.Button(frm, text="选择…", command=browse).grid(row=4, column=2, padx=4)
 
     status_lbl = ttk.Label(frm, text="", foreground="red")
-    status_lbl.grid(row=5, column=0, columnspan=3, sticky="w", pady=6)
+    status_lbl.grid(row=6, column=0, columnspan=3, sticky="w", pady=6)
 
     result = {"ok": False}
 
@@ -486,6 +502,7 @@ def show_first_run_dialog(cfg: Config) -> bool:
         cfg.server_scheme = server_scheme
         cfg.nickname = nick
         cfg.sync_root = root_dir
+        cfg.project_save_root = root_dir
         cfg.cookie_token = cookie
         save_config(cfg)
         result["ok"] = True
@@ -495,7 +512,7 @@ def show_first_run_dialog(cfg: Config) -> bool:
         root.destroy()
 
     btn_frm = ttk.Frame(frm)
-    btn_frm.grid(row=6, column=0, columnspan=3, pady=12, sticky="e")
+    btn_frm.grid(row=7, column=0, columnspan=3, pady=12, sticky="e")
     ttk.Button(btn_frm, text="取消", command=cancel).pack(side="right", padx=4)
     ttk.Button(btn_frm, text="保存", command=save).pack(side="right", padx=4)
 
@@ -573,7 +590,7 @@ class TrayApp:
         return pystray.Menu(
             pystray.MenuItem("打开接单看板", lambda _: self._open_dashboard(), default=True),
             pystray.MenuItem("打开主界面 (浏览器)", lambda _: webbrowser.open(self.cfg.server_url)),
-            pystray.MenuItem("打开同步目录", lambda _: open_folder(Path(self.cfg.sync_root))),
+            pystray.MenuItem("打开项目保存位置", lambda _: open_folder(Path(self.cfg.sync_root))),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("立即同步所有就绪需求", lambda _: threading.Thread(target=self._catchup, daemon=True).start()),
             pystray.MenuItem("完成任务并上传…", lambda _: threading.Thread(target=self._deliver_flow, daemon=True).start()),

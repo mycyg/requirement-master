@@ -102,11 +102,11 @@ python yqgl_tray.py
 - 端口：默认 `8080`
 - 请求地址：由 IP + 端口自动生成；旧 `192.168.0.x` 会自动迁到同尾号 `192.168.5.x`
 - 昵称：你自己
-- 同步根目录：默认 `D:\工作需求`
+- 项目保存位置：默认 `D:\工作需求`；需求文件会落到 `项目保存位置\<project>\<code>\`
 
 确认后开始托盘运行：右下角 ⚙ 形图标 = `需`字。右键菜单：
 - 打开主界面 → 浏览器开 web 前端
-- 打开同步目录
+- 打开项目保存位置
 - 立即同步所有就绪需求
 - 完成任务并上传…（弹列表选需求，然后打包+分片上传）
 - 暂停/恢复同步
@@ -142,7 +142,7 @@ build_exe.bat
 
 ### 接单方（你）
 1. 托盘弹"有新需求待接单"通知
-2. 同步目录里出现 `D:\工作需求\<project>\<code>\` 含 `requirement.md` / `metadata.json` / `attachments/`
+2. 项目保存位置里出现 `D:\工作需求\<project>\<code>\` 含 `requirement.md` / `metadata.json` / `attachments/`
 3. 你在该目录下随便写代码 / 文档
 4. 写完点托盘"完成任务并上传…"→ 选这条需求 → 自动 zip + 分片上传
 5. 服务端 LLM 写交付文档，状态变 delivered
@@ -183,7 +183,7 @@ type %APPDATA%\yqgl\client.log
 ## 七、配置 / 凭据
 
 - 服务端 `.env`：`/srv/yqgl/app/.env`（含 LLM API key、cookie secret 等）
-- 客户端配置：`%APPDATA%\yqgl\config.json`（含 `server_ip / server_port / server_url` 和签名 cookie；删了就重新走首次配置）
+- 客户端配置：`%APPDATA%\yqgl\config.json`（含 `server_ip / server_port / server_url / project_save_root` 和签名 cookie；删了就重新走首次配置）
 - LLM 接口：DeepSeek Anthropic 兼容 `https://api.deepseek.com/anthropic`，model `deepseek-v4-pro` (主) / `deepseek-v4-flash` (快)
 - ASR：Qwen3-ASR-1.7B，常驻显存 ~5GB
 - TTS：Fun-CosyVoice3-0.5B，常驻显存 ~3GB（3 音色 male/yujie/xiaoguang）
