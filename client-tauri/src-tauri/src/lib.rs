@@ -68,8 +68,8 @@ pub fn run() {
 
             // Deep-link plugin → emit navigate
             let h = handle.clone();
-            app.deep_link().on_open_url(move |urls| {
-                for u in urls.iter() {
+            app.deep_link().on_open_url(move |event| {
+                for u in event.urls() {
                     deep_link::handle(&h, u.as_str());
                 }
             });

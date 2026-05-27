@@ -21,7 +21,6 @@ client/src-tauri/target/
 client/src-tauri/gen/
 client-tauri/src-tauri/target/
 client-tauri/src-tauri/gen/
-client-tauri/src-tauri/Cargo.lock
 
 # Local data
 app/data/

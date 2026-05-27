@@ -57,9 +57,11 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         .item(&quit)
         .build()?;
 
-    let _tray = TrayIconBuilder::with_id("main-tray")
-        .icon(app.default_window_icon().cloned().unwrap_or_default())
-        .menu(&menu)
+    let mut builder = TrayIconBuilder::with_id("main-tray").menu(&menu);
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon);
+    }
+    let _tray = builder
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, ev| {
             let id = ev.id.as_ref();
