@@ -68,6 +68,33 @@ def main() -> None:
             expect(201, r.status_code, r.text)
             project_id = r.json()["id"]
 
+            r = alice.post("/api/projects", json={"name": "State Smoke", "slug": "state-smoke"})
+            expect(201, r.status_code, r.text)
+            state_project_id = r.json()["id"]
+            r = bob.post(f"/api/projects/{state_project_id}/archive")
+            expect(403, r.status_code, r.text)
+            r = alice.post(f"/api/projects/{state_project_id}/archive")
+            expect(200, r.status_code, r.text)
+            assert r.json()["archived"] is True and r.json()["deleted_at"] is None, r.text
+            r = alice.get("/api/projects")
+            expect(200, r.status_code, r.text)
+            assert state_project_id not in {p["id"] for p in r.json()}, r.text
+            r = alice.get("/api/projects", params={"state": "archived"})
+            expect(200, r.status_code, r.text)
+            assert state_project_id in {p["id"] for p in r.json()}, r.text
+            r = alice.post(f"/api/projects/{state_project_id}/restore")
+            expect(200, r.status_code, r.text)
+            assert r.json()["archived"] is False, r.text
+            r = alice.delete(f"/api/projects/{state_project_id}")
+            expect(200, r.status_code, r.text)
+            assert r.json()["deleted_at"] and r.json()["deleted_by_nickname"] == "alice", r.text
+            r = alice.get("/api/projects", params={"state": "deleted"})
+            expect(200, r.status_code, r.text)
+            assert state_project_id in {p["id"] for p in r.json()}, r.text
+            r = alice.post(f"/api/projects/{state_project_id}/restore")
+            expect(200, r.status_code, r.text)
+            assert r.json()["deleted_at"] is None and r.json()["archived"] is False, r.text
+
             r = alice.get("/api/users", params={"search": "bo"})
             expect(200, r.status_code, r.text)
             bob_option = next((u for u in r.json() if u["id"] == bob_id), None)

@@ -24,6 +24,8 @@ export type Project = {
   description: string | null;
   owner_nickname: string;
   archived: boolean;
+  deleted_at: string | null;
+  deleted_by_nickname: string | null;
   created_at: string;
 };
 

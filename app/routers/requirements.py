@@ -96,6 +96,10 @@ def create_requirement(
         project = db.query(Project).filter(Project.id == project_id).first()
         if not project:
             raise HTTPException(status_code=404, detail="project not found")
+        if project.deleted_at:
+            raise HTTPException(status_code=400, detail="deleted project cannot accept new requirements")
+        if project.archived:
+            raise HTTPException(status_code=400, detail="archived project cannot accept new requirements")
 
         project.next_seq += 1
         code = f"{project.slug.upper()}-{project.next_seq:03d}"

@@ -22,6 +22,8 @@ class ProjectOut(BaseModel):
     description: Optional[str]
     owner_nickname: str
     archived: bool
+    deleted_at: Optional[datetime] = None
+    deleted_by_nickname: Optional[str] = None
     created_at: datetime
 
 

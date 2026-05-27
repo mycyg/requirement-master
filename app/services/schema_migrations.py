@@ -28,6 +28,11 @@ USER_COLUMNS: dict[str, str] = {
     "availability_updated_at": "DATETIME",
 }
 
+PROJECT_COLUMNS: dict[str, str] = {
+    "deleted_at": "DATETIME",
+    "deleted_by_nickname": "VARCHAR(64)",
+}
+
 
 def ensure_runtime_schema(engine: Engine) -> None:
     if engine.dialect.name != "sqlite":
@@ -50,6 +55,15 @@ def ensure_runtime_schema(engine: Engine) -> None:
             if name not in user_existing:
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {ddl}"))
         conn.execute(text("UPDATE users SET availability_status = 'free' WHERE availability_status IS NULL"))
+
+        project_existing = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info(projects)")).fetchall()
+        }
+        for name, ddl in PROJECT_COLUMNS.items():
+            if name not in project_existing:
+                conn.execute(text(f"ALTER TABLE projects ADD COLUMN {name} {ddl}"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_deleted_at ON projects (deleted_at)"))
 
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS client_devices (

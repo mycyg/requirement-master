@@ -57,13 +57,18 @@ export const api = {
       body: JSON.stringify(input),
     }),
 
-  listProjects: () => json<Project[]>("/api/projects"),
+  listProjects: (state: "active" | "archived" | "deleted" | "all" = "active") =>
+    json<Project[]>(`/api/projects?state=${state}`),
+  getProject: (id: string) => json<Project>(`/api/projects/${id}`),
   createProject: (input: { name: string; slug: string; description?: string }) =>
     json<Project>("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
     }),
+  archiveProject: (id: string) => json<Project>(`/api/projects/${id}/archive`, { method: "POST" }),
+  restoreProject: (id: string) => json<Project>(`/api/projects/${id}/restore`, { method: "POST" }),
+  deleteProject: (id: string) => json<Project>(`/api/projects/${id}`, { method: "DELETE" }),
   listDrive: (projectId: string, params: { parent_id?: string | null; search?: string; trash?: boolean; sort?: string; direction?: string } = {}) => {
     const q = new URLSearchParams();
     if (params.parent_id) q.set("parent_id", params.parent_id);

@@ -3,7 +3,8 @@ $ErrorActionPreference = "Stop"
 $server = $env:YQGL_SERVER
 if (-not $server) { $server = "http://192.168.5.53:8080" }
 
-$installDir = Join-Path $env:LOCALAPPDATA "yqgl-client"
+$installDir = $env:YQGL_CLIENT_DIR
+if (-not $installDir) { $installDir = Join-Path $env:LOCALAPPDATA "yqgl-client" }
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 
 Write-Host "Installing yqgl client to $installDir"
@@ -17,11 +18,16 @@ if (Test-Path (Join-Path $PSScriptRoot "yqgl_tray.py")) {
 }
 
 Set-Location $installDir
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+if ($env:YQGL_SKIP_PIP -ne "1") {
+  python -m venv .venv
+  .\.venv\Scripts\python.exe -m pip install --upgrade pip
+  .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+} else {
+  Write-Host "Skipping Python dependency install because YQGL_SKIP_PIP=1"
+}
 
-$appDir = Join-Path $env:APPDATA "yqgl"
+$appDir = $env:YQGL_CONFIG_DIR
+if (-not $appDir) { $appDir = Join-Path $env:APPDATA "yqgl" }
 New-Item -ItemType Directory -Force -Path $appDir | Out-Null
 $hostOnly = ([Uri]$server).Host
 $port = ([Uri]$server).Port
@@ -44,5 +50,27 @@ $config = @{
 } | ConvertTo-Json -Depth 5
 $config | Out-File -Encoding utf8 (Join-Path $appDir "config.json")
 
+function New-YqglShortcut($shortcutPath) {
+  $shell = New-Object -ComObject WScript.Shell
+  $shortcut = $shell.CreateShortcut($shortcutPath)
+  $shortcut.TargetPath = "powershell.exe"
+  $shortcut.Arguments = "-ExecutionPolicy Bypass -File `"$installDir\launch.ps1`""
+  $shortcut.WorkingDirectory = $installDir
+  $shortcut.WindowStyle = 7
+  $shortcut.IconLocation = "$env:SystemRoot\System32\shell32.dll,220"
+  $shortcut.Description = "需求管理大师本地工作台"
+  $shortcut.Save()
+}
+
+$desktopDir = $env:YQGL_DESKTOP_DIR
+if (-not $desktopDir) { $desktopDir = [Environment]::GetFolderPath("DesktopDirectory") }
+$startupDir = $env:YQGL_STARTUP_DIR
+if (-not $startupDir) { $startupDir = [Environment]::GetFolderPath("Startup") }
+New-Item -ItemType Directory -Force -Path $desktopDir | Out-Null
+New-Item -ItemType Directory -Force -Path $startupDir | Out-Null
+New-YqglShortcut (Join-Path $desktopDir "需求管理大师 本地工作台.lnk")
+New-YqglShortcut (Join-Path $startupDir "需求管理大师.lnk")
+
 Write-Host "Installed. Start with:"
 Write-Host "  powershell -ExecutionPolicy Bypass -File `"$installDir\launch.ps1`""
+Write-Host "Desktop shortcut and startup shortcut created."

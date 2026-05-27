@@ -58,6 +58,8 @@ class Project(Base, TimestampMixin):
     description: Mapped[Optional[str]] = mapped_column(Text)
     owner_nickname: Mapped[str] = mapped_column(String(64), nullable=False)
     archived: Mapped[bool] = mapped_column(default=False, nullable=False)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
+    deleted_by_nickname: Mapped[Optional[str]] = mapped_column(String(64))
     next_seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # for PROJ-001, PROJ-002 ...
 
     requirements: Mapped[list[Requirement]] = relationship(back_populates="project", cascade="all, delete-orphan")

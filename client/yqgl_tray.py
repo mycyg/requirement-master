@@ -73,6 +73,7 @@ class Config:
     reminder_offsets_minutes: list[int] = field(default_factory=lambda: [1440, 120, 0])
     known_reminders: dict[str, str] = field(default_factory=dict)
     known_notifications: dict[str, str] = field(default_factory=dict)
+    tray_started_notice_shown: bool = False
     paused: bool = False
     known_reqs: dict[str, str] = field(default_factory=dict)  # req_id -> code (avoid duplicate downloads)
     known_revision_requests: dict[str, str] = field(default_factory=dict)  # req_id -> updated_at marker
@@ -426,14 +427,23 @@ class ServerClient:
         r.raise_for_status()
         return r.json()
 
-    def stream_events(self, on_event: Callable[[str, Any], None], stop: threading.Event) -> None:
+    def stream_events(
+        self,
+        on_event: Callable[[str, Any], None],
+        stop: threading.Event,
+        on_state: Callable[[str], None] | None = None,
+    ) -> None:
         """Long-poll SSE. Auto-reconnect with exponential backoff."""
         backoff = 1.0
         while not stop.is_set():
             try:
+                if on_state:
+                    on_state("connecting")
                 with self._client.stream("GET", "/api/push/stream", timeout=None) as r:
                     r.raise_for_status()
                     backoff = 1.0
+                    if on_state:
+                        on_state("connected")
                     event = ""
                     data_lines: list[str] = []
                     for line in r.iter_lines():
@@ -453,6 +463,8 @@ class ServerClient:
                             event = ""
                             data_lines = []
             except Exception as e:
+                if on_state:
+                    on_state("offline")
                 log(f"SSE disconnected: {e}; retry in {backoff:.0f}s")
                 stop.wait(backoff)
                 backoff = min(30.0, backoff * 2)
@@ -977,6 +989,8 @@ class TrayApp:
         self.drive_thread: threading.Thread | None = None
         self.reminder_thread: threading.Thread | None = None
         self.icon: pystray.Icon | None = None
+        self.service_state = "connecting"
+        self.last_heartbeat = ""
 
     def start(self) -> None:
         self.icon = pystray.Icon(APP_NAME, make_icon_image(), "需求管理大师", self._menu())
@@ -990,6 +1004,11 @@ class TrayApp:
             self.client.update_availability(self.cfg.availability_status, self.cfg.availability_text)
         except Exception as e:
             log(f"initial availability update failed: {e}")
+        if not self.cfg.tray_started_notice_shown:
+            notify("需求管理大师已常驻托盘", "右下角托盘图标里可以打开本地工作台、同步文件和上传交付。")
+            self.cfg.tray_started_notice_shown = True
+            save_config(self.cfg)
+        self._update_icon_title()
         log("tray started")
         self.icon.run()
 
@@ -1000,6 +1019,11 @@ class TrayApp:
 
     def _menu(self) -> pystray.Menu:
         return pystray.Menu(
+            pystray.MenuItem(lambda _: f"用户：{self.cfg.nickname or '未识别'}", lambda _: None, enabled=False),
+            pystray.MenuItem(lambda _: f"服务：{self._connection_label()}", lambda _: None, enabled=False),
+            pystray.MenuItem(lambda _: f"同步：{self._sync_label()}", lambda _: None, enabled=False),
+            pystray.MenuItem(lambda _: f"最后心跳：{self.last_heartbeat or '等待中'}", lambda _: None, enabled=False),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem("打开本地工作台", lambda _: self._open_dashboard(), default=True),
             pystray.MenuItem("打开 Web 派活端", lambda _: webbrowser.open(self.cfg.server_url)),
             pystray.MenuItem("打开项目保存位置", lambda _: open_folder(Path(self.cfg.sync_root))),
@@ -1049,6 +1073,38 @@ class TrayApp:
             return self.cfg.availability_text or "其他"
         return "空闲"
 
+    def _sync_label(self) -> str:
+        if not self.cfg.drive_sync_enabled:
+            return "网盘关"
+        return "网盘双向" if self.cfg.drive_sync_mode == "two_way" else "网盘单向"
+
+    def _connection_label(self) -> str:
+        if self.service_state == "connected":
+            return "在线"
+        if self.service_state == "connecting":
+            return "连接中"
+        return "离线"
+
+    def _set_service_state(self, state: str) -> None:
+        self.service_state = state
+        if state == "connected":
+            self.last_heartbeat = time.strftime("%H:%M:%S")
+        self._update_icon_title()
+        if self.icon:
+            try:
+                self.icon.update_menu()
+            except Exception:
+                pass
+
+    def _update_icon_title(self) -> None:
+        if not self.icon:
+            return
+        title = f"需求管理大师 · {self._connection_label()} · {self._status_label()}"
+        try:
+            self.icon.title = title[:64]
+        except Exception:
+            pass
+
     def _cycle_availability(self, *_: Any) -> None:
         order = ["free", "busy", "custom"]
         idx = order.index(self.cfg.availability_status) if self.cfg.availability_status in order else 0
@@ -1064,6 +1120,7 @@ class TrayApp:
             self.client.update_availability(self.cfg.availability_status, self.cfg.availability_text)
         except Exception as e:
             log(f"availability update failed: {e}")
+        self._update_icon_title()
         if self.icon: self.icon.update_menu()
 
     def _toggle_drive_sync(self, *_: Any) -> None:
@@ -1076,6 +1133,7 @@ class TrayApp:
             self.cfg.drive_sync_enabled = False
             self.cfg.drive_sync_mode = "download"
         save_config(self.cfg)
+        self._update_icon_title()
         if self.icon: self.icon.update_menu()
         log(f"drive sync enabled={self.cfg.drive_sync_enabled} mode={self.cfg.drive_sync_mode}")
 
@@ -1094,7 +1152,7 @@ class TrayApp:
         # also do an initial catch-up of unsynced ready reqs
         try: self._catchup()
         except Exception as e: log(f"initial catchup err: {e}")
-        self.client.stream_events(self._on_event, self.stop)
+        self.client.stream_events(self._on_event, self.stop, self._set_service_state)
 
     def _drive_sync_loop(self) -> None:
         while not self.stop.is_set():
@@ -1193,6 +1251,12 @@ class TrayApp:
 
     def _on_event(self, event: str, data: Any) -> None:
         log(f"sse event: {event} {str(data)[:120]}")
+        self.last_heartbeat = time.strftime("%H:%M:%S")
+        if self.icon:
+            try:
+                self.icon.update_menu()
+            except Exception:
+                pass
         if self.cfg.paused:
             return
         if event == "requirement.ready" and isinstance(data, dict):
