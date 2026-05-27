@@ -18,6 +18,23 @@ function unique(xs: string[]): string[] {
   return [...new Set(xs.filter(Boolean))];
 }
 
+function statusLabel(user?: UserOption): string {
+  if (!user) return "状态未知";
+  if (user.is_online) return "在线";
+  if (!user.last_seen_at) return "未上线";
+  const seenAt = new Date(user.last_seen_at).getTime();
+  if (Number.isNaN(seenAt)) return "离线";
+  const diff = Math.max(0, Date.now() - seenAt);
+  if (diff < 60_000) return "刚刚在线";
+  if (diff < 60 * 60_000) return `${Math.max(1, Math.round(diff / 60_000))} 分钟前`;
+  if (diff < 24 * 60 * 60_000) return `${Math.max(1, Math.round(diff / (60 * 60_000)))} 小时前`;
+  return "很久没冒泡";
+}
+
+function statusDotClass(user?: UserOption): string {
+  return user?.is_online ? "bg-[#4f7d45] shadow-[0_0_0_3px_rgba(79,125,69,0.14)]" : "bg-stone-300";
+}
+
 export function AssigneeSelector({
   leadUserId,
   collaboratorUserIds,
@@ -32,6 +49,11 @@ export function AssigneeSelector({
   const [knownUserMap, setKnownUserMap] = useState<Record<string, UserOption>>({});
   const [err, setErr] = useState<string | null>(null);
   const selectedIds = useMemo(() => unique([leadUserId || "", ...collaboratorUserIds]), [leadUserId, collaboratorUserIds]);
+  const sortedUsers = useMemo(
+    () => [...users].sort((a, b) => Number(Boolean(b.is_online)) - Number(Boolean(a.is_online)) || a.nickname.localeCompare(b.nickname, "zh-Hans-CN")),
+    [users],
+  );
+  const onlineCount = useMemo(() => users.filter((u) => u.is_online).length, [users]);
 
   useEffect(() => {
     setKnownUserMap((prev) => {
@@ -95,7 +117,10 @@ export function AssigneeSelector({
             留空就是公开待接单池；选人后，负责人和协作者都能处理和交付。
           </p>
         </div>
-        <span className="pill w-fit">{selectedIds.length ? `${selectedIds.length} 人` : "公开池"}</span>
+        <div className="flex flex-wrap gap-2 sm:justify-end">
+          {!disabled && <span className="pill w-fit">{onlineCount ? `${onlineCount} 人在线` : "当前没人亮灯"}</span>}
+          <span className="pill w-fit">{selectedIds.length ? `${selectedIds.length} 人` : "公开池"}</span>
+        </div>
       </div>
 
       {selectedIds.length > 0 && (
@@ -104,6 +129,7 @@ export function AssigneeSelector({
             <span key={id} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
               id === leadUserId ? "border-[#e0c895] bg-[#fff6dc] text-[#8a5d10]" : "border-stone-200 bg-[#fffdf8] text-stone-600"
             }`}>
+              <span className={`h-2 w-2 rounded-full ${statusDotClass(knownUserMap[id])}`} aria-hidden="true" />
               {id === leadUserId && <Star className="h-3.5 w-3.5" aria-hidden="true" />}
               {nick(id)}
               {!disabled && (
@@ -129,15 +155,21 @@ export function AssigneeSelector({
           </label>
           {err && <p className="mt-2 text-xs text-red-700">{err}</p>}
           <div className="mt-3 max-h-56 space-y-1 overflow-auto pr-1 scrollbar-thin-warm">
-            {users.length === 0 && <div className="rounded-lg border border-dashed border-stone-300 p-3 text-center text-xs text-stone-400">没人出现。可能大家还没来上班。</div>}
-            {users.map((u) => {
+            {sortedUsers.length === 0 && <div className="rounded-lg border border-dashed border-stone-300 p-3 text-center text-xs text-stone-400">没人出现。可能大家还没来上班。</div>}
+            {sortedUsers.map((u) => {
               const isLead = leadUserId === u.id;
               const isCollaborator = collaboratorUserIds.includes(u.id);
               return (
-                <div key={u.id} className="flex flex-col gap-2 rounded-lg border border-stone-200 bg-[#fffdf8] p-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0 text-sm font-medium text-stone-800">
-                    <UserPlus className="mr-1.5 inline h-4 w-4 text-stone-400" aria-hidden="true" />
-                    {u.nickname}
+                <div key={u.id} className={`flex flex-col gap-2 rounded-lg border p-2 sm:flex-row sm:items-center sm:justify-between ${
+                  u.is_online ? "border-[#c7d8be] bg-[#f8fbf4]" : "border-stone-200 bg-[#fffdf8]"
+                }`}>
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-stone-800">
+                      <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDotClass(u)}`} aria-hidden="true" />
+                      <UserPlus className="h-4 w-4 shrink-0 text-stone-400" aria-hidden="true" />
+                      <span className="truncate">{u.nickname}</span>
+                    </div>
+                    <div className="mt-0.5 pl-8 text-[11px] leading-4 text-stone-500">{statusLabel(u)}</div>
                   </div>
                   <div className="flex shrink-0 gap-2">
                     <button

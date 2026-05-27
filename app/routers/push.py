@@ -12,7 +12,8 @@ import json
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from auth import require_stream_user_id
+from auth import StreamUser, require_stream_user
+from services.presence import mark_stream_closed, mark_stream_open
 from services.push_bus import stream
 
 router = APIRouter(prefix="/api/push", tags=["push"])
@@ -23,33 +24,37 @@ def _sse(event: str, data) -> bytes:
     return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
 
 
-async def _gen(request: Request, topic: str):
-    # initial ack
-    yield _sse("connected", {"topic": topic})
-    async for ev in stream(topic):
-        if await request.is_disconnected():
-            return
-        if ev.type == "heartbeat":
-            yield b": ping\n\n"
-        else:
-            yield _sse(ev.type, ev.data)
+async def _gen(request: Request, topic: str, user: StreamUser):
+    mark_stream_open(user.id)
+    try:
+        # initial ack
+        yield _sse("connected", {"topic": topic})
+        async for ev in stream(topic):
+            if await request.is_disconnected():
+                return
+            if ev.type == "heartbeat":
+                yield b": ping\n\n"
+            else:
+                yield _sse(ev.type, ev.data)
+    finally:
+        mark_stream_closed(user.id)
 
 
 @router.get("/stream")
-async def stream_all(request: Request, _: str = Depends(require_stream_user_id)) -> StreamingResponse:
+async def stream_all(request: Request, user: StreamUser = Depends(require_stream_user)) -> StreamingResponse:
     """Global stream — receives all requirement.* events."""
     return StreamingResponse(
-        _gen(request, "all"),
+        _gen(request, "all", user),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
 @router.get("/stream/req/{req_id}")
-async def stream_one(req_id: str, request: Request, _: str = Depends(require_stream_user_id)) -> StreamingResponse:
+async def stream_one(req_id: str, request: Request, user: StreamUser = Depends(require_stream_user)) -> StreamingResponse:
     """Per-requirement stream — for web UI watching a single requirement detail."""
     return StreamingResponse(
-        _gen(request, f"req:{req_id}"),
+        _gen(request, f"req:{req_id}", user),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

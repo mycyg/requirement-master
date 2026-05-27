@@ -53,7 +53,10 @@ def main() -> None:
 
             r = alice.get("/api/users", params={"search": "bo"})
             expect(200, r.status_code, r.text)
-            assert any(u["id"] == bob_id for u in r.json()), r.text
+            bob_option = next((u for u in r.json() if u["id"] == bob_id), None)
+            assert bob_option, r.text
+            assert bob_option["is_online"] is True, r.text
+            assert "last_seen_at" in bob_option, r.text
 
             r = alice.post(
                 f"/api/projects/{project_id}/requirements",

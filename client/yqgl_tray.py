@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import filedialog, ttk
 from typing import Any, Callable
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 from PIL import Image, ImageDraw
@@ -40,11 +41,14 @@ APP_NAME = "yqgl"
 APP_DIR = Path(os.environ.get("APPDATA", str(Path.home() / ".config"))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 DEFAULT_SYNC_ROOT = Path("D:/工作需求")
+DEFAULT_SERVER_URL = "http://192.168.5.224:8080"
+LEGACY_LAN_PREFIX = "192.168.0."
+TARGET_LAN_PREFIX = "192.168.5."
 
 
 @dataclass
 class Config:
-    server_url: str = "http://localhost:8080"
+    server_url: str = DEFAULT_SERVER_URL
     nickname: str = ""
     cookie_token: str = ""           # signed cookie (yqgl_id) value
     sync_root: str = str(DEFAULT_SYNC_ROOT)
@@ -53,12 +57,24 @@ class Config:
     known_revision_requests: dict[str, str] = field(default_factory=dict)  # req_id -> updated_at marker
 
 
+def normalize_server_url(url: str) -> str:
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if host.startswith(LEGACY_LAN_PREFIX):
+        new_host = TARGET_LAN_PREFIX + host.rsplit(".", 1)[-1]
+        netloc = parsed.netloc.replace(host, new_host, 1)
+        return urlunparse(parsed._replace(netloc=netloc))
+    return url
+
+
 def load_config() -> Config:
     APP_DIR.mkdir(parents=True, exist_ok=True)
     if CONFIG_PATH.exists():
         try:
             d = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-            return Config(**{**Config().__dict__, **d})
+            cfg = Config(**{**Config().__dict__, **d})
+            cfg.server_url = normalize_server_url(cfg.server_url)
+            return cfg
         except Exception:
             pass
     return Config()

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from auth import current_user, get_or_create_user, issue_cookie, optional_current_user
 from db import get_db
 from models import User
+from services.presence import forget_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -38,6 +39,7 @@ def me(user: User | None = Depends(optional_current_user)) -> IdentifyOut | None
 
 
 @router.post("/logout")
-def logout(response: Response, _: User = Depends(current_user)) -> dict:
+def logout(response: Response, user: User = Depends(current_user)) -> dict:
     response.delete_cookie("yqgl_id")
+    forget_user(user.id)
     return {"ok": True}

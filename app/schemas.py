@@ -30,6 +30,8 @@ class ProjectOut(BaseModel):
 class UserOut(BaseModel):
     id: str
     nickname: str
+    is_online: bool = False
+    last_seen_at: Optional[datetime] = None
 
 
 # ---------- Requirement ----------

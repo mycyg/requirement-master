@@ -1,6 +1,6 @@
 export type Identity = { id: string; nickname: string; created: boolean };
 
-export type UserOption = { id: string; nickname: string };
+export type UserOption = { id: string; nickname: string; is_online?: boolean; last_seen_at?: string | null };
 
 export type RequirementAssignee = {
   user_id: string;
