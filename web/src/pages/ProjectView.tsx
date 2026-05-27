@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, CalendarClock, ClipboardList, Plus, UserRound, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarClock, ClipboardList, HardDrive, Plus, UserRound, Users } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import { api } from "@/lib/api";
 import type { Project, Requirement } from "@/lib/types";
@@ -36,6 +36,16 @@ export function ProjectView() {
         >
           <Plus className="h-4 w-4" aria-hidden="true" />
           提一个需求
+        </Link>
+      </div>
+      <div className="mt-6 flex gap-2 border-b border-stone-200">
+        <Link to={`/p/${project.id}`} className="tab-button border-stone-950 text-stone-950">
+          <ClipboardList className="h-4 w-4" aria-hidden="true" />
+          需求
+        </Link>
+        <Link to={`/p/${project.id}/drive`} className="tab-button border-transparent text-stone-500 hover:text-stone-950">
+          <HardDrive className="h-4 w-4" aria-hidden="true" />
+          网盘
         </Link>
       </div>
 

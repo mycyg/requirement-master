@@ -17,6 +17,7 @@ from routers import comments as comments_router
 from routers import deliveries as deliveries_router
 from routers import delivery_upload as delivery_upload_router
 from routers import projects as projects_router
+from routers import project_drive as project_drive_router
 from routers import push as push_router
 from routers import requirements as requirements_router
 from routers import sync as sync_router
@@ -43,6 +44,9 @@ async def lifespan(_: FastAPI):
     (settings.data_dir / "uploads" / "_partial").mkdir(parents=True, exist_ok=True)
     (settings.data_dir / "voice").mkdir(exist_ok=True)
     (settings.data_dir / "outputs").mkdir(exist_ok=True)
+    (settings.data_dir / "outputs" / "project_drive").mkdir(parents=True, exist_ok=True)
+    (settings.data_dir / "project_drive").mkdir(exist_ok=True)
+    (settings.data_dir / "project_drive" / "_partial").mkdir(parents=True, exist_ok=True)
     (settings.data_dir / "deliveries").mkdir(exist_ok=True)
     (settings.data_dir / "deliveries" / "_partial").mkdir(parents=True, exist_ok=True)
     (settings.data_dir / "auto").mkdir(exist_ok=True)
@@ -64,6 +68,7 @@ app.add_middleware(
 
 app.include_router(auth_router.router)
 app.include_router(projects_router.router)
+app.include_router(project_drive_router.router)
 app.include_router(requirements_router.router)
 app.include_router(attachments_router.router)
 app.include_router(chat_router.router)

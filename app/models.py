@@ -44,6 +44,68 @@ class Project(Base, TimestampMixin):
     next_seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # for PROJ-001, PROJ-002 ...
 
     requirements: Mapped[list[Requirement]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    drive_items: Mapped[list[ProjectDriveItem]] = relationship(back_populates="project", cascade="all, delete-orphan")
+
+
+class ProjectDriveItem(Base, TimestampMixin):
+    __tablename__ = "project_drive_items"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    parent_id: Mapped[Optional[str]] = mapped_column(ForeignKey("project_drive_items.id", ondelete="CASCADE"), index=True)
+
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # file | folder
+    current_version_id: Mapped[Optional[str]] = mapped_column(String(32), index=True)
+
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    updated_by_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), index=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
+    deleted_by_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), index=True)
+
+    project: Mapped[Project] = relationship(back_populates="drive_items")
+    parent: Mapped[Optional[ProjectDriveItem]] = relationship(remote_side=[id], back_populates="children")
+    children: Mapped[list[ProjectDriveItem]] = relationship(back_populates="parent")
+    versions: Mapped[list[ProjectDriveVersion]] = relationship(back_populates="item", cascade="all, delete-orphan")
+    created_by: Mapped[User] = relationship(foreign_keys=[created_by_user_id])
+    updated_by: Mapped[Optional[User]] = relationship(foreign_keys=[updated_by_user_id])
+    deleted_by: Mapped[Optional[User]] = relationship(foreign_keys=[deleted_by_user_id])
+
+
+class ProjectDriveVersion(Base, TimestampMixin):
+    __tablename__ = "project_drive_versions"
+    __table_args__ = (UniqueConstraint("item_id", "version_no", name="uq_project_drive_version_no"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    item_id: Mapped[str] = mapped_column(ForeignKey("project_drive_items.id", ondelete="CASCADE"), index=True)
+    version_no: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    filename: Mapped[str] = mapped_column(String(256), nullable=False)
+    mime: Mapped[Optional[str]] = mapped_column(String(128))
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    storage_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    sha256: Mapped[Optional[str]] = mapped_column(String(64))
+    parsed_text: Mapped[Optional[str]] = mapped_column(Text)
+    parsed_text_path: Mapped[Optional[str]] = mapped_column(String(512))
+
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+
+    item: Mapped[ProjectDriveItem] = relationship(back_populates="versions")
+    created_by: Mapped[User] = relationship(foreign_keys=[created_by_user_id])
+
+
+class ProjectDriveOperation(Base, TimestampMixin):
+    __tablename__ = "project_drive_operations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    op_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    undone_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    project: Mapped[Project] = relationship()
+    actor: Mapped[User] = relationship()
 
 
 class Requirement(Base, TimestampMixin):

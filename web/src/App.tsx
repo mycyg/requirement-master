@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { BrowserRouter, Link, NavLink, Route, Routes } from "react-router-dom";
-import { FolderKanban, Gauge, Settings, UserRound } from "lucide-react";
+import { FolderKanban, Gauge, HardDrive, Settings, UserRound } from "lucide-react";
 import { useIdentity } from "./hooks/useIdentity";
 import { NicknameDialog } from "./components/NicknameDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -10,6 +10,8 @@ import { NewRequirement } from "./pages/NewRequirement";
 import { Clarify } from "./pages/Clarify";
 import { Dashboard } from "./pages/Dashboard";
 import { RequirementDetail } from "./pages/RequirementDetail";
+import { DriveHome } from "./pages/DriveHome";
+import { ProjectDrive } from "./pages/ProjectDrive";
 
 export function App() {
   const { me, identify, loading } = useIdentity();
@@ -59,6 +61,15 @@ export function App() {
                     <Gauge className="h-4 w-4" aria-hidden="true" />
                     看板
                   </NavLink>
+                  <NavLink
+                    to="/drive"
+                    className={({ isActive }) =>
+                      `button-ghost min-h-9 px-3 py-1.5 text-xs ${isActive ? "bg-stone-900/10 text-stone-950" : ""}`
+                    }
+                  >
+                    <HardDrive className="h-4 w-4" aria-hidden="true" />
+                    网盘
+                  </NavLink>
                 </nav>
               </div>
               <div className="flex min-w-0 items-center gap-2 text-xs text-stone-500">
@@ -80,7 +91,9 @@ export function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/drive" element={<DriveHome />} />
             <Route path="/p/:id" element={<ProjectView />} />
+            <Route path="/p/:id/drive" element={<ProjectDrive />} />
             <Route path="/p/:id/new" element={<NewRequirement />} />
             <Route path="/r/:id" element={<RequirementDetail />} />
             <Route path="/r/:id/clarify" element={<Clarify />} />

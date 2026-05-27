@@ -19,6 +19,49 @@ export type Project = {
   created_at: string;
 };
 
+export type DriveItem = {
+  id: string;
+  project_id: string;
+  parent_id: string | null;
+  name: string;
+  kind: "file" | "folder";
+  size_bytes: number | null;
+  mime: string | null;
+  sha256: string | null;
+  version_no: number | null;
+  has_preview: boolean;
+  created_by_nickname: string | null;
+  updated_by_nickname: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+export type DriveBreadcrumb = { id: string | null; name: string };
+export type DriveTreeNode = { id: string; name: string; parent_id: string | null; children: DriveTreeNode[] };
+export type DriveList = {
+  project_id: string;
+  parent_id: string | null;
+  breadcrumbs: DriveBreadcrumb[];
+  items: DriveItem[];
+};
+export type DrivePreview = {
+  item_id: string;
+  name: string;
+  preview_type: "pdf" | "html" | "markdown" | "code" | "unsupported";
+  mime: string | null;
+  content: string | null;
+  download_url: string;
+  render_url: string | null;
+  version_no: number | null;
+};
+export type DriveUploadInit = {
+  upload_id: string | null;
+  chunk_size: number;
+  conflict?: string | null;
+  existing_item?: DriveItem | null;
+};
+
 export type Requirement = {
   id: string;
   code: string;

@@ -58,6 +58,73 @@ def main() -> None:
             assert bob_option["is_online"] is True, r.text
             assert "last_seen_at" in bob_option, r.text
 
+            r = alice.post(f"/api/projects/{project_id}/drive/folders", json={"name": "docs"})
+            expect(200, r.status_code, r.text)
+            docs_id = r.json()["id"]
+            drive_body = b"# Drive smoke\n\nhello from the project drive"
+            r = alice.post(
+                f"/api/projects/{project_id}/drive/upload/init",
+                json={
+                    "filename": "readme.md",
+                    "total_size": len(drive_body),
+                    "total_chunks": 1,
+                    "mime": "text/markdown",
+                    "parent_id": docs_id,
+                    "conflict": "cancel",
+                },
+            )
+            expect(200, r.status_code, r.text)
+            upload_id = r.json()["upload_id"]
+            assert upload_id, r.text
+            r = alice.put(
+                f"/api/projects/{project_id}/drive/upload/{upload_id}/chunk/0",
+                content=drive_body,
+                headers={"Content-Type": "application/octet-stream"},
+            )
+            expect(200, r.status_code, r.text)
+            r = alice.post(f"/api/projects/{project_id}/drive/upload/{upload_id}/finalize")
+            expect(200, r.status_code, r.text)
+            drive_file_id = r.json()["id"]
+
+            r = alice.post(
+                f"/api/projects/{project_id}/drive/upload/init",
+                json={
+                    "filename": "readme.md",
+                    "total_size": len(drive_body),
+                    "total_chunks": 1,
+                    "mime": "text/markdown",
+                    "parent_id": docs_id,
+                    "conflict": "cancel",
+                },
+            )
+            expect(200, r.status_code, r.text)
+            assert r.json()["conflict"] == "name_exists" and r.json()["upload_id"] is None, r.text
+
+            r = bob.get(f"/api/projects/{project_id}/drive", params={"parent_id": docs_id})
+            expect(200, r.status_code, r.text)
+            assert any(i["id"] == drive_file_id for i in r.json()["items"]), r.text
+            r = bob.get(f"/api/drive/files/{drive_file_id}/preview")
+            expect(200, r.status_code, r.text)
+            assert r.json()["preview_type"] == "markdown" and "Drive smoke" in r.json()["content"], r.text
+            r = bob.get(f"/api/drive/files/{drive_file_id}/download")
+            expect(200, r.status_code, r.text)
+            assert r.content == drive_body, r.text
+
+            r = alice.patch(f"/api/drive/items/{drive_file_id}", json={"name": "renamed.md"})
+            expect(200, r.status_code, r.text)
+            r = alice.post("/api/drive/bulk-download", json={"item_ids": [docs_id]})
+            expect(200, r.status_code, r.text)
+            assert r.content.startswith(b"PK"), "bulk zip should be a zip file"
+            r = alice.delete(f"/api/drive/items/{drive_file_id}")
+            expect(200, r.status_code, r.text)
+            r = alice.get(f"/api/projects/{project_id}/drive", params={"trash": "true"})
+            expect(200, r.status_code, r.text)
+            assert any(i["id"] == drive_file_id for i in r.json()["items"]), r.text
+            r = alice.post(f"/api/drive/items/{drive_file_id}/restore")
+            expect(200, r.status_code, r.text)
+            r = alice.post(f"/api/projects/{project_id}/drive/undo")
+            expect(200, r.status_code, r.text)
+
             r = alice.post(
                 f"/api/projects/{project_id}/requirements",
                 json={"raw_description": "Build a smoke-test artifact", "priority": "normal"},

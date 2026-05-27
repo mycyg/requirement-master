@@ -1,5 +1,5 @@
 import type {
-  Activity, Attachment, Comment, Delivery,
+  Activity, Attachment, Comment, Delivery, DriveItem, DriveList, DrivePreview, DriveTreeNode, DriveUploadInit,
   Identity, Project, Requirement, RequirementAssignee, StoredChatMessage, UserOption,
 } from "./types";
 
@@ -35,6 +35,76 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
     }),
+  listDrive: (projectId: string, params: { parent_id?: string | null; search?: string; trash?: boolean; sort?: string; direction?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.parent_id) q.set("parent_id", params.parent_id);
+    if (params.search?.trim()) q.set("search", params.search.trim());
+    if (params.trash) q.set("trash", "true");
+    if (params.sort) q.set("sort", params.sort);
+    if (params.direction) q.set("direction", params.direction);
+    return json<DriveList>(`/api/projects/${projectId}/drive?${q.toString()}`);
+  },
+  driveTree: (projectId: string) => json<DriveTreeNode[]>(`/api/projects/${projectId}/drive/tree`),
+  createDriveFolder: (projectId: string, input: { name: string; parent_id?: string | null }) =>
+    json<DriveItem>(`/api/projects/${projectId}/drive/folders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  initDriveUpload: (projectId: string, input: {
+    filename: string; total_size: number; total_chunks: number; mime?: string | null;
+    parent_id?: string | null; conflict?: "cancel" | "replace" | "rename"; existing_item_id?: string | null;
+  }) =>
+    json<DriveUploadInit>(`/api/projects/${projectId}/drive/upload/init`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  uploadDriveChunk: async (projectId: string, uploadId: string, idx: number, chunk: Blob) => {
+    const r = await fetch(`/api/projects/${projectId}/drive/upload/${uploadId}/chunk/${idx}`, {
+      ...COMMON,
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: chunk,
+    });
+    if (!r.ok) throw new Error(`chunk upload failed: ${r.status} ${await r.text()}`);
+    return r.json();
+  },
+  finalizeDriveUpload: (projectId: string, uploadId: string) =>
+    json<DriveItem>(`/api/projects/${projectId}/drive/upload/${uploadId}/finalize`, { method: "POST" }),
+  previewDriveItem: (itemId: string) => json<DrivePreview>(`/api/drive/files/${itemId}/preview`),
+  driveDownloadUrl: (itemId: string) => `/api/drive/files/${itemId}/download`,
+  patchDriveItem: (itemId: string, input: { name?: string; parent_id?: string | null }) =>
+    json<DriveItem>(`/api/drive/items/${itemId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  pasteDriveItems: (projectId: string, input: { item_ids: string[]; target_parent_id?: string | null; mode: "copy" | "cut" }) =>
+    json<{ ok: boolean; operation_id?: string | null; items: DriveItem[] }>(`/api/projects/${projectId}/drive/paste`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  deleteDriveItem: (itemId: string) => json<{ ok: boolean; operation_id?: string | null }>(`/api/drive/items/${itemId}`, { method: "DELETE" }),
+  bulkDeleteDriveItems: (itemIds: string[]) =>
+    json<{ ok: boolean; operation_id?: string | null }>("/api/drive/bulk-delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item_ids: itemIds }),
+    }),
+  restoreDriveItem: (itemId: string) => json<DriveItem>(`/api/drive/items/${itemId}/restore`, { method: "POST" }),
+  undoDrive: (projectId: string) => json<{ ok: boolean; operation_id?: string | null }>(`/api/projects/${projectId}/drive/undo`, { method: "POST" }),
+  bulkDownloadDrive: async (itemIds: string[]) => {
+    const r = await fetch("/api/drive/bulk-download", {
+      ...COMMON,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item_ids: itemIds }),
+    });
+    if (!r.ok) throw new Error(`download failed: ${r.status} ${await r.text()}`);
+    return r.blob();
+  },
 
   createRequirement: (project_id: string, input: {
     raw_description: string;

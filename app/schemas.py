@@ -25,6 +25,99 @@ class ProjectOut(BaseModel):
     created_at: datetime
 
 
+# ---------- Project Drive ----------
+
+class DriveFolderCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=256)
+    parent_id: Optional[str] = None
+
+
+class DriveChunkInitIn(BaseModel):
+    filename: str = Field(min_length=1, max_length=256)
+    total_size: int = Field(ge=1, le=1024 * 1024 * 1024)
+    total_chunks: int = Field(ge=1)
+    mime: Optional[str] = None
+    parent_id: Optional[str] = None
+    conflict: str = Field(default="cancel", pattern=r"^(cancel|replace|rename)$")
+    existing_item_id: Optional[str] = None
+
+
+class DriveChunkInitOut(BaseModel):
+    upload_id: Optional[str] = None
+    chunk_size: int
+    conflict: Optional[str] = None
+    existing_item: Optional["DriveItemOut"] = None
+
+
+class DriveItemPatchIn(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    parent_id: Optional[str] = None
+
+
+class DriveBulkIn(BaseModel):
+    item_ids: list[str] = Field(min_length=1)
+
+
+class DrivePasteIn(BaseModel):
+    item_ids: list[str] = Field(min_length=1)
+    target_parent_id: Optional[str] = None
+    mode: str = Field(pattern=r"^(copy|cut)$")
+
+
+class DriveItemOut(BaseModel):
+    id: str
+    project_id: str
+    parent_id: Optional[str]
+    name: str
+    kind: str
+    size_bytes: Optional[int] = None
+    mime: Optional[str] = None
+    sha256: Optional[str] = None
+    version_no: Optional[int] = None
+    has_preview: bool = False
+    created_by_nickname: Optional[str] = None
+    updated_by_nickname: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: Optional[datetime] = None
+
+
+class DriveTreeNodeOut(BaseModel):
+    id: str
+    name: str
+    parent_id: Optional[str]
+    children: list["DriveTreeNodeOut"] = Field(default_factory=list)
+
+
+class DriveBreadcrumbOut(BaseModel):
+    id: Optional[str]
+    name: str
+
+
+class DriveListOut(BaseModel):
+    project_id: str
+    parent_id: Optional[str]
+    breadcrumbs: list[DriveBreadcrumbOut]
+    items: list[DriveItemOut]
+
+
+class DrivePreviewOut(BaseModel):
+    item_id: str
+    name: str
+    preview_type: str
+    mime: Optional[str] = None
+    content: Optional[str] = None
+    download_url: str
+    render_url: Optional[str] = None
+    version_no: Optional[int] = None
+
+
+class DriveOperationOut(BaseModel):
+    ok: bool = True
+    operation_id: Optional[str] = None
+    items: list[DriveItemOut] = Field(default_factory=list)
+
+
 # ---------- User ----------
 
 class UserOut(BaseModel):
