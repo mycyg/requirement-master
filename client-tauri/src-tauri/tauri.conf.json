@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../web-src/dist",
     "devUrl": "http://localhost:5174",
-    "beforeDevCommand": "npm --prefix ../.. run --workspace=client-tauri dev",
-    "beforeBuildCommand": "npm --prefix ../.. run --workspace=client-tauri build"
+    "beforeDevCommand": "npx vite --config web-src/vite.config.ts",
+    "beforeBuildCommand": "npx vite build --config web-src/vite.config.ts"
   },
   "app": {
     "windows": [
