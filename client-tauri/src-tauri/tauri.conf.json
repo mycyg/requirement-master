@@ -1,0 +1,65 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "需求管理大师",
+  "version": "0.2.0",
+  "identifier": "com.mycyg.yqgl",
+  "build": {
+    "frontendDist": "../web-src/dist",
+    "devUrl": "http://localhost:5174",
+    "beforeDevCommand": "npm --prefix ../.. run --workspace=client-tauri dev",
+    "beforeBuildCommand": "npm --prefix ../.. run --workspace=client-tauri build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "需求管理大师",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 920,
+        "minHeight": 600,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "center": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": false,
+      "title": "需求管理大师"
+    },
+    "macOSPrivateApi": true
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["yqgl"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis", "dmg", "app", "deb", "appimage"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "publisher": "mycyg",
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper" },
+      "nsis": {
+        "installMode": "perUser",
+        "languages": ["SimpChinese", "English"]
+      }
+    }
+  }
+}

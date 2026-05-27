@@ -68,9 +68,9 @@ export function KnowledgePage() {
     <main className="app-container">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="eyebrow">Knowledge Grep</p>
-          <h1 className="mt-2 text-3xl font-semibold text-stone-950">知识库</h1>
-          <p className="mt-2 max-w-2xl text-sm text-stone-500">不搞向量玄学，直接把项目事实写成 Markdown，让 Agent 老老实实 grep 证据。</p>
+          <p className="eyebrow">在历史里翻翻</p>
+          <h1 className="mt-2 text-3xl font-semibold text-stone-950">历史搜索</h1>
+          <p className="mt-2 max-w-2xl text-sm text-stone-500">查项目过去的决策、规则、交付物 —— 在需求、会议、文档里找证据。</p>
         </div>
         <label className="flex min-w-[260px] items-center gap-2">
           <Filter className="h-4 w-4 text-stone-400" aria-hidden="true" />
@@ -89,17 +89,17 @@ export function KnowledgePage() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") doSearch(); }}
-              placeholder="搜需求编号、会议标题、文件名、接单人、某句离谱留言..."
+              placeholder="搜需求编号、会议标题、文件名、接单人、关键句…"
             />
             <button className="button-primary" disabled={busy || !query.trim()} onClick={doSearch}>
               <Search className="h-4 w-4" aria-hidden="true" />
-              grep
+              搜索
             </button>
           </div>
           {projectName && <p className="mt-2 text-xs text-stone-500">当前只搜：{projectName}</p>}
           <div className="mt-4 space-y-3">
             {hits.length === 0 ? (
-              <div className="empty-state">还没有命中。关键词可以朴素一点，grep 喜欢朴素。</div>
+              <div className="empty-state">还没有命中。换一些关键词试试。</div>
             ) : hits.map((hit) => (
               <article key={`${hit.document_id}-${hit.line_no}`} className="rounded-lg border border-stone-200 bg-[#fffdf8] p-4">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">

@@ -182,7 +182,7 @@ function Card({ r }: { r: Requirement }) {
   const collaboratorCount = r.assignees?.filter((a) => a.role === "collaborator").length ?? 0;
   const assigneeText = lead
     ? `负责人 ${lead.nickname}${collaboratorCount > 0 ? ` +${collaboratorCount}` : ""}`
-    : "公开待接单池";
+    : "等人接";
   const priorityColor =
     r.priority === "urgent" ? "text-red-700"
     : r.priority === "high" ? "text-[#8a5d10]"

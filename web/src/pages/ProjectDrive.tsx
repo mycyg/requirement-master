@@ -486,7 +486,7 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
 
             <div className="min-h-[460px] p-3">
               {drive?.items.length === 0 && (
-                <div className="empty-state">这里空空的。拖文件进来，或者新建一个文件夹让它显得像在认真工作。</div>
+                <div className="empty-state">这里还没有文件。拖文件进来，或新建一个文件夹。</div>
               )}
 
               {view === "grid" && (

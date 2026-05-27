@@ -6,7 +6,7 @@ dispatch board while protecting draft assets and assigned work from casual acces
 from __future__ import annotations
 
 from models import Requirement, User
-from services.assignments import has_explicit_assignees, is_assigned_user
+from services.assignments import has_explicit_assignees, is_assigned_user, lead_assignment
 
 PRIVATE_REQUIREMENT_STATUSES = ("draft", "clarifying", "summary_ready")
 ASSIGNMENT_EDITABLE_STATUSES = {"draft", "clarifying", "summary_ready", "ready", "claimed", "doing", "revision_requested"}
@@ -41,7 +41,14 @@ def can_add_requirement_attachment(req: Requirement, user: User) -> bool:
 
 
 def can_manage_requirement_assignees(req: Requirement, user: User) -> bool:
-    return is_submitter(req, user) and req.status in ASSIGNMENT_EDITABLE_STATUSES
+    # Submitter can always re-dispatch their own requirement; the current lead may
+    # also re-assign to keep work flowing when the original submitter is offline.
+    if req.status not in ASSIGNMENT_EDITABLE_STATUSES:
+        return False
+    if is_submitter(req, user):
+        return True
+    lead = lead_assignment(req)
+    return lead is not None and lead.user_id == user.id
 
 
 def can_claim_requirement(req: Requirement, user: User) -> bool:

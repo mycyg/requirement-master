@@ -35,9 +35,14 @@ import { SpeakButton } from "@/components/SpeakButton";
 import type { Attachment, Identity, Requirement, RequirementAcceptanceItem, RequirementWorkspace, TaskPlan } from "@/lib/types";
 
 type Tab = "overview" | "workspace" | "decomposition" | "chat" | "attachments" | "deliveries" | "comments" | "activity";
-const DETAIL_TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
+
+type TabEntry = { key: Tab; label: string; Icon: LucideIcon; desktopOnly?: boolean };
+
+const ALL_DETAIL_TABS: TabEntry[] = [
   { key: "overview", label: "概览", Icon: FileText },
-  { key: "workspace", label: "工作区", Icon: BriefcaseBusiness },
+  // workspace & worker-stage decomposition are接单方动作 — 仅在桌面客户端展示。
+  // 网页上提需求方/PM 看不到 tab；详情仍可在客户端打开。
+  { key: "workspace", label: "我的工作区", Icon: BriefcaseBusiness, desktopOnly: true },
   { key: "decomposition", label: "拆解", Icon: ListChecks },
   { key: "chat", label: "对话历史", Icon: Bot },
   { key: "attachments", label: "附件", Icon: Paperclip },
@@ -45,6 +50,14 @@ const DETAIL_TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
   { key: "comments", label: "评论", Icon: MessageSquare },
   { key: "activity", label: "活动", Icon: Activity },
 ];
+
+/** Tabs visible to the current runtime (web vs desktop client). */
+function visibleDetailTabs(): TabEntry[] {
+  const desktop = isDesktopRuntime();
+  return ALL_DETAIL_TABS.filter((t) => desktop || !t.desktopOnly);
+}
+
+const DETAIL_TABS = visibleDetailTabs();
 const ASSIGNEE_MANAGE_STATUSES = new Set(["ready", "claimed", "doing", "revision_requested"]);
 
 function parseServerDate(value?: string | null): Date | null {
@@ -111,15 +124,15 @@ export function RequirementDetail() {
     return () => window.clearTimeout(t);
   }, [currentStatus, id, nav]);
 
-  if (!id || !req || !currentStatus) return <main className="narrow-container text-stone-500">加载中...</main>;
+  if (!id || !req || !currentStatus) return <main className="narrow-container text-stone-500">加载中…</main>;
 
   // If still clarifying, redirect to clarify page
   if (currentStatus === "draft" || currentStatus === "clarifying" || currentStatus === "summary_ready") {
     return (
       <main className="narrow-container text-center">
         <div className="paper-surface p-8">
-          <p className="text-stone-600">这条需求还在澄清或等待确认投递，正在前往对话页...</p>
-          <button className="button-primary mt-4" onClick={() => nav(`/r/${id}/clarify`)}>立即前往</button>
+          <p className="text-stone-600">这条需求还在沟通中，正在跳转…</p>
+          <button className="button-primary mt-4" onClick={() => nav(`/r/${id}/clarify`)}>现在去</button>
         </div>
       </main>
     );
@@ -216,7 +229,7 @@ export function RequirementDetail() {
             {lead ? (
               <span>负责人 <b>{lead.nickname}</b>{collaboratorCount > 0 ? ` +${collaboratorCount}` : ""}</span>
             ) : (
-              <span>公开待接单池</span>
+              <span>等人接</span>
             )}
             <span>·</span>
             <span>{formatServerDate(req.created_at)}</span>
@@ -224,7 +237,7 @@ export function RequirementDetail() {
           <div className="mt-3">
             <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${dueTone}`}>
               <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
-              {due ? `DDL ${due.toLocaleString("zh-CN", { hour12: false })}` : "还没写 DDL"}
+              {due ? `截止 ${due.toLocaleString("zh-CN", { hour12: false })}` : "没写截止时间"}
             </span>
           </div>
           <div className="mt-4 max-w-xl">
@@ -264,25 +277,30 @@ export function RequirementDetail() {
           {canManageAssignees && (
             <button className="button-secondary" disabled={actionBusy} onClick={openManage}>
               <Settings2 className="h-4 w-4" aria-hidden="true" />
-              管理接单人
+              改派接单人
             </button>
           )}
           {canClaim && (
             <button className="button-accent" disabled={actionBusy} onClick={claim}>
               <UserCheck className="h-4 w-4" aria-hidden="true" />
-              {actionBusy ? "处理中..." : "接单"}
+              {actionBusy ? "处理中…" : "接这单"}
             </button>
           )}
           {canStartDoing && (
             <button className="button-accent" disabled={actionBusy} onClick={startDoing}>
               <Play className="h-4 w-4" aria-hidden="true" />
-              {actionBusy ? "处理中..." : "开始处理"}
+              {actionBusy ? "处理中…" : "开始做"}
             </button>
           )}
           {!desktopRuntime && isWorker && ["ready", "claimed", "doing", "revision_requested"].includes(currentStatus) && (
-            <span className="pill border-[#bbd6d0] bg-[#eef8f5] text-[#4e7146]">
-              接活/处理请打开本地工作台
-            </span>
+            <a
+              href={`yqgl://r/${req.id}`}
+              className="button-accent"
+              title="在桌面客户端中打开此需求"
+            >
+              <Play className="h-4 w-4" aria-hidden="true" />
+              在桌面客户端继续 →
+            </a>
           )}
           {req.summary_md && (
             <SpeakButton
@@ -296,7 +314,7 @@ export function RequirementDetail() {
       {manageOpen && (
         <section className="mt-5">
           <AssigneeSelector
-            label="管理接单人"
+            label="改派接单人"
             leadUserId={manageLeadUserId}
             collaboratorUserIds={manageCollaboratorUserIds}
             selectedUsers={selectedUsers}
@@ -307,7 +325,7 @@ export function RequirementDetail() {
           />
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-stone-500">
-              {mustKeepLead ? "进行中的需求需要保留负责人；协作者拥有同等处理和交付权限。" : "清空后会回到公开待接单池。"}
+              {mustKeepLead ? "进行中的需求需要保留负责人；协作者拥有同等处理和交付权限。" : "清空后会回到等人接的公开池。"}
             </p>
             <div className="flex gap-2">
               <button className="button-secondary" disabled={actionBusy} onClick={() => setManageOpen(false)}>
@@ -613,7 +631,7 @@ function WorkspaceBoard({
   onChange: () => Promise<void>;
 }) {
   if (workspaces.length === 0) {
-    return <div className="empty-state">还没有个人工作区。接单后这里会长出进度、清单和一点点责任感。</div>;
+    return <div className="empty-state">还没有个人工作区。接单后这里会出现进度、清单和动态。</div>;
   }
   return (
     <div className="space-y-4">

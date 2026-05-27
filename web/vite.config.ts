@@ -5,9 +5,13 @@ import path from "node:path";
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
+    alias: [
+      { find: "@", replacement: path.resolve(__dirname, "./src") },
+      // Order matters: subpath rule comes first so `@yqgl/shared/foo` does not
+      // accidentally match the bare-package rule below.
+      { find: /^@yqgl\/shared\/(.*)$/, replacement: path.resolve(__dirname, "../shared/src") + "/$1" },
+      { find: /^@yqgl\/shared$/, replacement: path.resolve(__dirname, "../shared/src/index.ts") },
+    ],
   },
   server: {
     port: 5173,

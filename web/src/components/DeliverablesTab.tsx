@@ -26,9 +26,9 @@ export function DeliverablesTab({ req, canReview = false, onChange }: {
       </div>
     );
   }
-  if (!deliveries) return <div className="p-6 text-stone-500">加载中...</div>;
+  if (!deliveries) return <div className="p-6 text-stone-500">加载中…</div>;
   if (deliveries.length === 0) {
-    return <div className="empty-state">还没有交付物</div>;
+    return <div className="empty-state">还没有交付。</div>;
   }
 
   const accept = async () => {

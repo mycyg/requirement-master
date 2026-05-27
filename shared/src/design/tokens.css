@@ -1,0 +1,263 @@
+/*
+ * Aurora Glass design tokens
+ * Used by both web and the upcoming Tauri client.
+ * Import once at the app root: `import "@yqgl/shared/design/tokens.css"`.
+ */
+
+:root,
+[data-theme="light"] {
+  /* Backdrop canvas (used as body bg + mesh gradient stops) */
+  --bg-canvas: #f2eef6;
+  --bg-canvas-2: #e9eaf7;
+  --bg-canvas-3: #f4e4e8;
+
+  /* Glass surfaces */
+  --surface: rgba(255, 255, 255, 0.62);
+  --surface-strong: rgba(255, 255, 255, 0.78);
+  --surface-quiet: rgba(255, 255, 255, 0.42);
+  --surface-sunken: rgba(245, 243, 250, 0.55);
+
+  /* Ink (text) */
+  --ink: #1b1b22;
+  --ink-soft: #3a3a47;
+  --ink-muted: #6e6e80;
+  --ink-faint: #9b9bae;
+
+  /* Lines */
+  --line: rgba(28, 28, 46, 0.08);
+  --line-strong: rgba(28, 28, 46, 0.14);
+  --hairline: rgba(255, 255, 255, 0.55);
+
+  /* Accents (Arc-inspired electric purple + coral pink) */
+  --accent: #6b5bff;
+  --accent-hover: #5849e6;
+  --accent-soft: rgba(107, 91, 255, 0.12);
+  --accent-2: #ff6e8e;
+  --accent-2-soft: rgba(255, 110, 142, 0.14);
+
+  /* Semantic */
+  --success: #2e9f6e;
+  --success-soft: rgba(46, 159, 110, 0.12);
+  --warn: #e2a03f;
+  --warn-soft: rgba(226, 160, 63, 0.14);
+  --error: #e5484d;
+  --error-soft: rgba(229, 72, 77, 0.12);
+  --info: #4f89f1;
+  --info-soft: rgba(79, 137, 241, 0.12);
+
+  /* Radii */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-pill: 9999px;
+
+  /* Shadows (5 elevation tiers) */
+  --shadow-1: 0 1px 2px rgba(20, 20, 40, 0.05), 0 0 0 1px var(--line);
+  --shadow-2: 0 4px 12px rgba(20, 20, 40, 0.06),
+    0 1px 2px rgba(20, 20, 40, 0.04), inset 0 1px 0 var(--hairline);
+  --shadow-3: 0 12px 28px rgba(20, 20, 40, 0.1),
+    0 2px 6px rgba(20, 20, 40, 0.05), inset 0 1px 0 var(--hairline);
+  --shadow-4: 0 24px 56px rgba(20, 20, 40, 0.18),
+    0 6px 14px rgba(20, 20, 40, 0.08), inset 0 1px 0 var(--hairline);
+  --shadow-5: 0 48px 96px rgba(20, 20, 40, 0.28),
+    0 12px 28px rgba(20, 20, 40, 0.14), inset 0 1px 0 var(--hairline);
+
+  /* Blur (used with backdrop-filter) */
+  --blur-1: blur(8px) saturate(135%);
+  --blur-2: blur(16px) saturate(140%);
+  --blur-3: blur(24px) saturate(150%);
+  --blur-4: blur(40px) saturate(160%);
+
+  /* Spacing (4px base scale) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Fonts */
+  --font-sans: "Inter", "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei",
+    "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "SF Mono", "Cascadia Mono",
+    "Consolas", monospace;
+
+  /* Easing & duration */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-glide: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 150ms;
+  --dur-base: 250ms;
+  --dur-slow: 400ms;
+}
+
+[data-theme="dark"] {
+  --bg-canvas: #11111a;
+  --bg-canvas-2: #16172b;
+  --bg-canvas-3: #1b1124;
+
+  --surface: rgba(28, 28, 46, 0.55);
+  --surface-strong: rgba(36, 36, 58, 0.72);
+  --surface-quiet: rgba(28, 28, 46, 0.4);
+  --surface-sunken: rgba(20, 20, 32, 0.5);
+
+  --ink: #f5f4fa;
+  --ink-soft: #d3d2de;
+  --ink-muted: #9c9cb2;
+  --ink-faint: #6e6e80;
+
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.18);
+  --hairline: rgba(255, 255, 255, 0.1);
+
+  --accent: #8b7bff;
+  --accent-hover: #a498ff;
+  --accent-soft: rgba(139, 123, 255, 0.18);
+  --accent-2: #ff8aa5;
+  --accent-2-soft: rgba(255, 138, 165, 0.18);
+
+  --success: #3fcb87;
+  --success-soft: rgba(63, 203, 135, 0.18);
+  --warn: #f2b85a;
+  --warn-soft: rgba(242, 184, 90, 0.18);
+  --error: #ff6066;
+  --error-soft: rgba(255, 96, 102, 0.18);
+  --info: #6ba0ff;
+  --info-soft: rgba(107, 160, 255, 0.18);
+}
+
+/* Base body + selection treatment shared by both themes */
+html {
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01", "ss02", "cv02";
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  background:
+    radial-gradient(ellipse 80% 60% at 12% -10%, var(--bg-canvas-3) 0%, transparent 60%),
+    radial-gradient(ellipse 70% 50% at 88% 110%, var(--bg-canvas-2) 0%, transparent 55%),
+    var(--bg-canvas);
+  background-attachment: fixed;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+/* Reduced-motion: keep transitions instant for users who request it */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Fallback when browser does not support backdrop-filter (rare; mostly old Edge/Safari) */
+@supports not (backdrop-filter: blur(1px)) {
+  :root {
+    --surface: rgba(255, 255, 255, 0.92);
+    --surface-strong: rgba(255, 255, 255, 0.96);
+    --surface-quiet: rgba(255, 255, 255, 0.78);
+  }
+  [data-theme="dark"] {
+    --surface: rgba(28, 28, 46, 0.92);
+    --surface-strong: rgba(36, 36, 58, 0.96);
+  }
+}
+
+/* ----- Glass component classes (used via Tailwind @apply or directly) ----- */
+
+.glass {
+  background: var(--surface);
+  -webkit-backdrop-filter: var(--blur-2);
+  backdrop-filter: var(--blur-2);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+  border-radius: var(--radius-md);
+}
+
+.glass-strong {
+  background: var(--surface-strong);
+  -webkit-backdrop-filter: var(--blur-3);
+  backdrop-filter: var(--blur-3);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-4);
+  border-radius: var(--radius-lg);
+}
+
+.glass-quiet {
+  background: var(--surface-quiet);
+  -webkit-backdrop-filter: var(--blur-2);
+  backdrop-filter: var(--blur-2);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-1);
+  border-radius: var(--radius-md);
+}
+
+.glass-sunken {
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.hairline-top {
+  background-image: linear-gradient(to bottom, var(--hairline) 0, transparent 1px);
+}
+
+/* ----- Animations ----- */
+
+@keyframes yqgl-fade-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes yqgl-slide-right {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes yqgl-scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes yqgl-pulse-accent {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  50%      { box-shadow: 0 0 0 6px var(--accent-soft); }
+}
+
+@keyframes yqgl-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.anim-fade-up    { animation: yqgl-fade-up var(--dur-base) var(--ease-out-soft) both; }
+.anim-slide-right{ animation: yqgl-slide-right var(--dur-base) var(--ease-out-soft) both; }
+.anim-scale-in   { animation: yqgl-scale-in var(--dur-base) var(--ease-spring) both; }
+.anim-pulse-accent { animation: yqgl-pulse-accent 1600ms ease-in-out infinite; }
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--surface-quiet) 0%,
+    var(--surface) 50%,
+    var(--surface-quiet) 100%
+  );
+  background-size: 200% 100%;
+  animation: yqgl-shimmer 1400ms linear infinite;
+}

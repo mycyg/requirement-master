@@ -137,7 +137,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
               <p className="mt-2 text-xs text-red-700">{voicesErr}</p>
             ) : (
               <div className="mt-2 space-y-1">
-                {voices.length === 0 && <p className="text-xs text-stone-400">加载中...</p>}
+                {voices.length === 0 && <p className="text-xs text-stone-400">加载中…</p>}
                 {voices.map((v) => (
                   <label key={v} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 hover:bg-stone-900/5">
                     <input

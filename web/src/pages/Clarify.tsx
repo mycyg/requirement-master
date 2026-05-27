@@ -102,7 +102,7 @@ export function Clarify() {
     }
   }, [req, loadedReqId, history.length, stream.running, stream.parsed]);
 
-  if (!reqId || !req) return <main className="narrow-container text-stone-500">加载中...</main>;
+  if (!reqId || !req) return <main className="narrow-container text-stone-500">加载中…</main>;
 
   const latestHistoryMsg = history[history.length - 1];
   const latestHistoryParsed = parsedFromHistory(latestHistoryMsg);
@@ -249,7 +249,7 @@ export function Clarify() {
             onClick={() => { stream.reset(); stream.run({ force_summarize: true }); }}
           >
             <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-            够了，开始整理
+            够了，给我总结
           </button>
         )}
       </aside>
@@ -329,10 +329,19 @@ function Bubble({ msg }: { msg: StoredChatMessage }) {
   })();
 
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div className={`max-w-[min(86%,760px)] whitespace-pre-wrap rounded-lg px-4 py-3 text-sm leading-relaxed shadow-sm ${
-        isUser ? "bg-stone-950 text-[#fffdf8]" : "border border-stone-200 bg-[#fffdf8] text-stone-900"
-      }`}>
+    <div className={`flex items-end gap-2 ${isUser ? "justify-end" : "justify-start"}`}>
+      {!isUser && (
+        <div className="shrink-0 grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-[#6B5BFF] to-[#FF6E8E] text-white shadow-e1">
+          <Bot className="h-4 w-4" aria-hidden="true" />
+        </div>
+      )}
+      <div
+        className={`max-w-[min(86%,640px)] whitespace-pre-wrap px-4 py-3 text-sm leading-relaxed transition ${
+          isUser
+            ? "rounded-2xl rounded-br-sm bg-accent text-white shadow-e2"
+            : "rounded-2xl rounded-bl-sm bg-accent-2-soft text-ink border border-accent-2/20 shadow-e1"
+        }`}
+      >
         {text}
         {!isUser && text && (
           <div className="mt-2 flex justify-end">
@@ -351,12 +360,12 @@ function LiveBubble({ thinking, text, done }: { thinking: string; text: string; 
         <details className="mb-2">
           <summary className="cursor-pointer text-xs font-semibold text-stone-500">
             <Bot className="mr-1.5 inline h-3.5 w-3.5" aria-hidden="true" />
-            正在整理上下文...
+            AI 助理正在思考…
           </summary>
           <pre className="scrollbar-thin-warm mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border border-stone-200 bg-[#fffaf1] p-3 text-xs text-stone-600">{thinking}</pre>
         </details>
       )}
-      {!done && !text && !thinking && <div className="text-sm text-stone-400">等待回应...</div>}
+      {!done && !text && !thinking && <div className="text-sm text-stone-400">让我想一下…</div>}
       {text && <pre className="whitespace-pre-wrap text-xs text-stone-500">{text}</pre>}
     </div>
   );
@@ -535,7 +544,7 @@ function SummaryCard({
             onChange={(e) => setDdl(e.target.value)}
           />
         </label>
-        <p className="mt-2 text-xs text-stone-500">没有 DDL 不能投递，防止需求变成一张长期饭票。</p>
+        <p className="mt-2 text-xs text-stone-500">投递前请确认截止时间。</p>
       </div>
 
       <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -546,7 +555,7 @@ function SummaryCard({
             checked={finalTryAi}
             onChange={(e) => setTryAi(e.target.checked)}
           />
-          <span>让 AI 先试一下（失败自动转人工）{recommended && tryAi === null && <span className="text-[#684b7a]"> · AI 推荐</span>}</span>
+          <span>让 AI 助理先试一遍（失败会自动转给人）{recommended && tryAi === null && <span className="text-[#684b7a]"> · 建议</span>}</span>
         </label>
         <button
           className={`button w-full sm:w-auto ${
@@ -558,7 +567,7 @@ function SummaryCard({
             setErr(null);
             try {
               if (!ddl) {
-                setErr("先填 DDL，再投递。");
+                setErr("请先填截止时间。");
                 return;
               }
               await onSchedule(new Date(ddl).toISOString());
@@ -571,7 +580,7 @@ function SummaryCard({
           }}
         >
           {finalTryAi ? <Bot className="h-4 w-4" aria-hidden="true" /> : <FileText className="h-4 w-4" aria-hidden="true" />}
-          {busy ? "处理中..." : finalTryAi ? "投递并交给 AI" : "投递给我（人工处理）"}
+          {busy ? "处理中…" : finalTryAi ? "让 AI 助理先试" : "投递给负责人"}
         </button>
       </div>
       {err && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>}

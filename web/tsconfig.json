@@ -16,7 +16,11 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] }
+    "paths": {
+      "@/*": ["src/*"],
+      "@yqgl/shared": ["../shared/src/index.ts"],
+      "@yqgl/shared/*": ["../shared/src/*"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", "../shared/src"]
 }

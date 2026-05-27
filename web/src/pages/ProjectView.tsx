@@ -29,7 +29,7 @@ export function ProjectView() {
 
   useEffect(() => { refresh(); }, [id]);
 
-  if (!project) return <main className="narrow-container text-stone-500">加载中...</main>;
+  if (!project) return <main className="narrow-container text-stone-500">加载中…</main>;
 
   const runProjectAction = async () => {
     if (!action) return;
@@ -69,7 +69,7 @@ export function ProjectView() {
           {!project.archived && !project.deleted_at && (
             <Link to={`/p/${project.id}/new`} className="button-primary">
               <Plus className="h-4 w-4" aria-hidden="true" />
-              提一个需求
+              提一条新需求
             </Link>
           )}
           {!project.archived && !project.deleted_at && (
