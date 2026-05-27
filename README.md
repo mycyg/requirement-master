@@ -8,7 +8,7 @@
 >
 > **来，把这堆人扔给 AI。** Web 端负责派活，本地端负责接活，谁也别再假装自己没看见。
 
-[English](#english-summary) · [架构](#架构) · [快速开始](#快速开始) · [路线图](#路线图)
+[English](#english-summary) · [架构](#架构) · [快速开始](#快速开始) · [真人测试](#真人测试) · [路线图](#路线图)
 
 ![看板](screenshots/02_dashboard.png)
 
@@ -233,6 +233,39 @@ python yqgl_tray.py    # 首次启动有配置向导
 默认服务端 IP 是 `192.168.5.53`，端口 `8080`。首次启动和托盘「设置…」里都可以自己改服务端 IP、项目保存位置、项目网盘同步目录、接单状态、DDL 提醒提前量和设备名；保存后客户端会注册本地端能力 token，配置写到 `%APPDATA%\yqgl\config.json`（Windows）或 `~/.config/yqgl/config.json`（Linux/macOS）。如果旧配置里还写着 `192.168.0.x`，托盘启动时会自动迁到同尾号的 `192.168.5.x`，避免接单方连去隔壁宇宙。
 
 托盘菜单第一项 "打开本地工作台"（默认双击）会启动 pywebview 并打开 `/local-workbench`，自动带昵称 cookie 和本地端 token；"打开 Web 派活端" 会进普通浏览器管理端；"打开项目保存位置" 会直接打开本地需求文件根目录。项目网盘同步默认关闭，可切到单向下载或双向同步；本地删除默认不会删远端，手滑党暂时安全。
+
+## 真人测试
+
+团队成员今天就能开始试，入口别找错：
+
+- 派活/验收/管理：浏览器打开 `http://192.168.5.53:8080`
+- 本地接活/处理/交付：先装客户端，再从托盘点 **打开本地工作台**
+- Windows 一句话安装：`powershell -ExecutionPolicy Bypass -c "iwr http://192.168.5.53:8080/client/install.ps1 | iex"`
+- Linux/macOS 一句话安装：`curl -fsSL http://192.168.5.53:8080/client/install.sh | bash`
+
+建议第一轮真人测试按这条链路走，别一上来就挑战地狱副本：
+
+1. 浏览器端填昵称，新建项目。
+2. 提一个带 DDL 的需求，指定一个在线空闲接单人。
+3. 接单人在客户端设置昵称和设备名，打开本地工作台。
+4. 本地工作台里接单、开始处理、改个人工作区进度、加清单、写动态。
+5. 浏览器端只读查看接单方进度，确认 Web 端没有“接单/开始处理/上传交付”这类按钮。
+6. 本地端上传交付包，浏览器端验收或返工。
+7. 顺手测项目网盘上传/预览、会议导入、日程、通知、知识库 grep、排期和健康页。
+
+如果浏览器里手动调接单/交付接口看到 `403 local client required`，那不是坏了，是它终于学会了看门。
+
+### 远端持久化
+
+当前生产服务跑在 `192.168.5.53:8080`，三个 systemd unit 都应保持开机自启：
+
+```bash
+systemctl is-enabled yqgl-web yqgl-asr yqgl-tts
+systemctl is-active yqgl-web yqgl-asr yqgl-tts
+curl http://192.168.5.53:8080/api/health
+```
+
+本次发布已确认 `yqgl-web`、`yqgl-asr`、`yqgl-tts` 均为 `enabled + active`。如果机器重启，systemd 会自动拉起；如果哪天它没起来，先看 `journalctl -u yqgl-web -n 100 --no-pager`，别先怪同事。
 
 ### 端到端冒烟测试
 
