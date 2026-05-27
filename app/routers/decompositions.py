@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session, selectinload
 
-from auth import current_user
+from auth import current_user, optional_local_client
 from db import SessionLocal, get_db
 from models import (
     BackgroundJob,
@@ -79,6 +79,7 @@ def create_decomposition(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
+    local_user: User | None = Depends(optional_local_client),
 ) -> TaskPlanOut:
     req = _load_requirement(db, req_id)
     if not can_view_requirement_record(req, user):
@@ -87,6 +88,8 @@ def create_decomposition(
         raise HTTPException(status_code=403, detail="only the requester can create dispatch decompositions")
     if payload.stage == "worker" and not can_work_requirement(req, user):
         raise HTTPException(status_code=403, detail="only assignees can create worker decompositions")
+    if payload.stage == "worker" and local_user is None:
+        raise HTTPException(status_code=403, detail="local client required")
     job = create_job(db, kind="task_decomposition", user=user, message="正在拆任务")
     plan = RequirementTaskPlan(
         requirement_id=req.id,
@@ -152,6 +155,7 @@ async def confirm_decomposition(
     plan_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
+    local_user: User | None = Depends(optional_local_client),
 ) -> TaskPlanConfirmOut:
     plan = _load_plan(db, plan_id)
     req = plan.requirement
@@ -161,6 +165,8 @@ async def confirm_decomposition(
         raise HTTPException(status_code=403, detail="only the requester can confirm dispatch decompositions")
     if plan.stage == "worker" and plan.target_user_id != user.id:
         raise HTTPException(status_code=403, detail="only the target assignee can confirm this worker decomposition")
+    if plan.stage == "worker" and local_user is None:
+        raise HTTPException(status_code=403, detail="local client required")
     acceptance_rows, workspace_rows = apply_confirmed_plan(db, plan, user)
     log_activity(
         db,
@@ -184,6 +190,7 @@ async def dismiss_decomposition(
     plan_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
+    local_user: User | None = Depends(optional_local_client),
 ) -> TaskPlanOut:
     plan = _load_plan(db, plan_id)
     req = plan.requirement
@@ -191,6 +198,8 @@ async def dismiss_decomposition(
         raise HTTPException(status_code=403, detail="only the requester can dismiss dispatch decompositions")
     if plan.stage == "worker" and plan.target_user_id != user.id:
         raise HTTPException(status_code=403, detail="only the target assignee can dismiss this worker decomposition")
+    if plan.stage == "worker" and local_user is None:
+        raise HTTPException(status_code=403, detail="local client required")
     plan.status = "dismissed"
     log_activity(
         db,

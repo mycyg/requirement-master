@@ -5,10 +5,31 @@ import type {
   RequirementAssignee, RequirementWorkspace, ScheduleEvent, StoredChatMessage, TaskPlan, UserOption, UserWorkload, WorkspaceItem,
 } from "./types";
 
-const COMMON: RequestInit = { credentials: "include" };
+export function isDesktopRuntime(): boolean {
+  try {
+    return window.localStorage.getItem("yqgl_runtime") === "desktop";
+  } catch {
+    return false;
+  }
+}
+
+function localClientToken(): string | null {
+  try {
+    return window.localStorage.getItem("yqgl_client_token");
+  } catch {
+    return null;
+  }
+}
+
+function withCommon(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers || {});
+  const token = localClientToken();
+  if (token) headers.set("X-YQGL-Client-Token", token);
+  return { ...init, credentials: "include", headers };
+}
 
 async function json<T>(input: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(input, { ...COMMON, ...init });
+  const r = await fetch(input, withCommon(init));
   if (!r.ok) {
     const text = await r.text();
     throw new Error(`${r.status} ${r.statusText}: ${text.slice(0, 200)}`);
@@ -74,12 +95,11 @@ export const api = {
       body: JSON.stringify(input),
     }),
   uploadDriveChunk: async (projectId: string, uploadId: string, idx: number, chunk: Blob) => {
-    const r = await fetch(`/api/projects/${projectId}/drive/upload/${uploadId}/chunk/${idx}`, {
-      ...COMMON,
+    const r = await fetch(`/api/projects/${projectId}/drive/upload/${uploadId}/chunk/${idx}`, withCommon({
       method: "PUT",
       headers: { "Content-Type": "application/octet-stream" },
       body: chunk,
-    });
+    }));
     if (!r.ok) throw new Error(`chunk upload failed: ${r.status} ${await r.text()}`);
     return r.json();
   },
@@ -117,12 +137,11 @@ export const api = {
       body: JSON.stringify({ body }),
     }),
   bulkDownloadDrive: async (itemIds: string[]) => {
-    const r = await fetch("/api/drive/bulk-download", {
-      ...COMMON,
+    const r = await fetch("/api/drive/bulk-download", withCommon({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ item_ids: itemIds }),
-    });
+    }));
     if (!r.ok) throw new Error(`download failed: ${r.status} ${await r.text()}`);
     return r.blob();
   },
@@ -213,9 +232,9 @@ export const api = {
   uploadSimple: async (req_id: string, file: File): Promise<Attachment> => {
     const fd = new FormData();
     fd.append("file", file);
-    const r = await fetch(`/api/requirements/${req_id}/attachments`, {
-      ...COMMON, method: "POST", body: fd,
-    });
+    const r = await fetch(`/api/requirements/${req_id}/attachments`, withCommon({
+      method: "POST", body: fd,
+    }));
     if (!r.ok) throw new Error(`upload failed: ${r.status} ${await r.text()}`);
     return r.json();
   },
@@ -301,12 +320,11 @@ export const api = {
       body: JSON.stringify(input),
     }),
   uploadMeetingChunk: async (projectId: string, uploadId: string, idx: number, chunk: Blob) => {
-    const r = await fetch(`/api/projects/${projectId}/meetings/upload/${uploadId}/chunk/${idx}`, {
-      ...COMMON,
+    const r = await fetch(`/api/projects/${projectId}/meetings/upload/${uploadId}/chunk/${idx}`, withCommon({
       method: "PUT",
       headers: { "Content-Type": "application/octet-stream" },
       body: chunk,
-    });
+    }));
     if (!r.ok) throw new Error(`meeting chunk upload failed: ${r.status} ${await r.text()}`);
     return r.json();
   },

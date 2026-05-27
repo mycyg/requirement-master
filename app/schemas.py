@@ -191,6 +191,25 @@ class UserStatusUpdateIn(BaseModel):
     availability_text: Optional[str] = Field(default=None, max_length=128)
 
 
+class ClientDeviceRegisterIn(BaseModel):
+    device_name: str = Field(min_length=1, max_length=128)
+    platform: str = Field(default="unknown", max_length=64)
+
+
+class ClientDeviceOut(BaseModel):
+    id: str
+    device_name: str
+    platform: str
+    last_seen_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class ClientDeviceRegisterOut(BaseModel):
+    device: ClientDeviceOut
+    client_token: str
+
+
 # ---------- Requirement ----------
 
 class RequirementCreateIn(BaseModel):

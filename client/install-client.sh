@@ -27,6 +27,7 @@ chmod +x "$INSTALL_DIR/launch.sh"
 python - "$SERVER" "$CONFIG_DIR/config.json" <<'PY'
 import json
 import pathlib
+import platform
 import sys
 from urllib.parse import urlparse
 
@@ -39,6 +40,9 @@ config = {
     "server_scheme": parsed.scheme or "http",
     "server_ip": parsed.hostname or "192.168.5.53",
     "server_port": parsed.port or 8080,
+    "client_token": "",
+    "client_device_id": "",
+    "client_device_name": platform.node() or "本地工作台",
     "project_save_root": root,
     "sync_root": root,
     "drive_sync_root": str(pathlib.Path(root) / "项目网盘"),

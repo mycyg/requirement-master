@@ -14,6 +14,7 @@ from routers import auth as auth_router
 from routers import auto as auto_router
 from routers import calendar as calendar_router
 from routers import chat as chat_router
+from routers import client_devices as client_devices_router
 from routers import comments as comments_router
 from routers import decompositions as decompositions_router
 from routers import deliveries as deliveries_router
@@ -79,6 +80,7 @@ app.add_middleware(
 
 app.include_router(auth_router.router)
 app.include_router(projects_router.router)
+app.include_router(client_devices_router.router)
 app.include_router(project_drive_router.router)
 app.include_router(requirements_router.router)
 app.include_router(attachments_router.router)

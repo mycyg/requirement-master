@@ -58,6 +58,9 @@ class Config:
     server_scheme: str = DEFAULT_SERVER_SCHEME
     nickname: str = ""
     cookie_token: str = ""           # signed cookie (yqgl_id) value
+    client_token: str = ""
+    client_device_id: str = ""
+    client_device_name: str = field(default_factory=lambda: platform.node() or "本地工作台")
     sync_root: str = str(DEFAULT_SYNC_ROOT)
     project_save_root: str = str(DEFAULT_SYNC_ROOT)
     drive_sync_enabled: bool = False
@@ -215,8 +218,9 @@ class ServerClient:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         cookies = {"yqgl_id": cfg.cookie_token} if cfg.cookie_token else {}
+        headers = {"X-YQGL-Client-Token": cfg.client_token} if cfg.client_token else {}
         self._client = httpx.Client(
-            base_url=cfg.server_url, cookies=cookies, timeout=httpx.Timeout(60, read=None),
+            base_url=cfg.server_url, cookies=cookies, headers=headers, timeout=httpx.Timeout(60, read=None),
         )
 
     def close(self) -> None:
@@ -228,6 +232,18 @@ class ServerClient:
         r.raise_for_status()
         cookie = r.cookies.get("yqgl_id", "")
         return cookie
+
+    def register_client_device(self, device_name: str, platform_name: str | None = None) -> tuple[str, str]:
+        r = self._client.post(
+            "/api/client-devices/register",
+            json={
+                "device_name": (device_name or platform.node() or "本地工作台")[:128],
+                "platform": (platform_name or platform.platform() or "unknown")[:64],
+            },
+        )
+        r.raise_for_status()
+        data = r.json()
+        return data["device"]["id"], data["client_token"]
 
     def me(self) -> dict | None:
         try:
@@ -725,7 +741,7 @@ def show_first_run_dialog(cfg: Config) -> bool:
     """Modal config dialog. Returns True if user saved, False if cancelled."""
     root = tk.Tk()
     root.title("需求管理大师 · 设置")
-    root.geometry("620x620")
+    root.geometry("640x680")
     root.attributes("-topmost", True)
 
     frm = ttk.Frame(root, padding=20)
@@ -740,6 +756,7 @@ def show_first_run_dialog(cfg: Config) -> bool:
     availability_var = tk.StringVar(value=cfg.availability_status)
     availability_text_var = tk.StringVar(value=cfg.availability_text)
     reminder_offsets_var = tk.StringVar(value=",".join(str(x) for x in cfg.reminder_offsets_minutes))
+    device_name_var = tk.StringVar(value=cfg.client_device_name or platform.node() or "本地工作台")
 
     def update_server_preview(*_: Any) -> None:
         try:
@@ -766,56 +783,64 @@ def show_first_run_dialog(cfg: Config) -> bool:
     e_nick.insert(0, cfg.nickname)
     e_nick.grid(row=3, column=1, sticky="we", pady=4)
 
-    ttk.Label(frm, text="项目保存位置").grid(row=4, column=0, sticky="w", pady=4)
+    ttk.Label(frm, text="设备名").grid(row=4, column=0, sticky="w", pady=4)
+    ttk.Entry(frm, width=42, textvariable=device_name_var).grid(row=4, column=1, sticky="we", pady=4)
+    ttk.Label(
+        frm,
+        text=("本地端能力：" + ("已注册" if cfg.client_token else "保存后注册")),
+        foreground="#666",
+    ).grid(row=5, column=1, sticky="w", pady=(0, 4))
+
+    ttk.Label(frm, text="项目保存位置").grid(row=6, column=0, sticky="w", pady=4)
     e_root = ttk.Entry(frm, width=42)
     e_root.insert(0, cfg.sync_root)
-    e_root.grid(row=4, column=1, sticky="we", pady=4)
+    e_root.grid(row=6, column=1, sticky="we", pady=4)
     ttk.Label(
         frm,
         text="需求文件会保存到：项目保存位置\\项目\\需求编号",
         foreground="#666",
-    ).grid(row=5, column=1, sticky="w", pady=(0, 4))
+    ).grid(row=7, column=1, sticky="w", pady=(0, 4))
 
     def browse():
         d = filedialog.askdirectory(initialdir=e_root.get() or ".")
         if d:
             e_root.delete(0, "end")
             e_root.insert(0, d)
-    ttk.Button(frm, text="选择…", command=browse).grid(row=4, column=2, padx=4)
+    ttk.Button(frm, text="选择…", command=browse).grid(row=6, column=2, padx=4)
 
-    ttk.Label(frm, text="项目网盘同步").grid(row=6, column=0, sticky="w", pady=4)
-    ttk.Checkbutton(frm, text="开启自动同步", variable=drive_enabled_var).grid(row=6, column=1, sticky="w", pady=4)
+    ttk.Label(frm, text="项目网盘同步").grid(row=8, column=0, sticky="w", pady=4)
+    ttk.Checkbutton(frm, text="开启自动同步", variable=drive_enabled_var).grid(row=8, column=1, sticky="w", pady=4)
 
-    ttk.Label(frm, text="同步模式").grid(row=7, column=0, sticky="w", pady=4)
+    ttk.Label(frm, text="同步模式").grid(row=9, column=0, sticky="w", pady=4)
     mode_frm = ttk.Frame(frm)
-    mode_frm.grid(row=7, column=1, sticky="w", pady=4)
+    mode_frm.grid(row=9, column=1, sticky="w", pady=4)
     ttk.Radiobutton(mode_frm, text="单向下载", value="download", variable=drive_mode_var).pack(side="left")
     ttk.Radiobutton(mode_frm, text="双向同步", value="two_way", variable=drive_mode_var).pack(side="left", padx=12)
 
-    ttk.Label(frm, text="网盘同步目录").grid(row=8, column=0, sticky="w", pady=4)
+    ttk.Label(frm, text="网盘同步目录").grid(row=10, column=0, sticky="w", pady=4)
     e_drive_root = ttk.Entry(frm, width=42, textvariable=drive_root_var)
-    e_drive_root.grid(row=8, column=1, sticky="we", pady=4)
+    e_drive_root.grid(row=10, column=1, sticky="we", pady=4)
     def browse_drive():
         d = filedialog.askdirectory(initialdir=drive_root_var.get() or ".")
         if d:
             drive_root_var.set(d)
-    ttk.Button(frm, text="选择…", command=browse_drive).grid(row=8, column=2, padx=4)
+    ttk.Button(frm, text="选择…", command=browse_drive).grid(row=10, column=2, padx=4)
 
-    ttk.Label(frm, text="接单状态").grid(row=9, column=0, sticky="w", pady=4)
+    ttk.Label(frm, text="接单状态").grid(row=11, column=0, sticky="w", pady=4)
     status_frm = ttk.Frame(frm)
-    status_frm.grid(row=9, column=1, sticky="w", pady=4)
+    status_frm.grid(row=11, column=1, sticky="w", pady=4)
     ttk.Radiobutton(status_frm, text="空闲", value="free", variable=availability_var).pack(side="left")
     ttk.Radiobutton(status_frm, text="忙碌", value="busy", variable=availability_var).pack(side="left", padx=12)
     ttk.Radiobutton(status_frm, text="其他", value="custom", variable=availability_var).pack(side="left")
 
-    ttk.Label(frm, text="状态备注").grid(row=10, column=0, sticky="w", pady=4)
-    ttk.Entry(frm, width=42, textvariable=availability_text_var).grid(row=10, column=1, sticky="we", pady=4)
+    ttk.Label(frm, text="状态备注").grid(row=12, column=0, sticky="w", pady=4)
+    ttk.Entry(frm, width=42, textvariable=availability_text_var).grid(row=12, column=1, sticky="we", pady=4)
 
-    ttk.Label(frm, text="DDL 提醒(分钟)").grid(row=11, column=0, sticky="w", pady=4)
-    ttk.Entry(frm, width=42, textvariable=reminder_offsets_var).grid(row=11, column=1, sticky="we", pady=4)
+    ttk.Label(frm, text="DDL 提醒(分钟)").grid(row=13, column=0, sticky="w", pady=4)
+    ttk.Entry(frm, width=42, textvariable=reminder_offsets_var).grid(row=13, column=1, sticky="we", pady=4)
 
     status_lbl = ttk.Label(frm, text="", foreground="red")
-    status_lbl.grid(row=12, column=0, columnspan=3, sticky="w", pady=6)
+    status_lbl.grid(row=14, column=0, columnspan=3, sticky="w", pady=6)
 
     result = {"ok": False}
 
@@ -827,9 +852,10 @@ def show_first_run_dialog(cfg: Config) -> bool:
             status_lbl.config(text=str(ex), foreground="red")
             return
         nick = e_nick.get().strip()
+        device_name = device_name_var.get().strip() or platform.node() or "本地工作台"
         root_dir = e_root.get().strip()
         drive_root = drive_root_var.get().strip()
-        if not nick or not root_dir or not drive_root:
+        if not nick or not device_name or not root_dir or not drive_root:
             status_lbl.config(text="所有字段都必填")
             return
         try:
@@ -847,10 +873,12 @@ def show_first_run_dialog(cfg: Config) -> bool:
                 server_scheme=server_scheme,
             ))
             cookie = tmp_client.identify(nick)
-            tmp_client.close()
             if not cookie:
+                tmp_client.close()
                 status_lbl.config(text="未拿到 cookie，请检查服务端", foreground="red")
                 return
+            device_id, client_token = tmp_client.register_client_device(device_name, platform.platform())
+            tmp_client.close()
         except Exception as ex:
             status_lbl.config(text=f"连接失败: {ex}", foreground="red")
             return
@@ -860,6 +888,9 @@ def show_first_run_dialog(cfg: Config) -> bool:
         cfg.server_port = server_port
         cfg.server_scheme = server_scheme
         cfg.nickname = nick
+        cfg.client_device_name = device_name
+        cfg.client_device_id = device_id
+        cfg.client_token = client_token
         cfg.sync_root = root_dir
         cfg.project_save_root = root_dir
         cfg.drive_sync_enabled = bool(drive_enabled_var.get())
@@ -883,7 +914,7 @@ def show_first_run_dialog(cfg: Config) -> bool:
         root.destroy()
 
     btn_frm = ttk.Frame(frm)
-    btn_frm.grid(row=13, column=0, columnspan=3, pady=12, sticky="e")
+    btn_frm.grid(row=15, column=0, columnspan=3, pady=12, sticky="e")
     ttk.Button(btn_frm, text="取消", command=cancel).pack(side="right", padx=4)
     ttk.Button(btn_frm, text="保存", command=save).pack(side="right", padx=4)
 
@@ -969,8 +1000,8 @@ class TrayApp:
 
     def _menu(self) -> pystray.Menu:
         return pystray.Menu(
-            pystray.MenuItem("打开接单看板", lambda _: self._open_dashboard(), default=True),
-            pystray.MenuItem("打开主界面 (浏览器)", lambda _: webbrowser.open(self.cfg.server_url)),
+            pystray.MenuItem("打开本地工作台", lambda _: self._open_dashboard(), default=True),
+            pystray.MenuItem("打开 Web 派活端", lambda _: webbrowser.open(self.cfg.server_url)),
             pystray.MenuItem("打开项目保存位置", lambda _: open_folder(Path(self.cfg.sync_root))),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("立即同步所有就绪需求", lambda _: threading.Thread(target=self._catchup, daemon=True).start()),
@@ -998,12 +1029,12 @@ class TrayApp:
                 if platform.system() == "Windows":
                     kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
                 subprocess.Popen([sys.executable, str(dash_script)], **kwargs)
-                log("spawned dashboard window")
+                log("spawned local workbench window")
             else:
-                webbrowser.open(f"{self.cfg.server_url}/dashboard")
+                webbrowser.open(f"{self.cfg.server_url}/local-workbench")
         except Exception as e:
-            log(f"failed to open dashboard: {e}; falling back to browser")
-            webbrowser.open(f"{self.cfg.server_url}/dashboard")
+            log(f"failed to open local workbench: {e}; falling back to browser")
+            webbrowser.open(f"{self.cfg.server_url}/local-workbench")
 
     def _toggle_pause(self, *_: Any) -> None:
         self.cfg.paused = not self.cfg.paused
@@ -1270,7 +1301,7 @@ def open_folder(p: Path) -> None:
 
 def main() -> None:
     cfg = load_config()
-    if not cfg.cookie_token or not cfg.nickname or not cfg.server_url:
+    if not cfg.cookie_token or not cfg.client_token or not cfg.nickname or not cfg.server_url:
         if not show_first_run_dialog(cfg):
             log("user cancelled first-run; exiting")
             sys.exit(0)

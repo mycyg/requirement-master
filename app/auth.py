@@ -6,18 +6,21 @@ Signed with itsdangerous so a tampered cookie won't validate.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+import hashlib
 import secrets as _secrets  # stdlib; renamed to avoid local shadowing in scripts/
 
-from fastapi import Cookie, Depends, HTTPException, Response, status
+from fastapi import Cookie, Depends, Header, HTTPException, Response, status
 from itsdangerous import BadSignature, URLSafeSerializer
 from sqlalchemy.orm import Session
 
 from config import settings
 from db import SessionLocal, get_db
-from models import User
+from models import ClientDevice, User
 from services.presence import touch_user
 
 COOKIE_NAME = "yqgl_id"
+LOCAL_CLIENT_HEADER = "X-YQGL-Client-Token"
 _serializer = URLSafeSerializer(settings.cookie_secret, salt="yqgl-identity-v1")
 
 
@@ -29,6 +32,14 @@ class StreamUser:
 
 def _make_token() -> str:
     return _secrets.token_urlsafe(32)
+
+
+def make_client_token() -> str:
+    return _secrets.token_urlsafe(48)
+
+
+def hash_client_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def issue_cookie(response: Response, user: User) -> None:
@@ -78,6 +89,58 @@ def optional_current_user(
     if user:
         touch_user(user.id)
     return user
+
+
+def _lookup_client_device(db: Session, user: User, token: str | None) -> ClientDevice | None:
+    if not token:
+        return None
+    token = token.strip()
+    if not token:
+        return None
+    device = (
+        db.query(ClientDevice)
+        .filter(
+            ClientDevice.client_token_hash == hash_client_token(token),
+            ClientDevice.user_id == user.id,
+            ClientDevice.revoked_at.is_(None),
+        )
+        .first()
+    )
+    if not device:
+        return None
+    device.last_seen_at = datetime.utcnow()
+    db.commit()
+    return device
+
+
+def current_client_device(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    x_yqgl_client_token: str | None = Header(default=None, alias=LOCAL_CLIENT_HEADER),
+) -> ClientDevice:
+    device = _lookup_client_device(db, user, x_yqgl_client_token)
+    if not device:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="local client required")
+    return device
+
+
+def require_local_client(
+    device: ClientDevice = Depends(current_client_device),
+) -> User:
+    return device.user
+
+
+def optional_local_client(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    x_yqgl_client_token: str | None = Header(default=None, alias=LOCAL_CLIENT_HEADER),
+) -> User | None:
+    if not x_yqgl_client_token:
+        return None
+    device = _lookup_client_device(db, user, x_yqgl_client_token)
+    if not device:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="local client required")
+    return device.user
 
 
 def require_stream_user(yqgl_id: str | None = Cookie(default=None)) -> StreamUser:

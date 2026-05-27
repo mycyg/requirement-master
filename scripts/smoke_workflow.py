@@ -51,6 +51,19 @@ def main() -> None:
             expect(200, r.status_code, r.text)
             dana_id = r.json()["id"]
 
+            def register_device(client, name: str) -> tuple[dict[str, str], str]:
+                resp = client.post(
+                    "/api/client-devices/register",
+                    json={"device_name": f"smoke-{name}", "platform": "smoke"},
+                )
+                expect(201, resp.status_code, resp.text)
+                body = resp.json()
+                return {"X-YQGL-Client-Token": body["client_token"]}, body["device"]["id"]
+
+            bob_local, bob_device_id = register_device(bob, "bob")
+            carl_local, _ = register_device(carl, "carl")
+            dana_local, _ = register_device(dana, "dana")
+
             r = alice.post("/api/projects", json={"name": "Smoke", "slug": "smoke"})
             expect(201, r.status_code, r.text)
             project_id = r.json()["id"]
@@ -222,18 +235,28 @@ def main() -> None:
             r = bob.get(f"/api/files/{attachment_id}")
             expect(200, r.status_code, r.text)
             r = bob.get(f"/api/requirements/{req_id}/sync-manifest")
+            expect(403, r.status_code, r.text)
+            r = bob.get(f"/api/requirements/{req_id}/sync-manifest", headers=bob_local)
             expect(200, r.status_code, r.text)
             r = bob.post(f"/api/requirements/{req_id}/sync-ack")
+            expect(403, r.status_code, r.text)
+            r = bob.post(f"/api/requirements/{req_id}/sync-ack", headers=bob_local)
             expect(200, r.status_code, r.text)
 
             r = bob.post(f"/api/requirements/{req_id}/claim")
+            expect(403, r.status_code, r.text)
+            r = bob.post(f"/api/requirements/{req_id}/claim", headers=bob_local)
             expect(200, r.status_code, r.text)
             r = bob.get(f"/api/requirements/{req_id}/assignees")
             expect(200, r.status_code, r.text)
             assert any(a["user_id"] == bob_id and a["role"] == "lead" for a in r.json()), r.text
-            r = bob.post(f"/api/requirements/{req_id}/sync-ack")
+            r = bob.post(f"/api/requirements/{req_id}/sync-ack", headers=bob_local)
             expect(200, r.status_code, r.text)
             r = bob.patch(f"/api/requirements/{req_id}/status", json={"status": "doing"})
+            expect(403, r.status_code, r.text)
+            r = bob.patch(f"/api/requirements/{req_id}/status", json={"status": "doing"}, headers=bob_local)
+            expect(200, r.status_code, r.text)
+            r = bob.post(f"/api/client-devices/{bob_device_id}/revoke")
             expect(200, r.status_code, r.text)
 
             r = alice.patch(f"/api/requirements/{req_id}/status", json={"status": "cancelled"})
@@ -297,18 +320,19 @@ def main() -> None:
             r = carl.patch(
                 f"/api/requirements/{assigned_id}/workspaces/me",
                 json={"phase": "Smoke doing", "progress_percent": 42, "status_note": "halfway", "blocked_reason": "waiting for smoke"},
+                headers=carl_local,
             )
             expect(200, r.status_code, r.text)
             assert r.json()["progress_percent"] == 42 and r.json()["blocked_reason"], r.text
-            r = carl.post(f"/api/requirements/{assigned_id}/workspaces/me/items", json={"title": "write smoke item"})
+            r = carl.post(f"/api/requirements/{assigned_id}/workspaces/me/items", json={"title": "write smoke item"}, headers=carl_local)
             expect(201, r.status_code, r.text)
             item_id = r.json()["id"]
-            r = carl.patch(f"/api/workspace-items/{item_id}", json={"status": "done"})
+            r = carl.patch(f"/api/workspace-items/{item_id}", json={"status": "done"}, headers=carl_local)
             expect(200, r.status_code, r.text)
             assert r.json()["status"] == "done", r.text
-            r = carl.post(f"/api/requirements/{assigned_id}/workspaces/me/updates", json={"body": "workspace smoke update"})
+            r = carl.post(f"/api/requirements/{assigned_id}/workspaces/me/updates", json={"body": "workspace smoke update"}, headers=carl_local)
             expect(201, r.status_code, r.text)
-            r = bob.patch(f"/api/workspace-items/{item_id}", json={"status": "todo"})
+            r = bob.patch(f"/api/workspace-items/{item_id}", json={"status": "todo"}, headers=bob_local)
             expect(403, r.status_code, r.text)
 
             for client in (bob, carl, dana):
@@ -319,21 +343,29 @@ def main() -> None:
                 r = client.get(f"/api/files/{assigned_attachment_id}")
                 expect(200, r.status_code, r.text)
 
-            r = dana.post(f"/api/requirements/{assigned_id}/claim")
+            r = dana.post(f"/api/requirements/{assigned_id}/claim", headers=dana_local)
             expect(403, r.status_code, r.text)
             r = carl.post(f"/api/requirements/{assigned_id}/claim")
+            expect(403, r.status_code, r.text)
+            r = carl.post(f"/api/requirements/{assigned_id}/claim", headers=dana_local)
+            expect(403, r.status_code, r.text)
+            r = carl.post(f"/api/requirements/{assigned_id}/claim", headers=carl_local)
             expect(200, r.status_code, r.text)
             r = carl.patch(f"/api/requirements/{assigned_id}/status", json={"status": "doing"})
+            expect(403, r.status_code, r.text)
+            r = carl.patch(f"/api/requirements/{assigned_id}/status", json={"status": "doing"}, headers=carl_local)
             expect(200, r.status_code, r.text)
 
             r = dana.post(
                 f"/api/requirements/{assigned_id}/delivery/init",
                 json={"filename": "dana.zip", "total_size": 1, "total_chunks": 1},
+                headers=dana_local,
             )
             expect(403, r.status_code, r.text)
             r = carl.post(
                 f"/api/requirements/{assigned_id}/delivery/init",
                 json={"filename": "carl.zip", "total_size": 1, "total_chunks": 1},
+                headers=carl_local,
             )
             expect(200, r.status_code, r.text)
 
@@ -349,9 +381,10 @@ def main() -> None:
             r = dana.post(
                 f"/api/requirements/{assigned_id}/delivery/init",
                 json={"filename": "dana.zip", "total_size": 1, "total_chunks": 1},
+                headers=dana_local,
             )
             expect(200, r.status_code, r.text)
-            r = carl.get(f"/api/requirements/{assigned_id}/sync-manifest")
+            r = carl.get(f"/api/requirements/{assigned_id}/sync-manifest", headers=carl_local)
             expect(200, r.status_code, r.text)
             assert any(w["nickname"] == "carl" for w in r.json()["workspaces"]), r.text
 
@@ -380,6 +413,8 @@ def main() -> None:
             expect(200, r.status_code, r.text)
             assert r.json()["acceptance_items"], r.text
             r = carl.post(f"/api/requirements/{assigned_id}/decompositions", json={"stage": "worker"})
+            expect(403, r.status_code, r.text)
+            r = carl.post(f"/api/requirements/{assigned_id}/decompositions", json={"stage": "worker"}, headers=carl_local)
             expect(200, r.status_code, r.text)
             worker_plan_id = r.json()["id"]
             worker_job_id = r.json()["job_id"]
@@ -391,9 +426,11 @@ def main() -> None:
                 time.sleep(0.1)
             assert r.json()["status"] == "succeeded", r.text
             r = carl.post(f"/api/decompositions/{worker_plan_id}/confirm")
+            expect(403, r.status_code, r.text)
+            r = carl.post(f"/api/decompositions/{worker_plan_id}/confirm", headers=carl_local)
             expect(200, r.status_code, r.text)
             assert r.json()["workspace_items"], r.text
-            r = carl.get(f"/api/requirements/{assigned_id}/sync-manifest")
+            r = carl.get(f"/api/requirements/{assigned_id}/sync-manifest", headers=carl_local)
             expect(200, r.status_code, r.text)
             assert r.json()["acceptance_items"] and r.json()["task_plans"], r.text
 

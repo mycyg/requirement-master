@@ -1,4 +1,4 @@
-"""Deploy app/ to /srv/yqgl/app on the server and restart yqgl-web.
+"""Deploy app/ and client/ to /srv/yqgl on the server and restart yqgl-web.
 
 Usage:
   python scripts/deploy.py             # deploy app + restart web
@@ -18,6 +18,7 @@ from ssh_lib import connect, put_file, put_tree, run, sudo  # noqa: E402
 
 
 REMOTE_APP = "/srv/yqgl/app"
+REMOTE_CLIENT = "/srv/yqgl/client"
 EXCLUDE = {"__pycache__", ".pytest_cache", ".venv", "venv", ".env"}
 
 
@@ -35,6 +36,14 @@ def main() -> None:
             raise SystemExit(f"local {local_app} does not exist")
         n = put_tree(client, local_app, REMOTE_APP, exclude=EXCLUDE)
         print(f"uploaded {n} files")
+
+        print(f"\n== Uploading client/ → {REMOTE_CLIENT} ==")
+        local_client = ROOT / "client"
+        if not local_client.exists():
+            raise SystemExit(f"local {local_client} does not exist")
+        sudo(client, f"mkdir -p {REMOTE_CLIENT} && chown -R mycyg:mycyg {REMOTE_CLIENT}")
+        n = put_tree(client, local_client, REMOTE_CLIENT, exclude=EXCLUDE)
+        print(f"uploaded {n} client files")
 
         if args.env:
             env_local = local_app / ".env"

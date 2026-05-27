@@ -51,6 +51,27 @@ def ensure_runtime_schema(engine: Engine) -> None:
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {ddl}"))
         conn.execute(text("UPDATE users SET availability_status = 'free' WHERE availability_status IS NULL"))
 
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS client_devices (
+                id VARCHAR(32) PRIMARY KEY,
+                user_id VARCHAR(32) NOT NULL,
+                device_name VARCHAR(128) NOT NULL,
+                client_token_hash VARCHAR(64) NOT NULL UNIQUE,
+                platform VARCHAR(64) NOT NULL,
+                last_seen_at DATETIME,
+                revoked_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_client_devices_user_id ON client_devices (user_id)"))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_client_devices_client_token_hash "
+            "ON client_devices (client_token_hash)"
+        ))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_client_devices_revoked_at ON client_devices (revoked_at)"))
+
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_requirements_claimed_by_user_id "
             "ON requirements (claimed_by_user_id)"

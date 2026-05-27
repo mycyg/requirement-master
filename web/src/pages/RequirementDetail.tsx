@@ -23,7 +23,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, isDesktopRuntime } from "@/lib/api";
 import { AssigneeSelector } from "@/components/AssigneeSelector";
 import { useReqStream } from "@/hooks/useReqStream";
 import { AILiveView } from "@/components/AILiveView";
@@ -77,6 +77,7 @@ export function RequirementDetail() {
   const [manageCollaboratorUserIds, setManageCollaboratorUserIds] = useState<string[]>([]);
   const { events, latestStatus } = useReqStream(id);
   const currentStatus = latestStatus || req?.status;
+  const desktopRuntime = isDesktopRuntime();
 
   const refresh = async () => {
     if (!id) return;
@@ -129,8 +130,8 @@ export function RequirementDetail() {
   const collaboratorCount = assignees.filter((a) => a.role === "collaborator").length;
   const assignedIds = new Set(assignees.map((a) => a.user_id));
   const isWorker = !!me && (assignedIds.has(me.id) || req.claimed_by_user_id === me.id);
-  const canClaim = currentStatus === "ready" && !!me && (assignees.length === 0 || isWorker);
-  const canStartDoing = currentStatus === "claimed" && isWorker;
+  const canClaim = desktopRuntime && currentStatus === "ready" && !!me && (assignees.length === 0 || isWorker);
+  const canStartDoing = desktopRuntime && currentStatus === "claimed" && isWorker;
   const canManageAssignees = !!me && me.nickname === req.submitter_nickname && ASSIGNEE_MANAGE_STATUSES.has(currentStatus);
   const mustKeepLead = ["claimed", "doing", "revision_requested"].includes(currentStatus);
   const selectedUsers = assignees.map((a) => ({ id: a.user_id, nickname: a.nickname }));
@@ -278,6 +279,11 @@ export function RequirementDetail() {
               {actionBusy ? "处理中..." : "开始处理"}
             </button>
           )}
+          {!desktopRuntime && isWorker && ["ready", "claimed", "doing", "revision_requested"].includes(currentStatus) && (
+            <span className="pill border-[#bbd6d0] bg-[#eef8f5] text-[#4e7146]">
+              接活/处理请打开本地工作台
+            </span>
+          )}
           {req.summary_md && (
             <SpeakButton
               text={`${req.title}。${req.summary_md.split("\n\n").slice(0, 2).join("\n\n").replace(/[#*`>\-]/g, "")}`}
@@ -392,8 +398,8 @@ export function RequirementDetail() {
             </div>
           </div>
         )}
-        {tab === "workspace" && <WorkspaceBoard req={req} me={me} workspaces={workspaces} onChange={refresh} />}
-        {tab === "decomposition" && <DecompositionPanel req={req} me={me} plans={taskPlans} onChange={refresh} />}
+        {tab === "workspace" && <WorkspaceBoard req={req} me={me} workspaces={workspaces} isDesktop={desktopRuntime} onChange={refresh} />}
+        {tab === "decomposition" && <DecompositionPanel req={req} me={me} plans={taskPlans} isDesktop={desktopRuntime} onChange={refresh} />}
         {tab === "chat" && <ChatHistory reqId={id} />}
         {tab === "attachments" && (
           <ul className="paper-surface divide-y divide-stone-200/80 overflow-hidden">
@@ -446,18 +452,20 @@ function DecompositionPanel({
   req,
   me,
   plans,
+  isDesktop,
   onChange,
 }: {
   req: Requirement;
   me: Identity | null;
   plans: TaskPlan[];
+  isDesktop: boolean;
   onChange: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const assignedIds = new Set(req.assignees.map((item) => item.user_id));
   const canDispatch = me?.nickname === req.submitter_nickname;
-  const canWorker = !!me && (assignedIds.has(me.id) || req.claimed_by_user_id === me.id);
+  const canWorker = isDesktop && !!me && (assignedIds.has(me.id) || req.claimed_by_user_id === me.id);
 
   const trigger = async (stage: "dispatch" | "worker") => {
     setBusy(`create-${stage}`);
@@ -520,6 +528,9 @@ function DecompositionPanel({
                 {busy === "create-worker" ? "拆解中..." : "生成我的清单"}
               </button>
             )}
+            {!isDesktop && !!me && (assignedIds.has(me.id) || req.claimed_by_user_id === me.id) && (
+              <span className="pill border-[#bbd6d0] bg-[#eef8f5] text-[#4e7146]">个人清单在本地工作台生成</span>
+            )}
           </div>
         </div>
         {err && <p className="mt-3 text-sm text-red-700">{err}</p>}
@@ -530,7 +541,7 @@ function DecompositionPanel({
       ) : plans.map((plan) => {
         const canConfirm = plan.status === "draft" && (
           (plan.stage === "dispatch" && canDispatch) ||
-          (plan.stage === "worker" && plan.target_user_id === me?.id)
+          (plan.stage === "worker" && isDesktop && plan.target_user_id === me?.id)
         );
         const grouped = {
           task: plan.items.filter((item) => item.item_type === "task"),
@@ -592,11 +603,13 @@ function WorkspaceBoard({
   req,
   me,
   workspaces,
+  isDesktop,
   onChange,
 }: {
   req: Requirement;
   me: Identity | null;
   workspaces: RequirementWorkspace[];
+  isDesktop: boolean;
   onChange: () => Promise<void>;
 }) {
   if (workspaces.length === 0) {
@@ -626,7 +639,7 @@ function WorkspaceBoard({
             key={workspace.id}
             req={req}
             workspace={workspace}
-            canEdit={me?.id === workspace.user_id}
+            canEdit={isDesktop && me?.id === workspace.user_id}
             onChange={onChange}
           />
         ))}

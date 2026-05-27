@@ -13,7 +13,7 @@ import {
   Users,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, isDesktopRuntime } from "@/lib/api";
 import { StatusBadge } from "@/components/StatusBadge";
 import type { Requirement } from "@/lib/types";
 
@@ -38,6 +38,7 @@ const DASHBOARD_STATUSES = ["ready", "ai_processing", "claimed", "doing", "revis
 const TICK_MS = 6000;
 
 export function Dashboard() {
+  const desktopRuntime = isDesktopRuntime();
   const [items, setItems] = useState<Requirement[]>([]);
   const [connected, setConnected] = useState(false);
   const [lastSync, setLastSync] = useState<Date | null>(null);
@@ -100,10 +101,10 @@ export function Dashboard() {
     <main className="app-container">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="eyebrow">Dispatch Board</p>
+          <p className="eyebrow">{desktopRuntime ? "Local Workbench" : "Dispatch Board"}</p>
           <h1 className="mt-2 flex items-center gap-2 text-3xl font-semibold tracking-tight text-stone-950">
             <Gauge className="h-7 w-7 text-stone-500" aria-hidden="true" />
-            接单看板
+            {desktopRuntime ? "本地工作台" : "派活看板"}
           </h1>
           <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500">
             <span className="inline-flex items-center gap-1.5">
@@ -132,6 +133,7 @@ export function Dashboard() {
             key={b.key}
             bucket={b}
             items={items.filter((r) => b.statuses.includes(r.status))}
+            desktopRuntime={desktopRuntime}
           />
         ))}
       </div>
@@ -147,14 +149,22 @@ function byUrgency(a: Requirement, b: Requirement): number {
   return b.created_at.localeCompare(a.created_at);
 }
 
-function BucketCard({ bucket, items }: { bucket: Bucket; items: Requirement[] }) {
+function BucketCard({ bucket, items, desktopRuntime }: { bucket: Bucket; items: Requirement[]; desktopRuntime: boolean }) {
   const Icon = bucket.Icon;
+  const webTitles: Record<string, string> = {
+    ready: "待分派/待处理",
+    ai: "AI 处理中",
+    doing: "处理中",
+    revision: "返工中",
+    delivered: "交付中/待验收",
+  };
+  const title = desktopRuntime ? bucket.title : (webTitles[bucket.key] || bucket.title);
   return (
     <section className={`border ${bucket.tone} p-3 shadow-[0_1px_0_rgba(31,30,28,0.04)]`} style={{ borderRadius: 8 }}>
       <div className="mb-3 flex items-center justify-between px-1">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-stone-900">
           <Icon className="h-4 w-4 text-stone-600" aria-hidden="true" />
-          {bucket.title}
+          {title}
         </h2>
         <span className="rounded-full border border-stone-200 bg-[#fffdf8]/80 px-2 py-0.5 text-xs font-medium text-stone-600">{items.length}</span>
       </div>

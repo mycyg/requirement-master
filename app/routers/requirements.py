@@ -5,7 +5,7 @@ from sqlalchemy import and_, exists, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from auth import current_user
+from auth import current_user, optional_local_client
 from db import get_db
 from models import Project, Requirement, RequirementAssignment, User
 from schemas import (
@@ -212,6 +212,7 @@ async def update_status(
     payload: StatusUpdateIn,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
+    local_user: User | None = Depends(optional_local_client),
 ) -> RequirementOut:
     r = (
         db.query(Requirement)
@@ -251,6 +252,13 @@ async def update_status(
         raise HTTPException(status_code=403, detail="only the requester or assignee can cancel this requirement")
     if new != "cancelled" and old in {"claimed", "doing", "revision_requested"} and not can_work_requirement(r, user):
         raise HTTPException(status_code=403, detail="only the assignee can change this status")
+    worker_transition = (
+        new == "claimed"
+        or (new != "cancelled" and old in {"claimed", "doing", "revision_requested"})
+        or (new == "cancelled" and user.id != r.submitter_user_id)
+    )
+    if worker_transition and local_user is None:
+        raise HTTPException(status_code=403, detail="local client required")
 
     r.status = new
     now = datetime.utcnow()
@@ -295,6 +303,7 @@ async def update_requirement_planning(
     payload: RequirementPlanningUpdateIn,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
+    local_user: User | None = Depends(optional_local_client),
 ) -> RequirementOut:
     r = (
         db.query(Requirement)
@@ -306,6 +315,8 @@ async def update_requirement_planning(
         raise HTTPException(status_code=404, detail="requirement not found")
     if r.submitter_user_id != user.id and not can_work_requirement(r, user):
         raise HTTPException(status_code=403, detail="only the requester or assignees can update planning")
+    if r.submitter_user_id != user.id and local_user is None:
+        raise HTTPException(status_code=403, detail="local client required")
     if user.id != r.submitter_user_id and payload.estimate_hours is not None:
         raise HTTPException(status_code=403, detail="only the requester can change estimate hours")
     if payload.estimate_hours is not None:

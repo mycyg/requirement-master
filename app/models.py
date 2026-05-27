@@ -35,6 +35,20 @@ class User(Base, TimestampMixin):
     availability_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
+class ClientDevice(Base, TimestampMixin):
+    __tablename__ = "client_devices"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    device_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    client_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
+
+    user: Mapped[User] = relationship()
+
+
 class Project(Base, TimestampMixin):
     __tablename__ = "projects"
 

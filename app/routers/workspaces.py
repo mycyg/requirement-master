@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from auth import current_user
+from auth import current_user, require_local_client
 from db import get_db
 from models import RequirementWorkspace, RequirementWorkspaceItem, User
 from schemas import (
@@ -62,7 +62,7 @@ async def update_my_workspace(
     req_id: str,
     payload: WorkspacePatchIn,
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_client),
 ) -> RequirementWorkspaceOut:
     req = _require_req(db, req_id, user)
     if not can_work_requirement(req, user):
@@ -94,7 +94,7 @@ async def create_workspace_item(
     req_id: str,
     payload: WorkspaceItemCreateIn,
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_client),
 ) -> WorkspaceItemOut:
     req = _require_req(db, req_id, user)
     if not can_work_requirement(req, user):
@@ -129,7 +129,7 @@ async def patch_workspace_item(
     item_id: str,
     payload: WorkspaceItemPatchIn,
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_client),
 ) -> WorkspaceItemOut:
     item = _require_item(db, item_id, user)
     req = item.workspace.requirement
@@ -152,7 +152,7 @@ async def patch_workspace_item(
 async def delete_workspace_item(
     item_id: str,
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_client),
 ) -> dict:
     item = _require_item(db, item_id, user)
     req = item.workspace.requirement
@@ -169,7 +169,7 @@ async def add_my_progress_update(
     req_id: str,
     payload: ProgressUpdateCreateIn,
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_client),
 ) -> ProgressUpdateOut:
     req = _require_req(db, req_id, user)
     if not can_work_requirement(req, user):

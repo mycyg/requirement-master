@@ -1,9 +1,9 @@
-"""独立 dashboard 窗口（用 pywebview 包一层 Edge WebView2）。
+"""独立本地工作台窗口（用 pywebview 包一层 Edge/WebKit）。
 
 由 yqgl_tray.py 的菜单以子进程方式启动，不阻塞 pystray 主循环。
 
-读取 %APPDATA%\\yqgl\\config.json 拿 server_url + cookie_token，
-打开 <server_url>/dashboard。Cookie 通过 Set-Cookie 头预注入。
+读取 %APPDATA%\\yqgl\\config.json 拿 server_url + cookie_token + client_token，
+打开 <server_url>/local-workbench，并把本地端能力注入到 localStorage。
 """
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ def main() -> None:
     cfg = json.loads(CFG_PATH.read_text(encoding="utf-8"))
     server_url: str = cfg["server_url"]
     cookie_token: str = cfg.get("cookie_token", "")
+    client_token: str = cfg.get("client_token", "")
     nickname: str = cfg.get("nickname", "")
 
     try:
@@ -32,23 +33,26 @@ def main() -> None:
         print("pywebview not installed; pip install pywebview", file=sys.stderr)
         sys.exit(1)
 
-    # Pre-set the cookie on the host before loading the page.
-    from urllib.parse import urlparse
-    host = urlparse(server_url).hostname or "localhost"
-
     js_set_cookie = f"""
     (() => {{
-      document.cookie = "yqgl_id={cookie_token}; path=/; domain={host}";
-      // also nav to /dashboard if we landed on root
+      document.cookie = "yqgl_id=" + {json.dumps(cookie_token)} + "; path=/";
+      localStorage.setItem("yqgl_runtime", "desktop");
+      localStorage.setItem("yqgl_client_token", {json.dumps(client_token)});
+      localStorage.setItem("yqgl_client_nickname", {json.dumps(nickname)});
+      if (!sessionStorage.getItem("yqgl_desktop_bootstrapped")) {{
+        sessionStorage.setItem("yqgl_desktop_bootstrapped", "1");
+        location.replace("/local-workbench");
+        return;
+      }}
       if (location.pathname === '/' || location.pathname === '') {{
-        location.replace('/dashboard');
+        location.replace('/local-workbench');
       }}
     }})();
     """
 
     window = webview.create_window(
-        f"需求管理大师 · 接单看板 · {nickname}",
-        url=f"{server_url}/dashboard",
+        f"需求管理大师 · 本地工作台 · {nickname}",
+        url=f"{server_url}/local-workbench",
         width=1200,
         height=800,
         resizable=True,

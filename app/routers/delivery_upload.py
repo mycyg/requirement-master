@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, selectinload
 
-from auth import current_user
+from auth import require_local_client
 from config import settings
 from db import SessionLocal, get_db
 from models import Delivery, Requirement, RequirementAssignment, User
@@ -90,7 +90,7 @@ def init(
     req_id: str,
     payload: DeliveryInitIn,
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_client),
 ) -> dict:
     r = _require_req(db, req_id)
     if r.status not in {"claimed", "doing", "revision_requested"}:
@@ -120,7 +120,7 @@ def init(
 @router.put("/requirements/{req_id}/delivery/{upload_id}/chunk/{idx}")
 async def chunk(
     req_id: str, upload_id: str, idx: int, request: Request,
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_client),
 ) -> dict:
     pdir = _partial_dir(upload_id)
     if not pdir.exists():
@@ -164,7 +164,7 @@ async def chunk(
 async def finalize(
     req_id: str, upload_id: str,
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: User = Depends(require_local_client),
 ) -> dict:
     pdir = _partial_dir(upload_id)
     if not pdir.exists():

@@ -35,8 +35,9 @@ async function keepWorkerOnline(browser: Browser, nickname: string) {
     data: { availability_status: "free", availability_text: "在线等单" },
   });
   await page.goto("/dashboard");
-  await expect(page.getByRole("heading", { name: /接单看板/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /派活看板|本地工作台/ })).toBeVisible();
   await expect(page.getByText("实时在线")).toBeVisible();
+  await saveScreenshot(page, "02_dashboard.png");
   return context;
 }
 
@@ -206,6 +207,14 @@ test("需求个人工作区 UI：进度、阻塞、清单和动态", async ({ br
   const context = await browser.newContext({ locale: "zh-CN" });
   const page = await context.newPage();
   await identify(page, `e2e-workspace-${stamp()}`);
+  await page.evaluate(() => {
+    window.localStorage.setItem("yqgl_runtime", "desktop");
+    window.localStorage.setItem("yqgl_client_token", "fake-local-client-token");
+  });
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ id: "me", nickname: "e2e worker", created: false }),
+  }));
   await page.route("**/api/requirements/e2e-workspace", async (route) => {
     await route.fulfill({
       contentType: "application/json",
@@ -263,6 +272,7 @@ test("需求个人工作区 UI：进度、阻塞、清单和动态", async ({ br
   await expect(page.getByText(/等一个测试账号/)).toBeVisible();
   await expect(page.getByText("补齐截图")).toBeVisible();
   await expect(page.getByText("今天推进到联调。")).toBeVisible();
+  await expect(page.getByRole("button", { name: /保存进度/ })).toBeVisible();
   await saveScreenshot(page, "06_workspace.png");
   await context.close();
 });

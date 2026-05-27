@@ -18,10 +18,12 @@ import { KnowledgePage } from "./pages/KnowledgePage";
 import { PlanningPage } from "./pages/PlanningPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
 import { HealthPage } from "./pages/HealthPage";
+import { isDesktopRuntime } from "./lib/api";
 
 export function App() {
   const { me, identify, loading } = useIdentity();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const desktopRuntime = isDesktopRuntime();
 
   if (loading) {
     return (
@@ -59,13 +61,13 @@ export function App() {
                     项目
                   </NavLink>
                   <NavLink
-                    to="/dashboard"
+                    to={desktopRuntime ? "/local-workbench" : "/dashboard"}
                     className={({ isActive }) =>
                       `button-ghost min-h-9 px-3 py-1.5 text-xs ${isActive ? "bg-stone-900/10 text-stone-950" : ""}`
                     }
                   >
                     <Gauge className="h-4 w-4" aria-hidden="true" />
-                    看板
+                    {desktopRuntime ? "本地工作台" : "派活看板"}
                   </NavLink>
                   <NavLink
                     to="/drive"
@@ -142,6 +144,7 @@ export function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/local-workbench" element={<Dashboard />} />
             <Route path="/drive" element={<DriveHome />} />
             <Route path="/calendar" element={<CalendarPage />} />
             <Route path="/knowledge" element={<KnowledgePage />} />

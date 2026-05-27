@@ -12,7 +12,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from auth import current_user
+from auth import current_user, require_local_client
 from db import get_db
 from models import Requirement, RequirementAssignment, User
 from services.activity import log_activity
@@ -63,7 +63,7 @@ async def submit(req_id: str, db: Session = Depends(get_db), user: User = Depend
 
 
 @router.get("/requirements/{req_id}/sync-manifest")
-def sync_manifest(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
+def sync_manifest(req_id: str, db: Session = Depends(get_db), user: User = Depends(require_local_client)) -> dict:
     r = db.query(Requirement).filter(Requirement.id == req_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
@@ -73,7 +73,7 @@ def sync_manifest(req_id: str, db: Session = Depends(get_db), user: User = Depen
 
 
 @router.post("/requirements/{req_id}/sync-ack")
-async def sync_ack(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
+async def sync_ack(req_id: str, db: Session = Depends(get_db), user: User = Depends(require_local_client)) -> dict:
     r = db.query(Requirement).filter(Requirement.id == req_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
@@ -86,7 +86,7 @@ async def sync_ack(req_id: str, db: Session = Depends(get_db), user: User = Depe
 
 
 @router.post("/requirements/{req_id}/claim")
-async def claim(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
+async def claim(req_id: str, db: Session = Depends(get_db), user: User = Depends(require_local_client)) -> dict:
     r = (
         db.query(Requirement)
         .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))

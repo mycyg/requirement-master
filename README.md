@@ -6,7 +6,7 @@
 > - 是不是接到需求三天后才发现关键信息根本没说？
 > - 是不是交付完客户才说"哦这不是我要的"？
 >
-> **来，把这堆人扔给 AI。** 你只管接单。
+> **来，把这堆人扔给 AI。** Web 端负责派活，本地端负责接活，谁也别再假装自己没看见。
 
 [English](#english-summary) · [架构](#架构) · [快速开始](#快速开始) · [路线图](#路线图)
 
@@ -16,19 +16,25 @@
 
 ## 它到底是什么
 
-一个 **AI 原生** 的内网需求中台，把"提需求 → 接需求 → 做需求 → 交付"这条让所有打工人头大的链条**全自动化处理人的部分**：
+一个 **AI 原生** 的内网工作中台，把"项目 → 需求 → 接单方 → 个人工作区 → 交付验收"这条让所有打工人头大的链条**全自动化处理人的部分**：
 
 ```
    同事写一句模糊需求
         ↓
    LLM 反问澄清 (点选 + Other + 语音都行)
         ↓
-   结构化需求文档 + 复杂度评估
+   结构化需求文档 + 复杂度评估 + 任务拆解
         ↓
-   ┌─ 纯文件小活 → AI 先试着写交付物 (受控沙箱，能自检，但不给它乱摸服务器)
+   ┌─ Web 派活端 → 提需求、指定人、看排期、验收、返工
    │
-   └─ 复杂/不确定 → 你确认投递 → 接单人开干 → 一键打包 → LLM 给客户写说明文档
+   └─ 本地工作台 → 接活、处理、维护工作区、同步文件、一键交付
 ```
+
+### 端的分工
+
+- **Web 浏览器端 = 派活/验收/管理端**：提需求、AI 澄清、指定负责人/协作者、看项目网盘/会议/日程/排期/健康/知识库、验收交付、申请返工。浏览器里不再接单、不开始处理、不编辑个人工作区、不上传交付。
+- **本地客户端 = 工作台**：Python 托盘常驻 + pywebview 本地窗口，同一个用户既能派活也能接活；接单、推进状态、个人工作区编辑、任务交付、需求文件同步都在这里做。
+- **服务端强校验**：worker API 必须带本地端设备 token。按钮藏起来只是礼貌，403 才是规矩。
 
 ## 它解决你哪些痛
 
@@ -51,7 +57,7 @@
 | "在项目文件夹留言，结果变成群聊考古" | 文件夹留言先过 LLM；普通留言入板，像需求变动的自动生成需求草稿继续澄清 |
 | "简单的需求也排队几天" | LLM 自评 `ai_doable`，纯文件小活交给 AI agent 先试试（附件进 `inputs/`，成果出 `outputs/`，还能跑受控命令自检），失败自动转人工 |
 | "交付完了客户问'怎么用'" | 你打包上传后，LLM 自动读所有交付文件写**面向客户的交付文档**（含原需求映射表 + 已知局限） |
-| "不知道现在多少单要处理" | 副屏挂个 dashboard 自动刷新，按状态分卡片，新需求弹 Windows 通知 |
+| "不知道现在多少单要处理" | 本地工作台 / 派活看板自动刷新，按状态分卡片，新需求弹系统通知 |
 | "草稿还没想清楚就被围观" | 草稿 / 澄清 / 待确认投递阶段默认仅提交人可见；投递后才进公共看板。先把裤子穿上，再开会。 |
 
 ## 功能
@@ -63,6 +69,7 @@
 - 🤖 **AI 自动处理**：summarize 判定 `ai_doable=true` → Anthropic SDK tool_use 自建 agent（附件预载到 `inputs/`，交付固定写 `outputs/`，可跑受控命令自检）→ 适合静态页面、脚本模板、文档、轻量数据处理这类“小活先让 AI 试试”
 - ✅ **确认投递**：AI 汇总后先停在 `summary_ready`，提交人确认后才进入 `ready`；不再把半熟需求直接扔进同事工位
 - 👥 **多人接单**：负责人 + 协作者模式；提需求时能搜索成员、看在线状态、指定多人，投递后全员可见但只有指定人能处理和交付
+- 🖥️ **Web 派活端 / 本地工作台**：浏览器只负责派活、管理和验收；本地 pywebview 工作台既能派活也能接活，接单/处理/交付必须走本地端能力 token
 - 🟢 **接单状态**：客户端 / Web 可设置空闲、忙碌、自定义状态；选接单人时在线空闲优先，不用靠玄学猜谁在摸键盘
 - 📅 **日程与 DDL**：提需求强制 DDL；新增日程表，需求截止时间自动入日程，客户端按 24h / 2h / 到期 / 逾期提醒
 - 📈 **长任务进度**：ASR、会议纪要、Auto Agent 这类后台长任务都有 `background_jobs` 进度；前端能轮询，SSE 也会广播更新
@@ -77,17 +84,17 @@
 - 🗄️ **项目网盘**：项目级文件管理器，支持文件夹树 / 列表 / 平铺视图、版本替换、批量下载、软删除回收站、PDF/MD/HTML/代码/Office 文本预览
 - 🔁 **项目文件同步**：托盘客户端可把项目网盘同步到本地；默认关闭，支持单向下载和双向同步，本地删除默认不传播，避免手滑变事故
 - 💬 **文件夹留言板**：每个网盘文件夹都有留言；LLM 自动判断“普通留言”还是“需求变动”，后者直接生成需求草稿走澄清流程
-- 🔐 **权限防串单**：草稿隐私、附件/交付包访问控制、分片上传归属校验、同步 ACK 权限校验。它不是银行系统，但也不该像公共留言板
+- 🔐 **权限防串单**：草稿隐私、附件/交付包访问控制、分片上传归属校验、同步 ACK 权限校验、本地端 worker capability 校验。它不是银行系统，但也不该像公共留言板
 - 🧯 **防重复点击**：澄清 SSE 并发锁、投递/接单/开始处理 busy 态，专治“我点了三下怎么出了三份需求”
 - 🗂️ **项目管理**：从 draft 到 accepted 的完整状态机，Kanban 风格 dashboard，评论 / 活动时间轴
-- 🔔 **本地托盘**：Python pystray，SSE 长连接 + Windows 通知，文件同步到本地目录
+- 🔔 **本地托盘 / 工作台**：Python pystray 常驻，SSE 长连接 + 系统通知，pywebview 打开 `/local-workbench`，文件同步到本地目录
 - 🔄 **完整交付闭环**：本地做完 → 一键打包上传 → LLM 写交付文档 → 提需求方接受 / 申请返工
 
 ## 截图
 
 新鲜截图，刚从浏览器 E2E 现场逮回来的，不是设计稿，不是“仅供参考”，也不是老板画在白板上的精神胜利。
 
-| 主页项目列表 | 接单看板 |
+| 主页项目列表 | 派活看板 / 本地工作台 |
 |---|---|
 | ![home](screenshots/01_home.png) | ![dashboard](screenshots/02_dashboard.png) |
 
@@ -139,12 +146,12 @@
        ┌─────────────┴─────────────┐
        ▼                           ▼
 ┌──────────────┐         ┌────────────────────────────┐
-│ 浏览器 SPA    │         │ 托盘客户端 (Win/Linux/macOS) │
+│ 浏览器 SPA    │         │ 本地客户端 (Win/Linux/macOS) │
 │ React + Vite │         │ Python pystray + httpx SSE │
 │ Tailwind     │         │ 网盘同步 + DDL 提醒          │
-└──────────────┘         │ pywebview 看板              │
-   提需求方                └────────────────────────────┘
-                            接单方
+│ 派活/验收/管理 │         │ pywebview /local-workbench  │
+└──────────────┘         └────────────────────────────┘
+   Web 只派活               本地可派可接 + worker token
 ```
 
 ## 技术栈
@@ -196,11 +203,11 @@ curl http://your.server.ip:8080/api/health
 
 详细步骤、运维命令、风险见 [DEPLOY.md](DEPLOY.md)。
 
-### 提需求方（浏览器）
+### Web 派活端（浏览器）
 
-打开 `http://192.168.5.53:8080`（或你的 `192.168.5.x` 服务器地址），填昵称即可用。
+打开 `http://192.168.5.53:8080`（或你的 `192.168.5.x` 服务器地址），填昵称即可用。这里负责提需求、澄清、指定接单人、看进度、验收/返工；接单、处理、交付请去本地工作台，浏览器硬拼 worker API 会被 `403 local client required` 拍回来。
 
-### 接单方（Windows / Linux / macOS 客户端）
+### 本地工作台（Windows / Linux / macOS 客户端）
 
 内网偷懒一行装：
 
@@ -223,9 +230,9 @@ python yqgl_tray.py    # 首次启动有配置向导
 # Windows 也可打成 .exe：build_exe.bat
 ```
 
-默认服务端 IP 是 `192.168.5.53`，端口 `8080`。首次启动和托盘「设置…」里都可以自己改服务端 IP、项目保存位置、项目网盘同步目录、接单状态、DDL 提醒提前量；配置会写到 `%APPDATA%\yqgl\config.json`（Windows）或 `~/.config/yqgl/config.json`（Linux/macOS）。如果旧配置里还写着 `192.168.0.x`，托盘启动时会自动迁到同尾号的 `192.168.5.x`，避免接单方连去隔壁宇宙。
+默认服务端 IP 是 `192.168.5.53`，端口 `8080`。首次启动和托盘「设置…」里都可以自己改服务端 IP、项目保存位置、项目网盘同步目录、接单状态、DDL 提醒提前量和设备名；保存后客户端会注册本地端能力 token，配置写到 `%APPDATA%\yqgl\config.json`（Windows）或 `~/.config/yqgl/config.json`（Linux/macOS）。如果旧配置里还写着 `192.168.0.x`，托盘启动时会自动迁到同尾号的 `192.168.5.x`，避免接单方连去隔壁宇宙。
 
-托盘菜单第一项 "打开接单看板"（默认双击）= 副屏 dashboard；"打开项目保存位置" 会直接打开本地需求文件根目录。项目网盘同步默认关闭，可切到单向下载或双向同步；本地删除默认不会删远端，手滑党暂时安全。
+托盘菜单第一项 "打开本地工作台"（默认双击）会启动 pywebview 并打开 `/local-workbench`，自动带昵称 cookie 和本地端 token；"打开 Web 派活端" 会进普通浏览器管理端；"打开项目保存位置" 会直接打开本地需求文件根目录。项目网盘同步默认关闭，可切到单向下载或双向同步；本地删除默认不会删远端，手滑党暂时安全。
 
 ### 端到端冒烟测试
 
@@ -262,7 +269,7 @@ YQGL_E2E_API_PORT=18081 YQGL_E2E_WEB_PORT=15174 npm run e2e
 $env:YQGL_E2E_API_PORT=18081; $env:YQGL_E2E_WEB_PORT=15174; npm run e2e
 ```
 
-当前浏览器 E2E 覆盖：昵称登录、在线接单人 + 空闲状态展示、DDL 必填、指定负责人、日程创建、项目网盘上传与 Markdown 预览、文件夹留言转需求草稿、会议导入 → 纪要 → insight 确认 → 需求草稿、知识库 grep 搜索 + Agent 证据回答、排期负载页、通知中心、项目健康页、个人工作区 UI、语音输入 mock、设置弹窗 TTS 服务异常友好提示。2026-05-27 本机已跑通：Chromium `2 passed`，这回不是“脑内测试通过”，是真的让浏览器上班了。
+当前浏览器 E2E 覆盖：昵称登录、在线接单人 + 空闲状态展示、DDL 必填、指定负责人、日程创建、项目网盘上传与 Markdown 预览、文件夹留言转需求草稿、会议导入 → 纪要 → insight 确认 → 需求草稿、知识库 grep 搜索 + Agent 证据回答、排期负载页、通知中心、项目健康页、Web 派活看板、本地 runtime mock 下的个人工作区编辑入口、语音输入 mock、设置弹窗 TTS 服务异常友好提示。2026-05-27 本机已跑通：Chromium `2 passed`，这回不是“脑内测试通过”，是真的让浏览器上班了。
 
 ## ASR / TTS 一些坑（社区参考）
 
@@ -293,6 +300,7 @@ $env:YQGL_E2E_API_PORT=18081; $env:YQGL_E2E_WEB_PORT=15174; npm run e2e
 - [x] 两阶段 Agent 任务拆解（投递前 / 接单后，人工确认落库）
 - [x] 通知中心 + 托盘关键通知轮询
 - [x] 项目健康度仪表盘（风险预警 + 效率统计）
+- [x] 本地端工作台重构（Web 只派活，本地可派可接，worker API 强制本地 token）
 - [ ] 用户密码 + RBAC（当前只内网无密码）
 - [ ] 企业微信 / 钉钉 / 飞书机器人推送
 - [x] 跨平台客户端启动脚本（Windows / Linux / macOS）
@@ -315,7 +323,9 @@ $env:YQGL_E2E_API_PORT=18081; $env:YQGL_E2E_WEB_PORT=15174; npm run e2e
 
 ## English Summary
 
-**yqgl** is an AI-native **intranet requirement management hub** built for small teams:
+**yqgl** is an AI-native **intranet workbench** built for small teams:
+- The browser app is the dispatch/review/admin side: create requirements, clarify, assign people, inspect progress, review deliveries, and request rework.
+- The local Python client is the real workbench: the same user can dispatch and work, but claiming, worker progress, personal checklist edits, sync ACKs, and delivery uploads require a registered local-client token.
 - Submitters describe what they need; an LLM agent asks clarifying questions (multiple choice + free text + voice).
 - Structured markdown spec + original files + full chat history sync to the assignee's local folder.
 - After summarization, the requester explicitly confirms dispatch before the requirement appears on the shared board.
@@ -331,10 +341,10 @@ $env:YQGL_E2E_API_PORT=18081; $env:YQGL_E2E_WEB_PORT=15174; npm run e2e
 - Notification Center persists assignment, DDL, blocker, rework, decomposition, knowledge-answer, and agent-result events; tray clients poll high-priority notifications.
 - Project Health ranks projects with risk warnings and efficiency metrics.
 - An LLM judges complexity. If "low / AI-doable", an in-process Anthropic-tool_use worker can preload attachments, write deliverables under `outputs/`, and run controlled sandbox commands for simple validation. On failure, it falls back to human.
-- Drafts, clarification conversations, attachments, deliveries, chunk uploads, and sync acknowledgements now have workflow-aware permission checks, because "LAN-only" is not a personality trait.
+- Drafts, clarification conversations, attachments, deliveries, chunk uploads, sync acknowledgements, and worker-only actions now have workflow-aware permission checks, because "LAN-only" is not a personality trait.
 - Voice in (Qwen3-ASR) and voice out (CosyVoice, 3 presets) wired throughout.
 - After human delivery: zip → chunked upload → LLM auto-writes a customer-facing delivery doc with original-requirement mapping table.
 
-All metadata lives in SQLite, files live in plain directories, and deployment targets a single Ubuntu box with GPU via systemd. The client is pure Python (pystray + pywebview + httpx) with Windows/Linux/macOS launch scripts — no Rust/Electron needed.
+All metadata lives in SQLite, files live in plain directories, and deployment targets a single Ubuntu box with GPU via systemd. The client is pure Python (pystray + pywebview + httpx), injects the local workbench runtime into React, and ships Windows/Linux/macOS launch scripts — no Rust/Electron needed.
 
 Built end-to-end as a one-shot demo of "what's possible when you let the AI hold both ends of the requirement lifecycle".
