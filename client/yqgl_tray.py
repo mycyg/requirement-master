@@ -41,7 +41,7 @@ APP_NAME = "yqgl"
 APP_DIR = Path(os.environ.get("APPDATA", str(Path.home() / ".config"))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 DEFAULT_SYNC_ROOT = Path("D:/工作需求")
-DEFAULT_SERVER_URL = "http://192.168.5.224:8080"
+DEFAULT_SERVER_URL = "http://192.168.5.53:8080"
 LEGACY_LAN_PREFIX = "192.168.0."
 TARGET_LAN_PREFIX = "192.168.5."
 
