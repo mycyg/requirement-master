@@ -41,7 +41,10 @@ APP_NAME = "yqgl"
 APP_DIR = Path(os.environ.get("APPDATA", str(Path.home() / ".config"))) / APP_NAME
 CONFIG_PATH = APP_DIR / "config.json"
 DEFAULT_SYNC_ROOT = Path("D:/工作需求")
-DEFAULT_SERVER_URL = "http://192.168.5.53:8080"
+DEFAULT_SERVER_SCHEME = "http"
+DEFAULT_SERVER_IP = "192.168.5.53"
+DEFAULT_SERVER_PORT = 8080
+DEFAULT_SERVER_URL = f"{DEFAULT_SERVER_SCHEME}://{DEFAULT_SERVER_IP}:{DEFAULT_SERVER_PORT}"
 LEGACY_LAN_PREFIX = "192.168.0."
 TARGET_LAN_PREFIX = "192.168.5."
 
@@ -49,6 +52,9 @@ TARGET_LAN_PREFIX = "192.168.5."
 @dataclass
 class Config:
     server_url: str = DEFAULT_SERVER_URL
+    server_ip: str = DEFAULT_SERVER_IP
+    server_port: int = DEFAULT_SERVER_PORT
+    server_scheme: str = DEFAULT_SERVER_SCHEME
     nickname: str = ""
     cookie_token: str = ""           # signed cookie (yqgl_id) value
     sync_root: str = str(DEFAULT_SYNC_ROOT)
@@ -58,22 +64,67 @@ class Config:
 
 
 def normalize_server_url(url: str) -> str:
-    parsed = urlparse(url)
+    raw = (url or "").strip() or DEFAULT_SERVER_URL
+    if "://" not in raw:
+        raw = f"{DEFAULT_SERVER_SCHEME}://{raw}"
+    parsed = urlparse(raw)
+    if not parsed.hostname:
+        raise ValueError("服务端地址缺少 IP 或主机名")
     host = parsed.hostname or ""
     if host.startswith(LEGACY_LAN_PREFIX):
         new_host = TARGET_LAN_PREFIX + host.rsplit(".", 1)[-1]
         netloc = parsed.netloc.replace(host, new_host, 1)
-        return urlunparse(parsed._replace(netloc=netloc))
-    return url
+        parsed = parsed._replace(netloc=netloc)
+    return urlunparse(parsed._replace(path=parsed.path.rstrip("/"), params="", query="", fragment="")).rstrip("/")
+
+
+def _coerce_port(value: int | str | None) -> int:
+    try:
+        port = int(value if value not in (None, "") else DEFAULT_SERVER_PORT)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("服务端端口必须是数字") from exc
+    if port < 1 or port > 65535:
+        raise ValueError("服务端端口必须在 1-65535 之间")
+    return port
+
+
+def server_parts_from_url(url: str) -> tuple[str, str, int]:
+    normalized = normalize_server_url(url)
+    parsed = urlparse(normalized)
+    scheme = parsed.scheme or DEFAULT_SERVER_SCHEME
+    host = parsed.hostname or DEFAULT_SERVER_IP
+    port = parsed.port or (443 if scheme == "https" else DEFAULT_SERVER_PORT)
+    return scheme, host, port
+
+
+def build_server_url(server_ip: str, server_port: int | str, server_scheme: str = DEFAULT_SERVER_SCHEME) -> str:
+    raw_ip = (server_ip or "").strip()
+    if raw_ip.startswith(("http://", "https://")):
+        return normalize_server_url(raw_ip)
+    host = raw_ip or DEFAULT_SERVER_IP
+    port = _coerce_port(server_port)
+    scheme = (server_scheme or DEFAULT_SERVER_SCHEME).strip().lower()
+    if scheme not in {"http", "https"}:
+        scheme = DEFAULT_SERVER_SCHEME
+    return normalize_server_url(urlunparse((scheme, f"{host}:{port}", "", "", "", "")))
+
+
+def sync_server_fields(cfg: Config, *, prefer_parts: bool) -> Config:
+    if prefer_parts:
+        cfg.server_url = build_server_url(cfg.server_ip, cfg.server_port, cfg.server_scheme)
+    else:
+        cfg.server_url = normalize_server_url(cfg.server_url)
+    cfg.server_scheme, cfg.server_ip, cfg.server_port = server_parts_from_url(cfg.server_url)
+    return cfg
 
 
 def load_config() -> Config:
     APP_DIR.mkdir(parents=True, exist_ok=True)
     if CONFIG_PATH.exists():
         try:
-            d = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            d = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
             cfg = Config(**{**Config().__dict__, **d})
-            cfg.server_url = normalize_server_url(cfg.server_url)
+            sync_server_fields(cfg, prefer_parts=("server_ip" in d or "server_port" in d))
             return cfg
         except Exception:
             pass
@@ -82,6 +133,7 @@ def load_config() -> Config:
 
 def save_config(cfg: Config) -> None:
     APP_DIR.mkdir(parents=True, exist_ok=True)
+    sync_server_fields(cfg, prefer_parts=True)
     CONFIG_PATH.write_text(
         json.dumps(cfg.__dict__, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -346,50 +398,79 @@ def show_first_run_dialog(cfg: Config) -> bool:
     """Modal config dialog. Returns True if user saved, False if cancelled."""
     root = tk.Tk()
     root.title("需求管理大师 · 设置")
-    root.geometry("460x320")
+    root.geometry("520x380")
     root.attributes("-topmost", True)
 
     frm = ttk.Frame(root, padding=20)
     frm.pack(fill="both", expand=True)
 
-    ttk.Label(frm, text="服务端地址").grid(row=0, column=0, sticky="w", pady=4)
-    e_url = ttk.Entry(frm, width=42)
-    e_url.insert(0, cfg.server_url)
-    e_url.grid(row=0, column=1, sticky="we", pady=4)
+    server_ip_var = tk.StringVar(value=cfg.server_ip)
+    server_port_var = tk.StringVar(value=str(cfg.server_port))
+    server_preview_var = tk.StringVar(value=cfg.server_url)
 
-    ttk.Label(frm, text="昵称").grid(row=1, column=0, sticky="w", pady=4)
+    def update_server_preview(*_: Any) -> None:
+        try:
+            server_preview_var.set(build_server_url(server_ip_var.get(), server_port_var.get(), cfg.server_scheme))
+        except ValueError as exc:
+            server_preview_var.set(str(exc))
+
+    server_ip_var.trace_add("write", update_server_preview)
+    server_port_var.trace_add("write", update_server_preview)
+
+    ttk.Label(frm, text="服务端 IP").grid(row=0, column=0, sticky="w", pady=4)
+    e_ip = ttk.Entry(frm, width=32, textvariable=server_ip_var)
+    e_ip.grid(row=0, column=1, sticky="we", pady=4)
+
+    ttk.Label(frm, text="端口").grid(row=1, column=0, sticky="w", pady=4)
+    e_port = ttk.Entry(frm, width=10, textvariable=server_port_var)
+    e_port.grid(row=1, column=1, sticky="w", pady=4)
+
+    ttk.Label(frm, text="请求地址").grid(row=2, column=0, sticky="w", pady=4)
+    ttk.Label(frm, textvariable=server_preview_var, foreground="#555").grid(row=2, column=1, sticky="w", pady=4)
+
+    ttk.Label(frm, text="昵称").grid(row=3, column=0, sticky="w", pady=4)
     e_nick = ttk.Entry(frm, width=42)
     e_nick.insert(0, cfg.nickname)
-    e_nick.grid(row=1, column=1, sticky="we", pady=4)
+    e_nick.grid(row=3, column=1, sticky="we", pady=4)
 
-    ttk.Label(frm, text="本地同步根目录").grid(row=2, column=0, sticky="w", pady=4)
+    ttk.Label(frm, text="本地同步根目录").grid(row=4, column=0, sticky="w", pady=4)
     e_root = ttk.Entry(frm, width=42)
     e_root.insert(0, cfg.sync_root)
-    e_root.grid(row=2, column=1, sticky="we", pady=4)
+    e_root.grid(row=4, column=1, sticky="we", pady=4)
 
     def browse():
         d = filedialog.askdirectory(initialdir=e_root.get() or ".")
         if d:
             e_root.delete(0, "end")
             e_root.insert(0, d)
-    ttk.Button(frm, text="选择…", command=browse).grid(row=2, column=2, padx=4)
+    ttk.Button(frm, text="选择…", command=browse).grid(row=4, column=2, padx=4)
 
     status_lbl = ttk.Label(frm, text="", foreground="red")
-    status_lbl.grid(row=3, column=0, columnspan=3, sticky="w", pady=6)
+    status_lbl.grid(row=5, column=0, columnspan=3, sticky="w", pady=6)
 
     result = {"ok": False}
 
     def save():
-        url = e_url.get().strip()
+        try:
+            url = build_server_url(server_ip_var.get(), server_port_var.get(), cfg.server_scheme)
+            server_scheme, server_ip, server_port = server_parts_from_url(url)
+        except ValueError as ex:
+            status_lbl.config(text=str(ex), foreground="red")
+            return
         nick = e_nick.get().strip()
         root_dir = e_root.get().strip()
-        if not url or not nick or not root_dir:
+        if not nick or not root_dir:
             status_lbl.config(text="所有字段都必填")
             return
         status_lbl.config(text="正在连接服务端…", foreground="black")
         root.update_idletasks()
         try:
-            tmp_client = ServerClient(Config(server_url=url))
+            tmp_client = ServerClient(Config(
+                server_url=url,
+                server_ip=server_ip,
+                server_port=server_port,
+                server_scheme=server_scheme,
+            ))
             cookie = tmp_client.identify(nick)
             tmp_client.close()
             if not cookie:
@@ -400,6 +481,9 @@ def show_first_run_dialog(cfg: Config) -> bool:
             return
 
         cfg.server_url = url
+        cfg.server_ip = server_ip
+        cfg.server_port = server_port
+        cfg.server_scheme = server_scheme
         cfg.nickname = nick
         cfg.sync_root = root_dir
         cfg.cookie_token = cookie
@@ -411,7 +495,7 @@ def show_first_run_dialog(cfg: Config) -> bool:
         root.destroy()
 
     btn_frm = ttk.Frame(frm)
-    btn_frm.grid(row=4, column=0, columnspan=3, pady=12, sticky="e")
+    btn_frm.grid(row=6, column=0, columnspan=3, pady=12, sticky="e")
     ttk.Button(btn_frm, text="取消", command=cancel).pack(side="right", padx=4)
     ttk.Button(btn_frm, text="保存", command=save).pack(side="right", padx=4)
 

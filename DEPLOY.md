@@ -98,7 +98,9 @@ python yqgl_tray.py
 ```
 
 首次启动弹窗：
-- 服务端地址：默认 `http://192.168.5.53:8080`；旧 `192.168.0.x` 会自动迁到同尾号 `192.168.5.x`
+- 服务端 IP：默认 `192.168.5.53`
+- 端口：默认 `8080`
+- 请求地址：由 IP + 端口自动生成；旧 `192.168.0.x` 会自动迁到同尾号 `192.168.5.x`
 - 昵称：你自己
 - 同步根目录：默认 `D:\工作需求`
 
@@ -181,7 +183,7 @@ type %APPDATA%\yqgl\client.log
 ## 七、配置 / 凭据
 
 - 服务端 `.env`：`/srv/yqgl/app/.env`（含 LLM API key、cookie secret 等）
-- 客户端配置：`%APPDATA%\yqgl\config.json`（含签名 cookie；删了就重新走首次配置）
+- 客户端配置：`%APPDATA%\yqgl\config.json`（含 `server_ip / server_port / server_url` 和签名 cookie；删了就重新走首次配置）
 - LLM 接口：DeepSeek Anthropic 兼容 `https://api.deepseek.com/anthropic`，model `deepseek-v4-pro` (主) / `deepseek-v4-flash` (快)
 - ASR：Qwen3-ASR-1.7B，常驻显存 ~5GB
 - TTS：Fun-CosyVoice3-0.5B，常驻显存 ~3GB（3 音色 male/yujie/xiaoguang）
