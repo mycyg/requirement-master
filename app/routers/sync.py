@@ -18,6 +18,7 @@ from models import Requirement, RequirementAssignment, User
 from services.activity import log_activity
 from services.assignments import ensure_public_claim_assignment, sync_legacy_lead
 from services.permissions import can_ack_requirement_sync, can_claim_requirement, can_view_requirement_assets
+from services.schedule import sync_requirement_due_event
 from services.push_bus import bus
 from services.sync_manifest import build as build_manifest
 from sqlalchemy.orm import selectinload
@@ -37,9 +38,12 @@ async def submit(req_id: str, db: Session = Depends(get_db), user: User = Depend
 
     if r.status not in {"summary_ready", "ready"}:
         raise HTTPException(status_code=400, detail=f"cannot submit from status {r.status}")
+    if not r.due_at:
+        raise HTTPException(status_code=400, detail="DDL is required before dispatch")
 
     r.status = "ready"
     r.sync_state = "pending"
+    sync_requirement_due_event(db, r, user)
     log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="submitted", detail={})
     db.commit()
     db.refresh(r)

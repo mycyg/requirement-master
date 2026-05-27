@@ -17,6 +17,7 @@ from services.activity import log_activity
 from services.llm_agent import AgentEvent, step
 from services.permissions import can_view_requirement_record
 from services.push_bus import bus
+from services.schedule import sync_requirement_due_event
 
 router = APIRouter(prefix="/api", tags=["chat"])
 _chat_locks: dict[str, asyncio.Lock] = {}
@@ -144,6 +145,8 @@ async def chat_step(
                             req2.title = payload_d.get("title") or req2.title
                             req2.summary_md = payload_d.get("summary_md") or req2.summary_md
                             req2.status = "summary_ready"
+                            if req2.due_at:
+                                sync_requirement_due_event(db2, req2)
                         log_activity(
                             db2, requirement_id=req_id, actor_nickname=actor,
                             action="clarified", detail={"final": True},

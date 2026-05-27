@@ -20,7 +20,8 @@ function unique(xs: string[]): string[] {
 
 function statusLabel(user?: UserOption): string {
   if (!user) return "状态未知";
-  if (user.is_online) return "在线";
+  const availability = availabilityLabel(user);
+  if (user.is_online) return `在线 · ${availability}`;
   if (!user.last_seen_at) return "未上线";
   const seenAt = new Date(user.last_seen_at).getTime();
   if (Number.isNaN(seenAt)) return "离线";
@@ -32,7 +33,24 @@ function statusLabel(user?: UserOption): string {
 }
 
 function statusDotClass(user?: UserOption): string {
-  return user?.is_online ? "bg-[#4f7d45] shadow-[0_0_0_3px_rgba(79,125,69,0.14)]" : "bg-stone-300";
+  if (!user?.is_online) return "bg-stone-300";
+  if (user.availability_status === "busy") return "bg-[#b95538] shadow-[0_0_0_3px_rgba(185,85,56,0.14)]";
+  if (user.availability_status === "custom") return "bg-[#59758f] shadow-[0_0_0_3px_rgba(89,117,143,0.14)]";
+  return "bg-[#4f7d45] shadow-[0_0_0_3px_rgba(79,125,69,0.14)]";
+}
+
+function availabilityLabel(user?: UserOption): string {
+  if (!user) return "状态未知";
+  if (user.availability_status === "busy") return user.availability_text || "忙碌";
+  if (user.availability_status === "custom") return user.availability_text || "自定义状态";
+  return "空闲";
+}
+
+function availabilityPillClass(user: UserOption): string {
+  if (!user.is_online) return "border-stone-200 bg-stone-100 text-stone-500";
+  if (user.availability_status === "busy") return "border-[#e0b8ad] bg-[#fff0ec] text-[#9f4129]";
+  if (user.availability_status === "custom") return "border-[#bbd6d0] bg-[#eef8f5] text-[#376b60]";
+  return "border-[#bdd2b7] bg-[#f1f7ed] text-[#4e7146]";
 }
 
 export function AssigneeSelector({
@@ -50,7 +68,16 @@ export function AssigneeSelector({
   const [err, setErr] = useState<string | null>(null);
   const selectedIds = useMemo(() => unique([leadUserId || "", ...collaboratorUserIds]), [leadUserId, collaboratorUserIds]);
   const sortedUsers = useMemo(
-    () => [...users].sort((a, b) => Number(Boolean(b.is_online)) - Number(Boolean(a.is_online)) || a.nickname.localeCompare(b.nickname, "zh-Hans-CN")),
+    () => {
+      const rank = (u: UserOption) => {
+        if (!u.is_online) return 10;
+        if ((u.availability_status || "free") === "free") return 0;
+        if (u.availability_status === "custom") return 1;
+        if (u.availability_status === "busy") return 2;
+        return 3;
+      };
+      return [...users].sort((a, b) => rank(a) - rank(b) || a.nickname.localeCompare(b.nickname, "zh-Hans-CN"));
+    },
     [users],
   );
   const onlineCount = useMemo(() => users.filter((u) => u.is_online).length, [users]);
@@ -168,6 +195,9 @@ export function AssigneeSelector({
                       <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDotClass(u)}`} aria-hidden="true" />
                       <UserPlus className="h-4 w-4 shrink-0 text-stone-400" aria-hidden="true" />
                       <span className="truncate">{u.nickname}</span>
+                      <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${availabilityPillClass(u)}`}>
+                        {availabilityLabel(u)}
+                      </span>
                     </div>
                     <div className="mt-0.5 pl-8 text-[11px] leading-4 text-stone-500">{statusLabel(u)}</div>
                   </div>

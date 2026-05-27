@@ -7,9 +7,12 @@ asyncio task in the FastAPI process; pushes progress events via push_bus on topi
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import os
 import shutil
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +29,15 @@ _client = AsyncAnthropic(base_url=settings.llm_base_url, api_key=settings.llm_ap
 
 MAX_TURNS = 15
 TOTAL_TIMEOUT_DEFAULT = 5 * 60  # 5 minutes
+MAX_SANDBOX_FILES = 800
+MAX_SANDBOX_BYTES = 200 * 1024 * 1024
+COMMAND_TIMEOUT = 45
+COMMAND_OUTPUT_LIMIT = 12000
+ALLOWED_COMMANDS = {
+    "python", "python3", "py",
+    "node", "npm", "pnpm", "bun",
+    "pytest", "ruff", "tsc",
+}
 
 
 # ---------- tools ----------
@@ -33,8 +45,11 @@ TOTAL_TIMEOUT_DEFAULT = 5 * 60  # 5 minutes
 TOOLS = [
     {
         "name": "list_files",
-        "description": "List all files (recursively) in the working directory.",
-        "input_schema": {"type": "object", "properties": {}},
+        "description": "List files recursively under a relative directory in the sandbox.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "relative directory; default is ."}},
+        },
     },
     {
         "name": "read_file",
@@ -58,6 +73,67 @@ TOOLS = [
         },
     },
     {
+        "name": "write_base64_file",
+        "description": "Write a binary file from base64 content (creates parent dirs).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "base64_content": {"type": "string"},
+            },
+            "required": ["path", "base64_content"],
+        },
+    },
+    {
+        "name": "mkdir",
+        "description": "Create a directory inside the sandbox.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "move_path",
+        "description": "Move or rename a file/directory inside the sandbox.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"src": {"type": "string"}, "dest": {"type": "string"}},
+            "required": ["src", "dest"],
+        },
+    },
+    {
+        "name": "delete_path",
+        "description": "Delete one file or directory inside the sandbox.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "run_command",
+        "description": "Run an allowlisted command inside the sandbox. No shell is used. Keep commands short and deterministic.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "args": {"type": "array", "items": {"type": "string"}, "description": "command argv, e.g. ['python','script.py']"},
+                "cwd": {"type": "string", "description": "relative working directory; default is ."},
+                "timeout_s": {"type": "integer", "minimum": 1, "maximum": 60},
+            },
+            "required": ["args"],
+        },
+    },
+    {
+        "name": "zip_path",
+        "description": "Create a zip file inside the sandbox from a relative source path.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"src": {"type": "string"}, "dest": {"type": "string"}},
+            "required": ["src", "dest"],
+        },
+    },
+    {
         "name": "submit",
         "description": "Declare the task done. Pass a short note describing what was produced.",
         "input_schema": {
@@ -78,9 +154,35 @@ def _safe_path(workdir: Path, rel: str) -> Path:
     return p
 
 
-def _tool_list_files(workdir: Path) -> str:
+def _sandbox_stats(workdir: Path) -> tuple[int, int]:
+    count = 0
+    total = 0
+    for p in workdir.rglob("*"):
+        if p.is_file():
+            count += 1
+            try:
+                total += p.stat().st_size
+            except Exception:
+                pass
+    return count, total
+
+
+def _enforce_sandbox_budget(workdir: Path) -> None:
+    count, total = _sandbox_stats(workdir)
+    if count > MAX_SANDBOX_FILES:
+        raise ValueError(f"sandbox file limit exceeded: {count}>{MAX_SANDBOX_FILES}")
+    if total > MAX_SANDBOX_BYTES:
+        raise ValueError(f"sandbox size limit exceeded: {total}>{MAX_SANDBOX_BYTES}")
+
+
+def _tool_list_files(workdir: Path, path: str = ".") -> str:
+    root = _safe_path(workdir, path or ".")
+    if not root.exists():
+        return f"[error] path not found: {path}"
+    if not root.is_dir():
+        root = root.parent
     files = []
-    for p in sorted(workdir.rglob("*")):
+    for p in sorted(root.rglob("*")):
         if p.is_file():
             try:
                 files.append(f"{p.relative_to(workdir).as_posix()}  ({p.stat().st_size}B)")
@@ -105,7 +207,118 @@ def _tool_write_file(workdir: Path, path: str, content: str) -> str:
     p = _safe_path(workdir, path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
+    _enforce_sandbox_budget(workdir)
     return f"wrote {p.relative_to(workdir).as_posix()}  ({len(content)} bytes)"
+
+
+def _tool_write_base64_file(workdir: Path, path: str, base64_content: str) -> str:
+    p = _safe_path(workdir, path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    data = base64.b64decode(base64_content, validate=True)
+    p.write_bytes(data)
+    _enforce_sandbox_budget(workdir)
+    return f"wrote {p.relative_to(workdir).as_posix()}  ({len(data)} bytes)"
+
+
+def _tool_mkdir(workdir: Path, path: str) -> str:
+    p = _safe_path(workdir, path)
+    p.mkdir(parents=True, exist_ok=True)
+    return f"created {p.relative_to(workdir).as_posix()}"
+
+
+def _tool_move_path(workdir: Path, src: str, dest: str) -> str:
+    src_p = _safe_path(workdir, src)
+    dest_p = _safe_path(workdir, dest)
+    if not src_p.exists():
+        return f"[error] source not found: {src}"
+    dest_p.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src_p), str(dest_p))
+    _enforce_sandbox_budget(workdir)
+    return f"moved {src} -> {dest}"
+
+
+def _tool_delete_path(workdir: Path, path: str) -> str:
+    p = _safe_path(workdir, path)
+    if not p.exists():
+        return f"[error] path not found: {path}"
+    if p.is_dir():
+        shutil.rmtree(p)
+    else:
+        p.unlink()
+    return f"deleted {path}"
+
+
+def _tool_run_command(workdir: Path, args: list[str], cwd: str = ".", timeout_s: int | None = None) -> str:
+    if not args:
+        return "[error] args must not be empty"
+    exe = Path(args[0]).name.lower()
+    if exe.endswith(".exe"):
+        exe = exe[:-4]
+    if exe not in ALLOWED_COMMANDS:
+        return f"[error] command not allowlisted: {args[0]}"
+    if exe in {"npm", "pnpm", "bun"} and len(args) > 1 and args[1] in {"install", "add", "i"}:
+        return "[error] dependency installation is disabled in the sandbox"
+    cwd_p = _safe_path(workdir, cwd or ".")
+    if not cwd_p.exists() or not cwd_p.is_dir():
+        return f"[error] cwd is not a directory: {cwd}"
+    for arg in args[1:]:
+        if "\x00" in arg:
+            return "[error] invalid null byte in args"
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": str(workdir),
+        "HOME": str(workdir),
+        "TMPDIR": str(workdir / ".tmp"),
+        "TEMP": str(workdir / ".tmp"),
+        "TMP": str(workdir / ".tmp"),
+        "NO_COLOR": "1",
+    }
+    (workdir / ".tmp").mkdir(exist_ok=True)
+    timeout = max(1, min(int(timeout_s or COMMAND_TIMEOUT), 60))
+    try:
+        proc = subprocess.run(
+            args,
+            cwd=cwd_p,
+            env=env,
+            shell=False,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        out = (exc.stdout or "") + "\n" + (exc.stderr or "")
+        return f"[timeout after {timeout}s]\n{out[:COMMAND_OUTPUT_LIMIT]}"
+    _enforce_sandbox_budget(workdir)
+    output = (
+        f"exit_code={proc.returncode}\n"
+        f"stdout:\n{proc.stdout}\n"
+        f"stderr:\n{proc.stderr}"
+    )
+    if len(output) > COMMAND_OUTPUT_LIMIT:
+        output = output[:COMMAND_OUTPUT_LIMIT] + "\n...[truncated]"
+    return output
+
+
+def _tool_zip_path(workdir: Path, src: str, dest: str) -> str:
+    src_p = _safe_path(workdir, src)
+    dest_p = _safe_path(workdir, dest)
+    if not src_p.exists():
+        return f"[error] source not found: {src}"
+    if src_p == dest_p or src_p in dest_p.parents:
+        return "[error] destination cannot be inside source"
+    dest_p.parent.mkdir(parents=True, exist_ok=True)
+    made_name = shutil.make_archive(
+        str(dest_p.with_suffix("")),
+        "zip",
+        root_dir=src_p if src_p.is_dir() else src_p.parent,
+        base_dir="." if src_p.is_dir() else src_p.name,
+    )
+    made = Path(made_name)
+    if made != dest_p and made.exists():
+        shutil.move(str(made), str(dest_p))
+    _enforce_sandbox_budget(workdir)
+    return f"zipped {src} -> {dest}"
 
 
 # ---------- agent loop ----------
@@ -139,7 +352,9 @@ async def run_auto(
             "content": (
                 f"# Requirement Title\n{req_title}\n\n"
                 f"# Requirement Details\n{summary_md}\n\n"
-                f"The working directory is currently empty. Start implementing now."
+                f"The sandbox may contain user attachments under `inputs/`. "
+                f"Put final deliverables under `outputs/` and add `outputs/README.md` when useful. "
+                f"Start by inspecting files, then implement."
             ),
         }
     ]
@@ -203,11 +418,30 @@ async def run_auto(
 
                     try:
                         if name == "list_files":
-                            content = _tool_list_files(workdir)
+                            content = _tool_list_files(workdir, str(inp.get("path", ".")))
                         elif name == "read_file":
                             content = _tool_read_file(workdir, str(inp.get("path", "")))
                         elif name == "write_file":
                             content = _tool_write_file(workdir, str(inp.get("path", "")), str(inp.get("content", "")))
+                        elif name == "write_base64_file":
+                            content = _tool_write_base64_file(workdir, str(inp.get("path", "")), str(inp.get("base64_content", "")))
+                        elif name == "mkdir":
+                            content = _tool_mkdir(workdir, str(inp.get("path", "")))
+                        elif name == "move_path":
+                            content = _tool_move_path(workdir, str(inp.get("src", "")), str(inp.get("dest", "")))
+                        elif name == "delete_path":
+                            content = _tool_delete_path(workdir, str(inp.get("path", "")))
+                        elif name == "run_command":
+                            raw_args = inp.get("args", [])
+                            args = [str(x) for x in raw_args] if isinstance(raw_args, list) else []
+                            content = _tool_run_command(
+                                workdir,
+                                args,
+                                str(inp.get("cwd", ".")),
+                                int(inp.get("timeout_s", COMMAND_TIMEOUT) or COMMAND_TIMEOUT),
+                            )
+                        elif name == "zip_path":
+                            content = _tool_zip_path(workdir, str(inp.get("src", "")), str(inp.get("dest", "")))
                         else:
                             content = f"[error] unknown tool: {name}"
                     except Exception as e:
@@ -231,14 +465,18 @@ async def run_auto(
 
 
 def _has_deliverables(workdir: Path) -> bool:
-    for p in workdir.rglob("*"):
+    outdir = workdir / "outputs"
+    if not outdir.exists():
+        return False
+    for p in outdir.rglob("*"):
         if p.is_file():
             return True
     return False
 
 
 def _result(success: bool, reason: str, notes: str, turn: int, started: float, workdir: Path) -> AutoResult:
-    file_count = sum(1 for p in workdir.rglob("*") if p.is_file())
+    outdir = workdir / "outputs"
+    file_count = sum(1 for p in outdir.rglob("*") if p.is_file()) if outdir.exists() else 0
     return AutoResult(
         success=success,
         reason=reason,
@@ -262,14 +500,15 @@ Write the `reason` in the user's language. If the requirement is in Chinese, wri
 
 async def llm_review(req_title: str, summary_md: str, workdir: Path) -> tuple[bool, str]:
     """Run a separate LLM call to judge if AI's deliverables actually satisfy the requirement."""
-    files = sorted(p for p in workdir.rglob("*") if p.is_file())
+    review_root = workdir / "outputs"
+    files = sorted(p for p in review_root.rglob("*") if p.is_file()) if review_root.exists() else []
     chunks = []
     for p in files[:20]:  # cap
         try:
             text = p.read_text(encoding="utf-8")[:2000]
         except Exception:
             text = "(binary or unreadable)"
-        chunks.append(f"### {p.relative_to(workdir).as_posix()} ({p.stat().st_size}B)\n```\n{text}\n```")
+        chunks.append(f"### {p.relative_to(review_root).as_posix()} ({p.stat().st_size}B)\n```\n{text}\n```")
     file_dump = "\n\n".join(chunks) or "(no files)"
 
     try:
@@ -318,12 +557,42 @@ class AutoOutcome:
     seconds: float
 
 
-async def auto_process(*, req_id: str, req_title: str, summary_md: str, workdir: Path, timeout: int = TOTAL_TIMEOUT_DEFAULT) -> AutoOutcome:
+def _preload_inputs(workdir: Path, input_files: list[tuple[str, Path]] | None) -> None:
+    if not input_files:
+        return
+    inputs = workdir / "inputs"
+    inputs.mkdir(parents=True, exist_ok=True)
+    used: set[str] = set()
+    for filename, source in input_files:
+        clean = Path(filename or source.name).name or source.name
+        candidate = clean
+        stem = Path(clean).stem or "file"
+        suffix = Path(clean).suffix
+        n = 2
+        while candidate in used or (inputs / candidate).exists():
+            candidate = f"{stem}-{n}{suffix}"
+            n += 1
+        used.add(candidate)
+        if source.exists() and source.is_file():
+            shutil.copy2(source, inputs / candidate)
+
+
+async def auto_process(
+    *,
+    req_id: str,
+    req_title: str,
+    summary_md: str,
+    workdir: Path,
+    timeout: int = TOTAL_TIMEOUT_DEFAULT,
+    input_files: list[tuple[str, Path]] | None = None,
+) -> AutoOutcome:
     """Run agent + LLM review. Returns final outcome."""
     # fresh workdir
     if workdir.exists():
         shutil.rmtree(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
+    (workdir / "outputs").mkdir(parents=True, exist_ok=True)
+    _preload_inputs(workdir, input_files)
 
     result = await run_auto(
         req_id=req_id, req_title=req_title, summary_md=summary_md,

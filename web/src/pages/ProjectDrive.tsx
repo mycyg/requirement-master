@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ArchiveRestore, CheckSquare, ChevronRight, Clipboard, Copy, Download, Eye, File, FileCode2,
-  Folder, FolderInput, Grid3X3, HardDrive, List, Loader2, MoreHorizontal, Plus, RotateCcw,
-  Scissors, Search, Square, Trash2, UploadCloud, X,
+  Folder, FolderInput, Grid3X3, HardDrive, List, Loader2, MessageSquare, MoreHorizontal, Plus, RotateCcw,
+  Scissors, Search, Send, Square, Trash2, UploadCloud, X,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import type { DriveItem, DriveList, DrivePreview, DriveTreeNode, Project } from "@/lib/types";
+import type { DriveComment, DriveItem, DriveList, DrivePreview, DriveTreeNode, Project } from "@/lib/types";
 
 const CHUNK_SIZE = 5 * 1024 * 1024;
 
@@ -82,6 +82,9 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  const [comments, setComments] = useState<DriveComment[]>([]);
+  const [commentText, setCommentText] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
 
   const selectedItems = useMemo(
     () => drive?.items.filter((item) => selected.includes(item.id)) ?? [],
@@ -100,7 +103,23 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
     setDrive(nextDrive);
     setTree(nextTree);
     setSelected([]);
+    setComments(await api.listDriveComments(projectId, trash ? null : parentId));
   }, [projectId, parentId, search, trash]);
+
+  const submitComment = async () => {
+    if (!projectId || !commentText.trim() || trash) return;
+    setCommentBusy(true);
+    setErr(null);
+    try {
+      const comment = await api.addDriveComment(projectId, parentId, commentText.trim());
+      setComments((xs) => [comment, ...xs]);
+      setCommentText("");
+    } catch (e: any) {
+      setErr(String(e));
+    } finally {
+      setCommentBusy(false);
+    }
+  };
 
   useEffect(() => {
     reload().catch((e) => setErr(String(e)));
@@ -564,6 +583,61 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
           </div>
         </section>
       </div>
+
+      {!trash && (
+        <section className="paper-surface mt-4 p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-stone-900">
+                <MessageSquare className="h-4 w-4 text-stone-500" aria-hidden="true" />
+                文件夹留言板
+              </h2>
+              <p className="mt-1 text-xs text-stone-500">留言会先过一遍 LLM；像需求变动的，会自动生成需求草稿。</p>
+            </div>
+            <span className="pill">同步：客户端本地开关控制</span>
+          </div>
+          <div className="mt-3 flex flex-col gap-2 md:flex-row">
+            <textarea
+              className="textarea-field min-h-20 flex-1"
+              placeholder="在这个文件夹留句话。普通吐槽进留言板，像需求的会被拎去走澄清流程。"
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+            />
+            <button className="button-primary md:self-start" disabled={commentBusy || !commentText.trim()} onClick={submitComment}>
+              {commentBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
+              {commentBusy ? "审核中..." : "留言"}
+            </button>
+          </div>
+          <div className="mt-4 space-y-2">
+            {comments.length === 0 && <div className="empty-state p-4">还没人留言。这个文件夹暂时保持沉默。</div>}
+            {comments.map((comment) => (
+              <article key={comment.id} className="rounded-lg border border-stone-200 bg-[#fffdf8] p-3 text-sm">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-stone-900">{comment.author_nickname}</div>
+                    <p className="mt-1 whitespace-pre-wrap break-words leading-6 text-stone-700">{comment.body}</p>
+                    {comment.llm_reason && <p className="mt-2 text-xs text-stone-500">LLM：{comment.llm_reason}</p>}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                    <span className={`pill ${
+                      comment.status === "draft_created" ? "border-[#cbb8d8] bg-[#f5eef8] text-[#684b7a]"
+                      : comment.status === "review_failed" ? "border-red-200 bg-red-50 text-red-700"
+                      : "border-[#bdd2b7] bg-[#f1f7ed] text-[#4e7146]"
+                    }`}>
+                      {comment.status === "draft_created" ? "已生成草稿" : comment.status === "review_failed" ? "审核失败" : "已入板"}
+                    </span>
+                    {comment.draft_requirement_id && (
+                      <Link className="button-secondary min-h-8 px-2.5 py-1 text-xs" to={`/r/${comment.draft_requirement_id}/clarify`}>
+                        去澄清
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       {preview && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-stone-950/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">

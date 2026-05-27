@@ -1,6 +1,7 @@
 import type {
-  Activity, Attachment, Comment, Delivery, DriveItem, DriveList, DrivePreview, DriveTreeNode, DriveUploadInit,
-  Identity, Project, Requirement, RequirementAssignee, StoredChatMessage, UserOption,
+  Activity, Attachment, Comment, Delivery, DriveComment, DriveItem, DriveList, DriveManifest, DrivePreview,
+  DriveTreeNode, DriveUploadInit, Identity, Project, Reminder, Requirement, RequirementAssignee, ScheduleEvent,
+  StoredChatMessage, UserOption,
 } from "./types";
 
 const COMMON: RequestInit = { credentials: "include" };
@@ -27,6 +28,12 @@ export const api = {
     if (search.trim()) q.set("search", search.trim());
     return json<UserOption[]>(`/api/users?${q.toString()}`);
   },
+  updateMyStatus: (input: { availability_status: "free" | "busy" | "custom"; availability_text?: string | null }) =>
+    json<UserOption>("/api/users/me/status", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
 
   listProjects: () => json<Project[]>("/api/projects"),
   createProject: (input: { name: string; slug: string; description?: string }) =>
@@ -45,6 +52,11 @@ export const api = {
     return json<DriveList>(`/api/projects/${projectId}/drive?${q.toString()}`);
   },
   driveTree: (projectId: string) => json<DriveTreeNode[]>(`/api/projects/${projectId}/drive/tree`),
+  driveManifest: (projectId: string) => json<DriveManifest>(`/api/projects/${projectId}/drive/manifest`),
+  driveChanges: (projectId: string, since: string) => {
+    const q = new URLSearchParams({ since });
+    return json<DriveManifest>(`/api/projects/${projectId}/drive/changes?${q.toString()}`);
+  },
   createDriveFolder: (projectId: string, input: { name: string; parent_id?: string | null }) =>
     json<DriveItem>(`/api/projects/${projectId}/drive/folders`, {
       method: "POST",
@@ -95,6 +107,14 @@ export const api = {
     }),
   restoreDriveItem: (itemId: string) => json<DriveItem>(`/api/drive/items/${itemId}/restore`, { method: "POST" }),
   undoDrive: (projectId: string) => json<{ ok: boolean; operation_id?: string | null }>(`/api/projects/${projectId}/drive/undo`, { method: "POST" }),
+  listDriveComments: (projectId: string, folderId: string | null) =>
+    json<DriveComment[]>(`/api/projects/${projectId}/drive/folders/${folderId || "root"}/comments`),
+  addDriveComment: (projectId: string, folderId: string | null, body: string) =>
+    json<DriveComment>(`/api/projects/${projectId}/drive/folders/${folderId || "root"}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body }),
+    }),
   bulkDownloadDrive: async (itemIds: string[]) => {
     const r = await fetch("/api/drive/bulk-download", {
       ...COMMON,
@@ -111,6 +131,8 @@ export const api = {
     priority?: string;
     lead_user_id?: string | null;
     collaborator_user_ids?: string[];
+    start_at?: string | null;
+    due_at?: string | null;
   }) =>
     json<Requirement>(`/api/projects/${project_id}/requirements`, {
       method: "POST",
@@ -130,6 +152,12 @@ export const api = {
   updateAssignees: (id: string, input: { lead_user_id?: string | null; collaborator_user_ids?: string[] }) =>
     json<RequirementAssignee[]>(`/api/requirements/${id}/assignees`, {
       method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  updateRequirementSchedule: (id: string, input: { start_at?: string | null; due_at?: string | null }) =>
+    json<Requirement>(`/api/requirements/${id}/schedule`, {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
     }),
@@ -190,4 +218,33 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+
+  listCalendarEvents: (params: { start?: string; end?: string; project_id?: string; mine?: boolean } = {}) => {
+    const q = new URLSearchParams();
+    if (params.start) q.set("start", params.start);
+    if (params.end) q.set("end", params.end);
+    if (params.project_id) q.set("project_id", params.project_id);
+    if (params.mine) q.set("mine", "true");
+    return json<ScheduleEvent[]>(`/api/calendar/events?${q.toString()}`);
+  },
+  createCalendarEvent: (input: {
+    title: string; description?: string | null; project_id?: string | null; requirement_id?: string | null;
+    event_type?: "custom" | "requirement_due"; start_at?: string | null; end_at: string; participant_user_ids?: string[];
+  }) =>
+    json<ScheduleEvent>("/api/calendar/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  patchCalendarEvent: (id: string, input: Partial<{
+    title: string; description: string | null; project_id: string | null; requirement_id: string | null;
+    start_at: string | null; end_at: string; participant_user_ids: string[];
+  }>) =>
+    json<ScheduleEvent>(`/api/calendar/events/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  deleteCalendarEvent: (id: string) => json<{ ok: boolean }>(`/api/calendar/events/${id}`, { method: "DELETE" }),
+  dueReminders: () => json<Reminder[]>("/api/reminders/due"),
 };

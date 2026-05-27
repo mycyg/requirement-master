@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -32,6 +33,7 @@ def main() -> None:
         from db import SessionLocal, engine
         from main import app
         from models import Requirement
+        due = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
 
         with TestClient(app) as alice, TestClient(app) as bob, TestClient(app) as carl, TestClient(app) as dana:
             r = alice.post("/api/auth/identify", json={"nickname": "alice"})
@@ -57,10 +59,25 @@ def main() -> None:
             assert bob_option, r.text
             assert bob_option["is_online"] is True, r.text
             assert "last_seen_at" in bob_option, r.text
+            r = bob.put("/api/users/me/status", json={"availability_status": "busy", "availability_text": "smoke busy"})
+            expect(200, r.status_code, r.text)
+            assert r.json()["availability_status"] == "busy", r.text
 
             r = alice.post(f"/api/projects/{project_id}/drive/folders", json={"name": "docs"})
             expect(200, r.status_code, r.text)
             docs_id = r.json()["id"]
+            r = alice.post(
+                f"/api/projects/{project_id}/drive/folders/{docs_id}/comments",
+                json={"body": "这里是普通说明，文件按 smoke 测试放。"},
+            )
+            expect(201, r.status_code, r.text)
+            assert r.json()["status"] in {"posted", "draft_created"}, r.text
+            r = alice.post(
+                f"/api/projects/{project_id}/drive/folders/{docs_id}/comments",
+                json={"body": "需求补充：请增加一个 smoke 导出按钮。"},
+            )
+            expect(201, r.status_code, r.text)
+            assert r.json()["status"] == "draft_created" and r.json()["draft_requirement_id"], r.text
             drive_body = b"# Drive smoke\n\nhello from the project drive"
             r = alice.post(
                 f"/api/projects/{project_id}/drive/upload/init",
@@ -127,10 +144,28 @@ def main() -> None:
 
             r = alice.post(
                 f"/api/projects/{project_id}/requirements",
-                json={"raw_description": "Build a smoke-test artifact", "priority": "normal"},
+                json={"raw_description": "Build a smoke-test artifact", "priority": "normal", "due_at": due},
             )
             expect(201, r.status_code, r.text)
             req_id = r.json()["id"]
+
+            r = alice.post(
+                f"/api/projects/{project_id}/requirements",
+                json={"raw_description": "No DDL should not dispatch", "priority": "normal"},
+            )
+            expect(201, r.status_code, r.text)
+            no_due_id = r.json()["id"]
+            db = SessionLocal()
+            try:
+                no_due = db.query(Requirement).filter(Requirement.id == no_due_id).one()
+                no_due.title = "No DDL"
+                no_due.summary_md = "## Goal\nNo DDL\n\n## Acceptance Criteria\n- Submit should fail"
+                no_due.status = "summary_ready"
+                db.commit()
+            finally:
+                db.close()
+            r = alice.post(f"/api/requirements/{no_due_id}/submit")
+            expect(400, r.status_code, r.text)
 
             r = alice.post(
                 f"/api/requirements/{req_id}/attachments",
@@ -168,6 +203,15 @@ def main() -> None:
 
             r = alice.post(f"/api/requirements/{req_id}/submit")
             expect(200, r.status_code, r.text)
+            r = alice.get("/api/calendar/events")
+            expect(200, r.status_code, r.text)
+            assert any(e["requirement_id"] == req_id for e in r.json()), r.text
+            r = alice.get("/api/calendar/events", params={
+                "start": datetime.now(timezone.utc).isoformat(),
+                "end": (datetime.now(timezone.utc) + timedelta(days=5)).isoformat(),
+            })
+            expect(200, r.status_code, r.text)
+            assert any(e["requirement_id"] == req_id for e in r.json()), r.text
 
             r = bob.get(f"/api/requirements/{req_id}")
             expect(200, r.status_code, r.text)
@@ -206,6 +250,7 @@ def main() -> None:
                     "priority": "high",
                     "lead_user_id": bob_id,
                     "collaborator_user_ids": [carl_id],
+                    "due_at": due,
                 },
             )
             expect(201, r.status_code, r.text)
@@ -284,7 +329,7 @@ def main() -> None:
 
             r = alice.post(
                 f"/api/projects/{project_id}/requirements",
-                json={"raw_description": "Chunk owner check", "priority": "normal"},
+                json={"raw_description": "Chunk owner check", "priority": "normal", "due_at": due},
             )
             expect(201, r.status_code, r.text)
             req2_id = r.json()["id"]

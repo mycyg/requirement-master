@@ -12,6 +12,7 @@ from models import Base
 from routers import attachments as attachments_router
 from routers import auth as auth_router
 from routers import auto as auto_router
+from routers import calendar as calendar_router
 from routers import chat as chat_router
 from routers import comments as comments_router
 from routers import deliveries as deliveries_router
@@ -19,6 +20,7 @@ from routers import delivery_upload as delivery_upload_router
 from routers import projects as projects_router
 from routers import project_drive as project_drive_router
 from routers import push as push_router
+from routers import reminders as reminders_router
 from routers import requirements as requirements_router
 from routers import sync as sync_router
 from routers import users as users_router
@@ -80,11 +82,36 @@ app.include_router(comments_router.router)
 app.include_router(deliveries_router.router)
 app.include_router(delivery_upload_router.router)
 app.include_router(users_router.router)
+app.include_router(calendar_router.router)
+app.include_router(reminders_router.router)
 
 
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "service": "yqgl", "version": app.version}
+
+
+CLIENT_ROOT = Path(__file__).resolve().parents[1] / "client"
+CLIENT_FILES = {
+    "install.ps1": "install-client.ps1",
+    "install.sh": "install-client.sh",
+    "launch.ps1": "launch.ps1",
+    "launch.sh": "launch.sh",
+    "yqgl_tray.py": "yqgl_tray.py",
+    "yqgl_dashboard.py": "yqgl_dashboard.py",
+    "requirements.txt": "requirements.txt",
+}
+
+
+@app.get("/client/{name}")
+def client_file(name: str):
+    filename = CLIENT_FILES.get(name)
+    if not filename:
+        raise HTTPException(status_code=404)
+    path = CLIENT_ROOT / filename
+    if not path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(path)
 
 
 # ───── static frontend (vite build deployed to /srv/yqgl/web/dist) ─────

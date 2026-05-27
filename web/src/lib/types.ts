@@ -1,6 +1,14 @@
 export type Identity = { id: string; nickname: string; created: boolean };
 
-export type UserOption = { id: string; nickname: string; is_online?: boolean; last_seen_at?: string | null };
+export type UserOption = {
+  id: string;
+  nickname: string;
+  is_online?: boolean;
+  last_seen_at?: string | null;
+  availability_status?: "free" | "busy" | "custom";
+  availability_text?: string | null;
+  availability_updated_at?: string | null;
+};
 
 export type RequirementAssignee = {
   user_id: string;
@@ -60,6 +68,42 @@ export type DriveUploadInit = {
   chunk_size: number;
   conflict?: string | null;
   existing_item?: DriveItem | null;
+};
+
+export type DriveManifestItem = {
+  id: string;
+  parent_id: string | null;
+  path: string;
+  name: string;
+  kind: "file" | "folder";
+  size_bytes: number | null;
+  mime: string | null;
+  sha256: string | null;
+  version_no: number | null;
+  updated_at: string;
+  deleted_at: string | null;
+  download_url: string | null;
+};
+
+export type DriveManifest = {
+  project_id: string;
+  project_slug: string;
+  cursor: string;
+  items: DriveManifestItem[];
+};
+
+export type DriveComment = {
+  id: string;
+  project_id: string;
+  folder_id: string | null;
+  author_nickname: string;
+  body: string;
+  status: "pending_llm" | "posted" | "draft_created" | "review_failed";
+  llm_kind: string | null;
+  llm_reason: string | null;
+  draft_requirement_id: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type Requirement = {
@@ -164,4 +208,31 @@ export type Delivery = {
   submitted_by_nickname: string;
   created_at: string;
   files: { name: string; size: number }[];
+};
+
+export type ScheduleEvent = {
+  id: string;
+  project_id: string | null;
+  requirement_id: string | null;
+  title: string;
+  description: string | null;
+  event_type: "custom" | "requirement_due";
+  start_at: string | null;
+  end_at: string;
+  participant_user_ids: string[];
+  created_by_nickname: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Reminder = {
+  id: string;
+  kind: string;
+  title: string;
+  project_slug: string | null;
+  requirement_id: string | null;
+  requirement_code: string | null;
+  due_at: string;
+  status: string;
+  minutes_until_due: number;
 };

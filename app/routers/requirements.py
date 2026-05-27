@@ -8,7 +8,14 @@ from sqlalchemy.orm import Session, selectinload
 from auth import current_user
 from db import get_db
 from models import Project, Requirement, RequirementAssignment, User
-from schemas import RequirementAssigneeOut, RequirementAssigneesUpdateIn, RequirementCreateIn, RequirementOut, StatusUpdateIn
+from schemas import (
+    RequirementAssigneeOut,
+    RequirementAssigneesUpdateIn,
+    RequirementCreateIn,
+    RequirementOut,
+    RequirementScheduleUpdateIn,
+    StatusUpdateIn,
+)
 from services.activity import log_activity
 from services.assignments import ensure_public_claim_assignment, replace_assignments, sorted_assignments, sync_legacy_lead
 from services.permissions import (
@@ -19,6 +26,7 @@ from services.permissions import (
     can_work_requirement,
 )
 from services.push_bus import bus
+from services.schedule import sync_requirement_due_event
 
 router = APIRouter(prefix="/api", tags=["requirements"])
 
@@ -90,6 +98,8 @@ def create_requirement(
             submitter_user_id=user.id,
             raw_description=payload.raw_description,
             priority=payload.priority,
+            start_at=payload.start_at,
+            due_at=payload.due_at,
             status="draft",
         )
         db.add(r)
@@ -104,6 +114,8 @@ def create_requirement(
                     actor=user,
                 )
             log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="created", detail={"code": code})
+            if r.due_at:
+                sync_requirement_due_event(db, r, user)
             db.commit()
             db.refresh(r)
             return _enrich(db, r)
@@ -298,7 +310,45 @@ async def update_assignees(
             "collaborator_user_ids": payload.collaborator_user_ids,
         },
     )
+    if r.due_at:
+        sync_requirement_due_event(db, r, user)
     db.commit()
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status, "assignees": len(assignments)})
     await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status, "assignees": len(assignments)})
     return [_assignee_out(a) for a in assignments]
+
+
+@router.patch("/requirements/{req_id}/schedule", response_model=RequirementOut)
+async def update_requirement_schedule(
+    req_id: str,
+    payload: RequirementScheduleUpdateIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> RequirementOut:
+    r = (
+        db.query(Requirement)
+        .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
+        .filter(Requirement.id == req_id)
+        .first()
+    )
+    if not r:
+        raise HTTPException(status_code=404, detail="requirement not found")
+    if r.submitter_user_id != user.id:
+        raise HTTPException(status_code=403, detail="only the requester can update DDL")
+    if r.status not in {"draft", "clarifying", "summary_ready", "ready", "claimed", "doing", "revision_requested"}:
+        raise HTTPException(status_code=400, detail=f"cannot update DDL from status {r.status}")
+    r.start_at = payload.start_at
+    r.due_at = payload.due_at
+    sync_requirement_due_event(db, r, user)
+    log_activity(
+        db,
+        requirement_id=r.id,
+        actor_nickname=user.nickname,
+        action="schedule_updated",
+        detail={"start_at": payload.start_at.isoformat() if payload.start_at else None, "due_at": payload.due_at.isoformat() if payload.due_at else None},
+    )
+    db.commit()
+    db.refresh(r)
+    await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status, "due_at": r.due_at.isoformat() if r.due_at else None})
+    await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status})
+    return _enrich(db, r)

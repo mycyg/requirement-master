@@ -118,6 +118,46 @@ class DriveOperationOut(BaseModel):
     items: list[DriveItemOut] = Field(default_factory=list)
 
 
+class DriveManifestItemOut(BaseModel):
+    id: str
+    parent_id: Optional[str]
+    path: str
+    name: str
+    kind: str
+    size_bytes: Optional[int] = None
+    mime: Optional[str] = None
+    sha256: Optional[str] = None
+    version_no: Optional[int] = None
+    updated_at: datetime
+    deleted_at: Optional[datetime] = None
+    download_url: Optional[str] = None
+
+
+class DriveManifestOut(BaseModel):
+    project_id: str
+    project_slug: str
+    cursor: datetime
+    items: list[DriveManifestItemOut]
+
+
+class DriveCommentCreateIn(BaseModel):
+    body: str = Field(min_length=1, max_length=10000)
+
+
+class DriveCommentOut(BaseModel):
+    id: str
+    project_id: str
+    folder_id: Optional[str]
+    author_nickname: str
+    body: str
+    status: str
+    llm_kind: Optional[str] = None
+    llm_reason: Optional[str] = None
+    draft_requirement_id: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
 # ---------- User ----------
 
 class UserOut(BaseModel):
@@ -125,6 +165,14 @@ class UserOut(BaseModel):
     nickname: str
     is_online: bool = False
     last_seen_at: Optional[datetime] = None
+    availability_status: str = "free"
+    availability_text: Optional[str] = None
+    availability_updated_at: Optional[datetime] = None
+
+
+class UserStatusUpdateIn(BaseModel):
+    availability_status: str = Field(pattern=r"^(free|busy|custom)$")
+    availability_text: Optional[str] = Field(default=None, max_length=128)
 
 
 # ---------- Requirement ----------
@@ -134,6 +182,8 @@ class RequirementCreateIn(BaseModel):
     priority: str = Field(default="normal", pattern=r"^(low|normal|high|urgent)$")
     lead_user_id: Optional[str] = None
     collaborator_user_ids: list[str] = Field(default_factory=list)
+    start_at: Optional[datetime] = None
+    due_at: Optional[datetime] = None
 
 
 class RequirementAssigneeOut(BaseModel):
@@ -146,6 +196,11 @@ class RequirementAssigneeOut(BaseModel):
 class RequirementAssigneesUpdateIn(BaseModel):
     lead_user_id: Optional[str] = None
     collaborator_user_ids: list[str] = Field(default_factory=list)
+
+
+class RequirementScheduleUpdateIn(BaseModel):
+    start_at: Optional[datetime] = None
+    due_at: Optional[datetime] = None
 
 
 class RequirementOut(BaseModel):
@@ -214,6 +269,56 @@ class CommentOut(BaseModel):
     author_nickname: str
     body: str
     created_at: datetime
+
+
+# ---------- Calendar ----------
+
+class ScheduleEventCreateIn(BaseModel):
+    title: str = Field(min_length=1, max_length=256)
+    description: Optional[str] = None
+    project_id: Optional[str] = None
+    requirement_id: Optional[str] = None
+    event_type: str = Field(default="custom", pattern=r"^(custom|requirement_due)$")
+    start_at: Optional[datetime] = None
+    end_at: datetime
+    participant_user_ids: list[str] = Field(default_factory=list)
+
+
+class ScheduleEventPatchIn(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    description: Optional[str] = None
+    project_id: Optional[str] = None
+    requirement_id: Optional[str] = None
+    start_at: Optional[datetime] = None
+    end_at: Optional[datetime] = None
+    participant_user_ids: Optional[list[str]] = None
+
+
+class ScheduleEventOut(BaseModel):
+    id: str
+    project_id: Optional[str]
+    requirement_id: Optional[str]
+    title: str
+    description: Optional[str]
+    event_type: str
+    start_at: Optional[datetime]
+    end_at: datetime
+    participant_user_ids: list[str] = Field(default_factory=list)
+    created_by_nickname: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReminderOut(BaseModel):
+    id: str
+    kind: str
+    title: str
+    project_slug: Optional[str] = None
+    requirement_id: Optional[str] = None
+    requirement_code: Optional[str] = None
+    due_at: datetime
+    status: str
+    minutes_until_due: int
 
 
 # ---------- Activity ----------

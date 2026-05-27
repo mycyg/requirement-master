@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
 import os
 import platform
 import queue
@@ -59,6 +60,15 @@ class Config:
     cookie_token: str = ""           # signed cookie (yqgl_id) value
     sync_root: str = str(DEFAULT_SYNC_ROOT)
     project_save_root: str = str(DEFAULT_SYNC_ROOT)
+    drive_sync_enabled: bool = False
+    drive_sync_mode: str = "download"  # download | two_way
+    drive_sync_root: str = str(DEFAULT_SYNC_ROOT / "项目网盘")
+    drive_sync_cursor_by_project: dict[str, str] = field(default_factory=dict)
+    propagate_local_deletes: bool = False
+    availability_status: str = "free"  # free | busy | custom
+    availability_text: str = ""
+    reminder_offsets_minutes: list[int] = field(default_factory=lambda: [1440, 120, 0])
+    known_reminders: dict[str, str] = field(default_factory=dict)
     paused: bool = False
     known_reqs: dict[str, str] = field(default_factory=dict)  # req_id -> code (avoid duplicate downloads)
     known_revision_requests: dict[str, str] = field(default_factory=dict)  # req_id -> updated_at marker
@@ -124,6 +134,12 @@ def sync_storage_fields(cfg: Config, source: str = "sync_root") -> Config:
         cfg.sync_root = cfg.project_save_root
     else:
         cfg.project_save_root = cfg.sync_root
+    if not cfg.drive_sync_root:
+        cfg.drive_sync_root = str(Path(cfg.project_save_root) / "项目网盘")
+    if cfg.drive_sync_mode not in {"download", "two_way"}:
+        cfg.drive_sync_mode = "download"
+    if cfg.availability_status not in {"free", "busy", "custom"}:
+        cfg.availability_status = "free"
     return cfg
 
 
@@ -229,6 +245,23 @@ class ServerClient:
             log(f"list_my_pending failed: {e}")
             return []
 
+    def list_projects(self) -> list[dict]:
+        r = self._client.get("/api/projects")
+        r.raise_for_status()
+        return r.json()
+
+    def update_availability(self, status: str, text: str = "") -> None:
+        r = self._client.put("/api/users/me/status", json={
+            "availability_status": status,
+            "availability_text": text or None,
+        })
+        r.raise_for_status()
+
+    def due_reminders(self) -> list[dict]:
+        r = self._client.get("/api/reminders/due")
+        r.raise_for_status()
+        return r.json()
+
     def list_all_with_statuses(self, statuses: list[str], *, assigned_to_me: bool = False) -> list[dict]:
         out: list[dict] = []
         for s in statuses:
@@ -258,6 +291,80 @@ class ServerClient:
                     f.write(chunk)
                     h.update(chunk)
         return h.hexdigest()
+
+    def drive_manifest(self, project_id: str) -> dict:
+        r = self._client.get(f"/api/projects/{project_id}/drive/manifest")
+        r.raise_for_status()
+        return r.json()
+
+    def drive_download_file(self, item_id: str, dest: Path) -> str:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        h = hashlib.sha256()
+        with self._client.stream("GET", f"/api/drive/files/{item_id}/download") as r:
+            r.raise_for_status()
+            with open(dest, "wb") as f:
+                for chunk in r.iter_bytes(chunk_size=128 * 1024):
+                    f.write(chunk)
+                    h.update(chunk)
+        return h.hexdigest()
+
+    def create_drive_folder(self, project_id: str, name: str, parent_id: str | None) -> dict:
+        r = self._client.post(
+            f"/api/projects/{project_id}/drive/folders",
+            json={"name": name, "parent_id": parent_id},
+        )
+        if r.status_code == 409:
+            listing = self._client.get(f"/api/projects/{project_id}/drive", params={"parent_id": parent_id})
+            listing.raise_for_status()
+            for item in listing.json().get("items", []):
+                if item.get("name") == name and item.get("kind") == "folder":
+                    return item
+        r.raise_for_status()
+        return r.json()
+
+    def upload_drive_file(self, project_id: str, path: Path, parent_id: str | None, *, conflict: str = "rename", existing_item_id: str | None = None) -> dict:
+        size = path.stat().st_size
+        chunk_size = 5 * 1024 * 1024
+        total_chunks = max(1, (size + chunk_size - 1) // chunk_size)
+        mime, _ = mimetypes.guess_type(str(path))
+        r = self._client.post(
+            f"/api/projects/{project_id}/drive/upload/init",
+            json={
+                "filename": path.name,
+                "total_size": size,
+                "total_chunks": total_chunks,
+                "mime": mime,
+                "parent_id": parent_id,
+                "conflict": conflict,
+                "existing_item_id": existing_item_id,
+            },
+        )
+        r.raise_for_status()
+        init = r.json()
+        upload_id = init.get("upload_id")
+        if not upload_id and init.get("conflict") == "name_exists":
+            return self.upload_drive_file(
+                project_id,
+                path,
+                parent_id,
+                conflict="rename",
+                existing_item_id=init.get("existing_item", {}).get("id"),
+            )
+        if not upload_id:
+            raise RuntimeError(f"drive upload init did not return upload_id: {init}")
+        chunk_size = int(init.get("chunk_size") or chunk_size)
+        with open(path, "rb") as f:
+            for idx in range(total_chunks):
+                buf = f.read(chunk_size)
+                cr = self._client.put(
+                    f"/api/projects/{project_id}/drive/upload/{upload_id}/chunk/{idx}",
+                    content=buf,
+                    headers={"Content-Type": "application/octet-stream"},
+                )
+                cr.raise_for_status()
+        r = self._client.post(f"/api/projects/{project_id}/drive/upload/{upload_id}/finalize")
+        r.raise_for_status()
+        return r.json()
 
     def ack_sync(self, req_id: str) -> None:
         try:
@@ -373,6 +480,167 @@ def sync_requirement(client: ServerClient, cfg: Config, req_id: str) -> Path:
     return target
 
 
+def file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            buf = f.read(1024 * 1024)
+            if not buf:
+                break
+            h.update(buf)
+    return h.hexdigest()
+
+
+def drive_state_path(project_root: Path) -> Path:
+    return project_root / ".yqgl-drive-state.json"
+
+
+def load_drive_state(project_root: Path) -> dict:
+    p = drive_state_path(project_root)
+    if not p.exists():
+        return {"items": {}, "paths": {}}
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        d.setdefault("items", {})
+        d.setdefault("paths", {})
+        return d
+    except Exception:
+        return {"items": {}, "paths": {}}
+
+
+def save_drive_state(project_root: Path, state: dict) -> None:
+    project_root.mkdir(parents=True, exist_ok=True)
+    drive_state_path(project_root).write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def safe_rel_path(path: str) -> Path:
+    parts = [sanitize(part) for part in path.replace("\\", "/").split("/") if part and part != "."]
+    return Path(*parts) if parts else Path()
+
+
+def move_to_trash(project_root: Path, rel: Path) -> None:
+    src = project_root / rel
+    if not src.exists():
+        return
+    trash = project_root / ".yqgl-trash" / f"{int(time.time())}" / rel
+    trash.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(trash))
+
+
+def ensure_remote_folder(client: ServerClient, project_id: str, folder_parts: list[str], state: dict) -> str | None:
+    parent_id: str | None = None
+    current_path: list[str] = []
+    for part in folder_parts:
+        current_path.append(part)
+        key = "/".join(current_path)
+        known_id = state.get("paths", {}).get(key)
+        item = state.get("items", {}).get(known_id or "")
+        if known_id and item and item.get("kind") == "folder":
+            parent_id = known_id
+            continue
+        created = client.create_drive_folder(project_id, part, parent_id)
+        parent_id = created["id"]
+        state.setdefault("paths", {})[key] = parent_id
+        state.setdefault("items", {})[parent_id] = {
+            "path": key,
+            "kind": "folder",
+            "sha256": None,
+            "version_no": None,
+            "updated_at": created.get("updated_at"),
+        }
+    return parent_id
+
+
+def sync_project_drive_once(client: ServerClient, cfg: Config, project: dict) -> None:
+    if not cfg.drive_sync_enabled:
+        return
+    manifest = client.drive_manifest(project["id"])
+    project_slug = sanitize(manifest.get("project_slug") or project.get("slug") or project["id"][:8])
+    project_root = Path(cfg.drive_sync_root) / project_slug
+    state = load_drive_state(project_root)
+    remote_by_path: dict[str, dict] = {}
+
+    for item in manifest.get("items", []):
+        rel = safe_rel_path(item.get("path") or item.get("name") or item["id"])
+        rel_key = rel.as_posix()
+        remote_by_path[rel_key] = item
+        state.setdefault("paths", {})[rel_key] = item["id"]
+        previous = state.setdefault("items", {}).get(item["id"], {})
+        local = project_root / rel
+        if item.get("deleted_at"):
+            move_to_trash(project_root, rel)
+            state["items"][item["id"]] = {**previous, **item}
+            continue
+        if item.get("kind") == "folder":
+            local.mkdir(parents=True, exist_ok=True)
+            state["items"][item["id"]] = {**previous, **item}
+            continue
+        local.parent.mkdir(parents=True, exist_ok=True)
+        remote_sha = item.get("sha256")
+        previous_sha = previous.get("sha256")
+        local_changed = local.exists() and previous_sha and file_sha256(local) != previous_sha
+        remote_changed = remote_sha and previous_sha and remote_sha != previous_sha
+        if local_changed and remote_changed:
+            conflict = local.with_name(f"{local.stem}.conflict-{int(time.time())}{local.suffix}")
+            shutil.copy2(local, conflict)
+        if (not local.exists()) or (remote_sha and file_sha256(local) != remote_sha):
+            got = client.drive_download_file(item["id"], local)
+            if remote_sha and got != remote_sha:
+                log(f"[warn] drive sha mismatch {local}: {got} vs {remote_sha}")
+        state["items"][item["id"]] = {**previous, **item}
+
+    if cfg.drive_sync_mode == "two_way":
+        for local in sorted(project_root.rglob("*")):
+            if not local.is_file():
+                continue
+            rel = local.relative_to(project_root)
+            rel_key = rel.as_posix()
+            if rel.parts and rel.parts[0] in {".yqgl-trash"}:
+                continue
+            if local.name == ".yqgl-drive-state.json":
+                continue
+            if local.stat().st_size <= 0:
+                continue
+            remote = remote_by_path.get(rel_key)
+            local_sha = file_sha256(local)
+            if remote and remote.get("sha256") == local_sha:
+                continue
+            parent_id = ensure_remote_folder(client, project["id"], [sanitize(p) for p in rel.parts[:-1]], state)
+            if remote and remote.get("id") in state.get("items", {}):
+                previous_sha = state["items"][remote["id"]].get("sha256")
+                if previous_sha and previous_sha == remote.get("sha256"):
+                    uploaded = client.upload_drive_file(project["id"], local, parent_id, conflict="replace", existing_item_id=remote["id"])
+                else:
+                    uploaded = client.upload_drive_file(project["id"], local, parent_id, conflict="rename")
+            elif not remote:
+                uploaded = client.upload_drive_file(project["id"], local, parent_id, conflict="rename")
+            else:
+                uploaded = remote
+            state.setdefault("paths", {})[rel_key] = uploaded["id"]
+            state.setdefault("items", {})[uploaded["id"]] = {
+                "path": rel_key,
+                "kind": "file",
+                "sha256": uploaded.get("sha256") or local_sha,
+                "version_no": uploaded.get("version_no"),
+                "updated_at": uploaded.get("updated_at"),
+            }
+
+    cfg.drive_sync_cursor_by_project[project["id"]] = manifest.get("cursor") or time.strftime("%Y-%m-%dT%H:%M:%S")
+    save_drive_state(project_root, state)
+    save_config(cfg)
+    log(f"drive synced {project_slug} ({cfg.drive_sync_mode})")
+
+
+def sync_all_project_drives(client: ServerClient, cfg: Config) -> None:
+    if not cfg.drive_sync_enabled:
+        return
+    for project in client.list_projects():
+        try:
+            sync_project_drive_once(client, cfg, project)
+        except Exception as e:
+            log(f"drive sync failed for {project.get('slug') or project.get('id')}: {e}")
+
+
 # ───────────────────────── deliver (zip + upload) ─────────────────────────
 
 EXCLUDE_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", ".DS_Store"}
@@ -409,7 +677,7 @@ def show_first_run_dialog(cfg: Config) -> bool:
     """Modal config dialog. Returns True if user saved, False if cancelled."""
     root = tk.Tk()
     root.title("需求管理大师 · 设置")
-    root.geometry("520x380")
+    root.geometry("620x620")
     root.attributes("-topmost", True)
 
     frm = ttk.Frame(root, padding=20)
@@ -418,6 +686,12 @@ def show_first_run_dialog(cfg: Config) -> bool:
     server_ip_var = tk.StringVar(value=cfg.server_ip)
     server_port_var = tk.StringVar(value=str(cfg.server_port))
     server_preview_var = tk.StringVar(value=cfg.server_url)
+    drive_enabled_var = tk.BooleanVar(value=cfg.drive_sync_enabled)
+    drive_mode_var = tk.StringVar(value=cfg.drive_sync_mode)
+    drive_root_var = tk.StringVar(value=cfg.drive_sync_root)
+    availability_var = tk.StringVar(value=cfg.availability_status)
+    availability_text_var = tk.StringVar(value=cfg.availability_text)
+    reminder_offsets_var = tk.StringVar(value=",".join(str(x) for x in cfg.reminder_offsets_minutes))
 
     def update_server_preview(*_: Any) -> None:
         try:
@@ -461,8 +735,39 @@ def show_first_run_dialog(cfg: Config) -> bool:
             e_root.insert(0, d)
     ttk.Button(frm, text="选择…", command=browse).grid(row=4, column=2, padx=4)
 
+    ttk.Label(frm, text="项目网盘同步").grid(row=6, column=0, sticky="w", pady=4)
+    ttk.Checkbutton(frm, text="开启自动同步", variable=drive_enabled_var).grid(row=6, column=1, sticky="w", pady=4)
+
+    ttk.Label(frm, text="同步模式").grid(row=7, column=0, sticky="w", pady=4)
+    mode_frm = ttk.Frame(frm)
+    mode_frm.grid(row=7, column=1, sticky="w", pady=4)
+    ttk.Radiobutton(mode_frm, text="单向下载", value="download", variable=drive_mode_var).pack(side="left")
+    ttk.Radiobutton(mode_frm, text="双向同步", value="two_way", variable=drive_mode_var).pack(side="left", padx=12)
+
+    ttk.Label(frm, text="网盘同步目录").grid(row=8, column=0, sticky="w", pady=4)
+    e_drive_root = ttk.Entry(frm, width=42, textvariable=drive_root_var)
+    e_drive_root.grid(row=8, column=1, sticky="we", pady=4)
+    def browse_drive():
+        d = filedialog.askdirectory(initialdir=drive_root_var.get() or ".")
+        if d:
+            drive_root_var.set(d)
+    ttk.Button(frm, text="选择…", command=browse_drive).grid(row=8, column=2, padx=4)
+
+    ttk.Label(frm, text="接单状态").grid(row=9, column=0, sticky="w", pady=4)
+    status_frm = ttk.Frame(frm)
+    status_frm.grid(row=9, column=1, sticky="w", pady=4)
+    ttk.Radiobutton(status_frm, text="空闲", value="free", variable=availability_var).pack(side="left")
+    ttk.Radiobutton(status_frm, text="忙碌", value="busy", variable=availability_var).pack(side="left", padx=12)
+    ttk.Radiobutton(status_frm, text="其他", value="custom", variable=availability_var).pack(side="left")
+
+    ttk.Label(frm, text="状态备注").grid(row=10, column=0, sticky="w", pady=4)
+    ttk.Entry(frm, width=42, textvariable=availability_text_var).grid(row=10, column=1, sticky="we", pady=4)
+
+    ttk.Label(frm, text="DDL 提醒(分钟)").grid(row=11, column=0, sticky="w", pady=4)
+    ttk.Entry(frm, width=42, textvariable=reminder_offsets_var).grid(row=11, column=1, sticky="we", pady=4)
+
     status_lbl = ttk.Label(frm, text="", foreground="red")
-    status_lbl.grid(row=6, column=0, columnspan=3, sticky="w", pady=6)
+    status_lbl.grid(row=12, column=0, columnspan=3, sticky="w", pady=6)
 
     result = {"ok": False}
 
@@ -475,8 +780,14 @@ def show_first_run_dialog(cfg: Config) -> bool:
             return
         nick = e_nick.get().strip()
         root_dir = e_root.get().strip()
-        if not nick or not root_dir:
+        drive_root = drive_root_var.get().strip()
+        if not nick or not root_dir or not drive_root:
             status_lbl.config(text="所有字段都必填")
+            return
+        try:
+            reminder_offsets = [int(x.strip()) for x in reminder_offsets_var.get().split(",") if x.strip()]
+        except ValueError:
+            status_lbl.config(text="DDL 提醒必须是逗号分隔的分钟数", foreground="red")
             return
         status_lbl.config(text="正在连接服务端…", foreground="black")
         root.update_idletasks()
@@ -503,8 +814,20 @@ def show_first_run_dialog(cfg: Config) -> bool:
         cfg.nickname = nick
         cfg.sync_root = root_dir
         cfg.project_save_root = root_dir
+        cfg.drive_sync_enabled = bool(drive_enabled_var.get())
+        cfg.drive_sync_mode = drive_mode_var.get() if drive_mode_var.get() in {"download", "two_way"} else "download"
+        cfg.drive_sync_root = drive_root
+        cfg.availability_status = availability_var.get() if availability_var.get() in {"free", "busy", "custom"} else "free"
+        cfg.availability_text = availability_text_var.get().strip()
+        cfg.reminder_offsets_minutes = reminder_offsets or [1440, 120, 0]
         cfg.cookie_token = cookie
         save_config(cfg)
+        try:
+            tmp_client = ServerClient(cfg)
+            tmp_client.update_availability(cfg.availability_status, cfg.availability_text)
+            tmp_client.close()
+        except Exception as ex:
+            log(f"status update after save failed: {ex}")
         result["ok"] = True
         root.destroy()
 
@@ -512,7 +835,7 @@ def show_first_run_dialog(cfg: Config) -> bool:
         root.destroy()
 
     btn_frm = ttk.Frame(frm)
-    btn_frm.grid(row=7, column=0, columnspan=3, pady=12, sticky="e")
+    btn_frm.grid(row=13, column=0, columnspan=3, pady=12, sticky="e")
     ttk.Button(btn_frm, text="取消", command=cancel).pack(side="right", padx=4)
     ttk.Button(btn_frm, text="保存", command=save).pack(side="right", padx=4)
 
@@ -572,12 +895,22 @@ class TrayApp:
         self.client = ServerClient(cfg)
         self.stop = threading.Event()
         self.event_thread: threading.Thread | None = None
+        self.drive_thread: threading.Thread | None = None
+        self.reminder_thread: threading.Thread | None = None
         self.icon: pystray.Icon | None = None
 
     def start(self) -> None:
         self.icon = pystray.Icon(APP_NAME, make_icon_image(), "需求管理大师", self._menu())
         self.event_thread = threading.Thread(target=self._sse_loop, daemon=True)
         self.event_thread.start()
+        self.drive_thread = threading.Thread(target=self._drive_sync_loop, daemon=True)
+        self.drive_thread.start()
+        self.reminder_thread = threading.Thread(target=self._reminder_loop, daemon=True)
+        self.reminder_thread.start()
+        try:
+            self.client.update_availability(self.cfg.availability_status, self.cfg.availability_text)
+        except Exception as e:
+            log(f"initial availability update failed: {e}")
         log("tray started")
         self.icon.run()
 
@@ -593,8 +926,13 @@ class TrayApp:
             pystray.MenuItem("打开项目保存位置", lambda _: open_folder(Path(self.cfg.sync_root))),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("立即同步所有就绪需求", lambda _: threading.Thread(target=self._catchup, daemon=True).start()),
+            pystray.MenuItem("立即同步项目网盘", lambda _: threading.Thread(target=self._drive_sync_once, daemon=True).start()),
             pystray.MenuItem("完成任务并上传…", lambda _: threading.Thread(target=self._deliver_flow, daemon=True).start()),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(lambda _: f"接单状态：{self._status_label()}",
+                             lambda _: threading.Thread(target=self._cycle_availability, daemon=True).start()),
+            pystray.MenuItem(lambda _: ("网盘同步：关" if not self.cfg.drive_sync_enabled else f"网盘同步：{'双向' if self.cfg.drive_sync_mode == 'two_way' else '单向'}"),
+                             self._toggle_drive_sync),
             pystray.MenuItem(lambda _: ("▶ 已暂停同步" if self.cfg.paused else "⏸ 暂停同步"),
                              self._toggle_pause),
             pystray.MenuItem("设置…", lambda _: threading.Thread(target=self._open_settings, daemon=True).start()),
@@ -625,10 +963,51 @@ class TrayApp:
         if self.icon: self.icon.update_menu()
         log(f"paused={self.cfg.paused}")
 
+    def _status_label(self) -> str:
+        if self.cfg.availability_status == "busy":
+            return self.cfg.availability_text or "忙碌"
+        if self.cfg.availability_status == "custom":
+            return self.cfg.availability_text or "其他"
+        return "空闲"
+
+    def _cycle_availability(self, *_: Any) -> None:
+        order = ["free", "busy", "custom"]
+        idx = order.index(self.cfg.availability_status) if self.cfg.availability_status in order else 0
+        self.cfg.availability_status = order[(idx + 1) % len(order)]
+        if self.cfg.availability_status == "free":
+            self.cfg.availability_text = ""
+        elif self.cfg.availability_status == "busy" and not self.cfg.availability_text:
+            self.cfg.availability_text = "忙碌"
+        elif self.cfg.availability_status == "custom" and not self.cfg.availability_text:
+            self.cfg.availability_text = "其他"
+        save_config(self.cfg)
+        try:
+            self.client.update_availability(self.cfg.availability_status, self.cfg.availability_text)
+        except Exception as e:
+            log(f"availability update failed: {e}")
+        if self.icon: self.icon.update_menu()
+
+    def _toggle_drive_sync(self, *_: Any) -> None:
+        if not self.cfg.drive_sync_enabled:
+            self.cfg.drive_sync_enabled = True
+            self.cfg.drive_sync_mode = "download"
+        elif self.cfg.drive_sync_mode == "download":
+            self.cfg.drive_sync_mode = "two_way"
+        else:
+            self.cfg.drive_sync_enabled = False
+            self.cfg.drive_sync_mode = "download"
+        save_config(self.cfg)
+        if self.icon: self.icon.update_menu()
+        log(f"drive sync enabled={self.cfg.drive_sync_enabled} mode={self.cfg.drive_sync_mode}")
+
     def _open_settings(self) -> None:
         if show_first_run_dialog(self.cfg):
             self.client.close()
             self.client = ServerClient(self.cfg)
+            try:
+                self.client.update_availability(self.cfg.availability_status, self.cfg.availability_text)
+            except Exception as e:
+                log(f"availability update after settings failed: {e}")
             log("config updated; SSE will reconnect next cycle")
 
     # ─── SSE handler ───
@@ -637,6 +1016,66 @@ class TrayApp:
         try: self._catchup()
         except Exception as e: log(f"initial catchup err: {e}")
         self.client.stream_events(self._on_event, self.stop)
+
+    def _drive_sync_loop(self) -> None:
+        while not self.stop.is_set():
+            if self.cfg.drive_sync_enabled and not self.cfg.paused:
+                self._drive_sync_once()
+            self.stop.wait(45)
+
+    def _drive_sync_once(self) -> None:
+        if not self.cfg.drive_sync_enabled:
+            return
+        try:
+            sync_all_project_drives(self.client, self.cfg)
+        except Exception as e:
+            log(f"drive sync loop failed: {e}")
+
+    def _reminder_loop(self) -> None:
+        while not self.stop.is_set():
+            if not self.cfg.paused:
+                self._check_reminders()
+            self.stop.wait(60)
+
+    def _check_reminders(self) -> None:
+        try:
+            items = self.client.due_reminders()
+        except Exception as e:
+            log(f"reminder check failed: {e}")
+            return
+        changed = False
+        today = time.strftime("%Y-%m-%d")
+        for item in items:
+            due_at = item.get("due_at") or ""
+            minutes = int(item.get("minutes_until_due") or 0)
+            if minutes < 0:
+                bucket = f"overdue:{today}"
+            elif minutes <= 0:
+                bucket = "due_now"
+            elif minutes <= 120:
+                bucket = "due_2h"
+            elif minutes <= 1440:
+                bucket = "due_24h"
+            else:
+                continue
+            key = f"{item.get('requirement_id')}:{bucket}"
+            if self.cfg.known_reminders.get(key) == due_at:
+                continue
+            self.cfg.known_reminders[key] = due_at
+            changed = True
+            code = item.get("requirement_code") or ""
+            if bucket.startswith("overdue"):
+                title = "DDL 已逾期"
+                msg = f"{code} · {item.get('title','')}\n已经超时 {abs(minutes)} 分钟。"
+            elif bucket == "due_now":
+                title = "DDL 到点了"
+                msg = f"{code} · {item.get('title','')}\n现在就到期。"
+            else:
+                title = "DDL 快到了"
+                msg = f"{code} · {item.get('title','')}\n还有 {minutes} 分钟。"
+            notify(title, msg)
+        if changed:
+            save_config(self.cfg)
 
     def _on_event(self, event: str, data: Any) -> None:
         log(f"sse event: {event} {str(data)[:120]}")
@@ -659,6 +1098,9 @@ class TrayApp:
                 save_config(self.cfg)
             notify("需要返工",
                    f"{data.get('requested_by','?')}：{data.get('reason_preview','')}")
+        elif event == "drive.changed" and isinstance(data, dict):
+            if self.cfg.drive_sync_enabled:
+                threading.Thread(target=self._drive_sync_once, daemon=True).start()
 
     def _catchup(self) -> None:
         reqs = self.client.list_my_pending()

@@ -13,6 +13,14 @@ REQUIREMENT_COLUMNS: dict[str, str] = {
     "claimed_by_user_id": "VARCHAR(32)",
     "claimed_by_nickname": "VARCHAR(64)",
     "delivery_doc_ready_at": "DATETIME",
+    "start_at": "DATETIME",
+    "due_at": "DATETIME",
+}
+
+USER_COLUMNS: dict[str, str] = {
+    "availability_status": "VARCHAR(16) DEFAULT 'free' NOT NULL",
+    "availability_text": "VARCHAR(128)",
+    "availability_updated_at": "DATETIME",
 }
 
 
@@ -28,6 +36,15 @@ def ensure_runtime_schema(engine: Engine) -> None:
         for name, ddl in REQUIREMENT_COLUMNS.items():
             if name not in existing:
                 conn.execute(text(f"ALTER TABLE requirements ADD COLUMN {name} {ddl}"))
+
+        user_existing = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info(users)")).fetchall()
+        }
+        for name, ddl in USER_COLUMNS.items():
+            if name not in user_existing:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {ddl}"))
+        conn.execute(text("UPDATE users SET availability_status = 'free' WHERE availability_status IS NULL"))
 
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_requirements_claimed_by_user_id "
@@ -174,4 +191,84 @@ def ensure_runtime_schema(engine: Engine) -> None:
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_project_drive_operations_actor_user_id "
             "ON project_drive_operations (actor_user_id)"
+        ))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS project_drive_comments (
+                id VARCHAR(32) PRIMARY KEY,
+                project_id VARCHAR(32) NOT NULL,
+                folder_id VARCHAR(32),
+                author_user_id VARCHAR(32) NOT NULL,
+                author_nickname VARCHAR(64) NOT NULL,
+                body TEXT NOT NULL,
+                status VARCHAR(32) DEFAULT 'pending_llm' NOT NULL,
+                llm_kind VARCHAR(32),
+                llm_reason TEXT,
+                draft_requirement_id VARCHAR(32),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE,
+                FOREIGN KEY(folder_id) REFERENCES project_drive_items (id) ON DELETE CASCADE,
+                FOREIGN KEY(author_user_id) REFERENCES users (id),
+                FOREIGN KEY(draft_requirement_id) REFERENCES requirements (id)
+            )
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_project_drive_comments_project_id "
+            "ON project_drive_comments (project_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_project_drive_comments_folder_id "
+            "ON project_drive_comments (folder_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_project_drive_comments_author_user_id "
+            "ON project_drive_comments (author_user_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_project_drive_comments_status "
+            "ON project_drive_comments (status)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_project_drive_comments_draft_requirement_id "
+            "ON project_drive_comments (draft_requirement_id)"
+        ))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS schedule_events (
+                id VARCHAR(32) PRIMARY KEY,
+                project_id VARCHAR(32),
+                requirement_id VARCHAR(32),
+                created_by_user_id VARCHAR(32) NOT NULL,
+                title VARCHAR(256) NOT NULL,
+                description TEXT,
+                event_type VARCHAR(32) DEFAULT 'custom' NOT NULL,
+                start_at DATETIME,
+                end_at DATETIME NOT NULL,
+                participant_user_ids_json TEXT DEFAULT '[]' NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE,
+                FOREIGN KEY(requirement_id) REFERENCES requirements (id) ON DELETE CASCADE,
+                FOREIGN KEY(created_by_user_id) REFERENCES users (id)
+            )
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_schedule_events_project_id "
+            "ON schedule_events (project_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_schedule_events_requirement_id "
+            "ON schedule_events (requirement_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_schedule_events_created_by_user_id "
+            "ON schedule_events (created_by_user_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_schedule_events_event_type "
+            "ON schedule_events (event_type)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_schedule_events_end_at "
+            "ON schedule_events (end_at)"
         ))

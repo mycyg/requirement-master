@@ -4,6 +4,7 @@ import {
   Activity,
   ArrowLeft,
   Bot,
+  CalendarClock,
   ClipboardCheck,
   FileText,
   MessageSquare,
@@ -98,6 +99,12 @@ export function RequirementDetail() {
   const canManageAssignees = !!me && me.nickname === req.submitter_nickname && ASSIGNEE_MANAGE_STATUSES.has(currentStatus);
   const mustKeepLead = ["claimed", "doing", "revision_requested"].includes(currentStatus);
   const selectedUsers = assignees.map((a) => ({ id: a.user_id, nickname: a.nickname }));
+  const due = req.due_at ? new Date(req.due_at + (req.due_at.endsWith("Z") ? "" : "Z")) : null;
+  const dueTone = due && due.getTime() < Date.now()
+    ? "border-red-200 bg-red-50 text-red-700"
+    : due && due.toDateString() === new Date().toDateString()
+      ? "border-[#e0c895] bg-[#fff6dc] text-[#8a5d10]"
+      : "border-[#bdd2b7] bg-[#f1f7ed] text-[#4e7146]";
 
   const openManage = () => {
     setManageLeadUserId(lead?.user_id ?? null);
@@ -169,6 +176,12 @@ export function RequirementDetail() {
             )}
             <span>·</span>
             <span>{new Date(req.created_at + "Z").toLocaleString("zh-CN")}</span>
+          </div>
+          <div className="mt-3">
+            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${dueTone}`}>
+              <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
+              {due ? `DDL ${due.toLocaleString("zh-CN", { hour12: false })}` : "还没写 DDL"}
+            </span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {assignees.length === 0 ? (

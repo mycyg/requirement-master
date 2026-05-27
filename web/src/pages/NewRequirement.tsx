@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { AlertCircle, ArrowRight, CheckCircle2, FileText, Paperclip } from "lucide-react";
+import { AlertCircle, ArrowRight, CalendarClock, CheckCircle2, FileText, Paperclip } from "lucide-react";
 import { api } from "@/lib/api";
 import { AssigneeSelector } from "@/components/AssigneeSelector";
 import { FileUpload } from "@/components/FileUpload";
@@ -14,6 +14,8 @@ export function NewRequirement() {
   const [priority, setPriority] = useState("normal");
   const [leadUserId, setLeadUserId] = useState<string | null>(null);
   const [collaboratorUserIds, setCollaboratorUserIds] = useState<string[]>([]);
+  const [startAt, setStartAt] = useState("");
+  const [dueAt, setDueAt] = useState("");
   const [reqId, setReqId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [busy, setBusy] = useState(false);
@@ -21,6 +23,10 @@ export function NewRequirement() {
 
   const createDraft = async () => {
     if (!projectId || !desc.trim()) return;
+    if (!dueAt) {
+      setErr("先给它一个 DDL，不然这需求会在宇宙里自由漂浮。");
+      return;
+    }
     setBusy(true); setErr(null);
     try {
       const r = await api.createRequirement(projectId, {
@@ -28,6 +34,8 @@ export function NewRequirement() {
         priority,
         lead_user_id: leadUserId,
         collaborator_user_ids: collaboratorUserIds,
+        start_at: startAt ? new Date(startAt).toISOString() : null,
+        due_at: dueAt ? new Date(dueAt).toISOString() : null,
       });
       setReqId(r.id);
     } catch (e: any) {
@@ -83,10 +91,39 @@ export function NewRequirement() {
           />
         </div>
 
+        <div className="paper-panel mt-5 p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-stone-900">
+            <CalendarClock className="h-4 w-4 text-stone-500" aria-hidden="true" />
+            日程与 DDL
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-xs font-medium text-stone-500">预计开始（可选）</span>
+              <input
+                className="field mt-1"
+                type="datetime-local"
+                value={startAt}
+                disabled={!!reqId}
+                onChange={(e) => setStartAt(e.target.value)}
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs font-medium text-stone-500">DDL（必填）</span>
+              <input
+                className="field mt-1"
+                type="datetime-local"
+                value={dueAt}
+                disabled={!!reqId}
+                onChange={(e) => setDueAt(e.target.value)}
+              />
+            </label>
+          </div>
+        </div>
+
         {!reqId && (
           <button
             className="button-primary mt-5 w-full sm:w-auto"
-            disabled={busy || !desc.trim()}
+            disabled={busy || !desc.trim() || !dueAt}
             onClick={createDraft}
           >
             {busy ? "创建中..." : "下一步：上传附件"}

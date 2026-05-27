@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from auth import current_user
 from config import settings
 from db import SessionLocal, get_db
-from models import Delivery, Requirement, User
+from models import Attachment, Delivery, Requirement, User
 from services.activity import log_activity
 from services.auto_agent import auto_process
 from services.push_bus import bus
@@ -78,8 +78,20 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
     """Background task. On success → wrap as Delivery, status=delivered. On failure → status=ready."""
     workdir = _workdir(req_id)
     try:
+        db_inputs = SessionLocal()
+        try:
+            attachments = (
+                db_inputs.query(Attachment)
+                .filter(Attachment.requirement_id == req_id)
+                .order_by(Attachment.created_at)
+                .all()
+            )
+            input_files = [(a.filename, Path(a.storage_path)) for a in attachments]
+        finally:
+            db_inputs.close()
         outcome = await auto_process(
             req_id=req_id, req_title=title, summary_md=summary_md, workdir=workdir,
+            input_files=input_files,
         )
     except Exception as e:
         await _mark_auto_failed(req_id, actor, title, f"{type(e).__name__}: {e}")
@@ -102,11 +114,12 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
             sha = hashlib.sha256()
             file_count = 0
             with zipfile.ZipFile(pkg_path, "w", zipfile.ZIP_DEFLATED) as z:
-                for p in sorted(workdir.rglob("*")):
+                output_root = workdir / "outputs"
+                for p in sorted(output_root.rglob("*") if output_root.exists() else []):
                     if any(part in EXCLUDE_DIRS for part in p.parts):
                         continue
                     if p.is_file():
-                        z.write(p, p.relative_to(workdir))
+                        z.write(p, p.relative_to(output_root))
                         sha.update(p.read_bytes())
                         file_count += 1
             size = pkg_path.stat().st_size

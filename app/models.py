@@ -30,6 +30,9 @@ class User(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
     nickname: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     cookie_token: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    availability_status: Mapped[str] = mapped_column(String(16), default="free", nullable=False)
+    availability_text: Mapped[Optional[str]] = mapped_column(String(128))
+    availability_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
 class Project(Base, TimestampMixin):
@@ -106,6 +109,45 @@ class ProjectDriveOperation(Base, TimestampMixin):
 
     project: Mapped[Project] = relationship()
     actor: Mapped[User] = relationship()
+
+
+class ProjectDriveComment(Base, TimestampMixin):
+    __tablename__ = "project_drive_comments"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    folder_id: Mapped[Optional[str]] = mapped_column(ForeignKey("project_drive_items.id", ondelete="CASCADE"), index=True)
+    author_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    author_nickname: Mapped[str] = mapped_column(String(64), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending_llm", nullable=False, index=True)
+    llm_kind: Mapped[Optional[str]] = mapped_column(String(32))
+    llm_reason: Mapped[Optional[str]] = mapped_column(Text)
+    draft_requirement_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirements.id"), index=True)
+
+    project: Mapped[Project] = relationship()
+    folder: Mapped[Optional[ProjectDriveItem]] = relationship()
+    author: Mapped[User] = relationship()
+    draft_requirement: Mapped[Optional[Requirement]] = relationship()
+
+
+class ScheduleEvent(Base, TimestampMixin):
+    __tablename__ = "schedule_events"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    project_id: Mapped[Optional[str]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    requirement_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirements.id", ondelete="CASCADE"), index=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    event_type: Mapped[str] = mapped_column(String(32), default="custom", nullable=False, index=True)
+    start_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    end_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    participant_user_ids_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+
+    project: Mapped[Optional[Project]] = relationship()
+    requirement: Mapped[Optional[Requirement]] = relationship()
+    created_by: Mapped[User] = relationship()
 
 
 class Requirement(Base, TimestampMixin):

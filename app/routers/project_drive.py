@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import json
 import os
 import shutil
@@ -21,22 +22,28 @@ from sqlalchemy.orm import Session
 from auth import current_user
 from config import settings
 from db import get_db
-from models import Project, ProjectDriveItem, ProjectDriveOperation, ProjectDriveVersion, User
+from models import Project, ProjectDriveComment, ProjectDriveItem, ProjectDriveOperation, ProjectDriveVersion, Requirement, User
 from schemas import (
     DriveBreadcrumbOut,
     DriveBulkIn,
     DriveChunkInitIn,
     DriveChunkInitOut,
+    DriveCommentCreateIn,
+    DriveCommentOut,
     DriveFolderCreateIn,
     DriveItemOut,
     DriveItemPatchIn,
     DriveListOut,
+    DriveManifestItemOut,
+    DriveManifestOut,
     DriveOperationOut,
     DrivePasteIn,
     DrivePreviewOut,
     DriveTreeNodeOut,
 )
+from services.drive_comment_agent import classify_drive_comment
 from services.file_parser import is_parseable, parse_file
+from services.push_bus import bus
 
 router = APIRouter(prefix="/api", tags=["project-drive"])
 
@@ -112,6 +119,73 @@ def _item_out(db: Session, item: ProjectDriveItem) -> DriveItemOut:
         updated_at=item.updated_at,
         deleted_at=item.deleted_at,
     )
+
+
+def _comment_out(comment: ProjectDriveComment) -> DriveCommentOut:
+    return DriveCommentOut(
+        id=comment.id,
+        project_id=comment.project_id,
+        folder_id=comment.folder_id,
+        author_nickname=comment.author_nickname,
+        body=comment.body,
+        status=comment.status,
+        llm_kind=comment.llm_kind,
+        llm_reason=comment.llm_reason,
+        draft_requirement_id=comment.draft_requirement_id,
+        created_at=comment.created_at,
+        updated_at=comment.updated_at,
+    )
+
+
+def _folder_path(db: Session, project_id: str, folder_id: str | None) -> str:
+    if not folder_id:
+        return "项目网盘根目录"
+    names: list[str] = []
+    cursor = _require_folder(db, project_id, folder_id)
+    while cursor:
+        names.append(cursor.name)
+        cursor = _require_item(db, cursor.parent_id) if cursor.parent_id else None
+    return "/".join(reversed(names))
+
+
+def _item_path(db: Session, item: ProjectDriveItem) -> str:
+    names = [item.name]
+    cursor = _require_item(db, item.parent_id, include_deleted=True) if item.parent_id else None
+    while cursor:
+        names.append(cursor.name)
+        cursor = _require_item(db, cursor.parent_id, include_deleted=True) if cursor.parent_id else None
+    return "/".join(reversed(names))
+
+
+def _drive_manifest_item(db: Session, item: ProjectDriveItem) -> DriveManifestItemOut:
+    version = _current_version(db, item)
+    return DriveManifestItemOut(
+        id=item.id,
+        parent_id=item.parent_id,
+        path=_item_path(db, item),
+        name=item.name,
+        kind=item.kind,
+        size_bytes=version.size_bytes if version else None,
+        mime=version.mime if version else None,
+        sha256=version.sha256 if version else None,
+        version_no=version.version_no if version else None,
+        updated_at=item.updated_at,
+        deleted_at=item.deleted_at,
+        download_url=f"/api/drive/files/{item.id}/download" if item.kind == "file" and not item.deleted_at else None,
+    )
+
+
+def _publish_drive_changed(project_id: str, item_ids: list[str] | None = None) -> None:
+    data = {"project_id": project_id, "item_ids": item_ids or [], "changed_at": datetime.utcnow().isoformat()}
+    try:
+        from anyio import from_thread
+        from_thread.run(bus.publish, "all", "drive.changed", data)
+    except Exception:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(bus.publish("all", "drive.changed", data))
+        except Exception:
+            pass
 
 
 def _active_sibling(
@@ -365,6 +439,49 @@ def drive_tree(project_id: str, db: Session = Depends(get_db), _: User = Depends
     return roots
 
 
+@router.get("/projects/{project_id}/drive/manifest", response_model=DriveManifestOut)
+def drive_manifest(project_id: str, db: Session = Depends(get_db), _: User = Depends(current_user)) -> DriveManifestOut:
+    project = _require_project(db, project_id)
+    rows = (
+        db.query(ProjectDriveItem)
+        .filter(ProjectDriveItem.project_id == project_id)
+        .order_by(ProjectDriveItem.parent_id, ProjectDriveItem.name)
+        .all()
+    )
+    return DriveManifestOut(
+        project_id=project_id,
+        project_slug=project.slug,
+        cursor=datetime.utcnow(),
+        items=[_drive_manifest_item(db, item) for item in rows],
+    )
+
+
+@router.get("/projects/{project_id}/drive/changes", response_model=DriveManifestOut)
+def drive_changes(
+    project_id: str,
+    since: datetime = Query(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(current_user),
+) -> DriveManifestOut:
+    project = _require_project(db, project_id)
+    since_naive = since.replace(tzinfo=None) if since.tzinfo else since
+    rows = (
+        db.query(ProjectDriveItem)
+        .filter(
+            ProjectDriveItem.project_id == project_id,
+            or_(ProjectDriveItem.updated_at > since_naive, ProjectDriveItem.deleted_at > since_naive),
+        )
+        .order_by(ProjectDriveItem.updated_at.asc())
+        .all()
+    )
+    return DriveManifestOut(
+        project_id=project_id,
+        project_slug=project.slug,
+        cursor=datetime.utcnow(),
+        items=[_drive_manifest_item(db, item) for item in rows],
+    )
+
+
 @router.post("/projects/{project_id}/drive/folders", response_model=DriveItemOut)
 def create_folder(
     project_id: str,
@@ -390,6 +507,7 @@ def create_folder(
     _record_op(db, project_id, user, "create", {"item_ids": [item.id]})
     db.commit()
     db.refresh(item)
+    _publish_drive_changed(project_id, [item.id])
     return _item_out(db, item)
 
 
@@ -580,6 +698,7 @@ def finalize_drive_upload(
     db.commit()
     db.refresh(item)
     shutil.rmtree(pdir, ignore_errors=True)
+    _publish_drive_changed(project_id, [item.id])
     return _item_out(db, item)
 
 
@@ -720,6 +839,7 @@ def patch_drive_item(
     _record_op(db, item.project_id, user, "patch", changed)
     db.commit()
     db.refresh(item)
+    _publish_drive_changed(item.project_id, [item.id])
     return _item_out(db, item)
 
 
@@ -739,6 +859,7 @@ def paste_drive_items(
         copied = [_copy_item(db, item, payload.target_parent_id, user) for item in items]
         op = _record_op(db, project_id, user, "paste_copy", {"item_ids": [i.id for i in copied]})
         db.commit()
+        _publish_drive_changed(project_id, [i.id for i in copied])
         return DriveOperationOut(operation_id=op.id, items=[_item_out(db, i) for i in copied])
 
     old_parents: dict[str, str | None] = {}
@@ -752,6 +873,7 @@ def paste_drive_items(
         item.updated_at = datetime.utcnow()
     op = _record_op(db, project_id, user, "paste_cut", {"old_parents": old_parents})
     db.commit()
+    _publish_drive_changed(project_id, [i.id for i in items])
     return DriveOperationOut(operation_id=op.id, items=[_item_out(db, i) for i in items])
 
 
@@ -766,6 +888,7 @@ def copy_one_drive_item(
     copied = _copy_item(db, item, target_parent_id, user)
     op = _record_op(db, item.project_id, user, "paste_copy", {"item_ids": [copied.id]})
     db.commit()
+    _publish_drive_changed(item.project_id, [copied.id])
     return DriveOperationOut(operation_id=op.id, items=[_item_out(db, copied)])
 
 
@@ -788,6 +911,7 @@ def cut_one_drive_item(
     _record_op(db, item.project_id, user, "paste_cut", {"old_parents": {item.id: old_parent_id}})
     db.commit()
     db.refresh(item)
+    _publish_drive_changed(item.project_id, [item.id])
     return _item_out(db, item)
 
 
@@ -797,6 +921,7 @@ def delete_drive_item(item_id: str, db: Session = Depends(get_db), user: User = 
     _soft_delete_items(db, [item], user)
     op = _record_op(db, item.project_id, user, "delete", {"item_ids": [item.id]})
     db.commit()
+    _publish_drive_changed(item.project_id, [item.id])
     return DriveOperationOut(operation_id=op.id)
 
 
@@ -811,6 +936,7 @@ def bulk_delete_drive_items(payload: DriveBulkIn, db: Session = Depends(get_db),
     _soft_delete_items(db, items, user)
     op = _record_op(db, project_id, user, "delete", {"item_ids": [item.id for item in items]})
     db.commit()
+    _publish_drive_changed(project_id, [item.id for item in items])
     return DriveOperationOut(operation_id=op.id)
 
 
@@ -823,6 +949,7 @@ def restore_drive_item(item_id: str, db: Session = Depends(get_db), user: User =
     _record_op(db, item.project_id, user, "restore", {"item_ids": [item.id]})
     db.commit()
     db.refresh(item)
+    _publish_drive_changed(item.project_id, [item.id])
     return _item_out(db, item)
 
 
@@ -870,4 +997,85 @@ def undo_drive_operation(project_id: str, db: Session = Depends(get_db), user: U
         raise HTTPException(status_code=400, detail=f"operation cannot be undone: {op.op_type}")
     op.undone_at = datetime.utcnow()
     db.commit()
+    _publish_drive_changed(project_id, [])
     return DriveOperationOut(operation_id=op.id)
+
+
+@router.get("/projects/{project_id}/drive/folders/{folder_id}/comments", response_model=list[DriveCommentOut])
+def list_drive_comments(
+    project_id: str,
+    folder_id: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(current_user),
+) -> list[DriveCommentOut]:
+    _require_project(db, project_id)
+    folder_db_id = None if folder_id == "root" else folder_id
+    _require_folder(db, project_id, folder_db_id)
+    q = db.query(ProjectDriveComment).filter(ProjectDriveComment.project_id == project_id)
+    q = q.filter(ProjectDriveComment.folder_id.is_(None) if folder_db_id is None else ProjectDriveComment.folder_id == folder_db_id)
+    rows = q.order_by(ProjectDriveComment.created_at.desc()).limit(100).all()
+    return [_comment_out(row) for row in rows]
+
+
+@router.post("/projects/{project_id}/drive/folders/{folder_id}/comments", response_model=DriveCommentOut, status_code=201)
+async def create_drive_comment(
+    project_id: str,
+    folder_id: str,
+    payload: DriveCommentCreateIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> DriveCommentOut:
+    project = _require_project(db, project_id)
+    folder_db_id = None if folder_id == "root" else folder_id
+    _require_folder(db, project_id, folder_db_id)
+    body = payload.body.strip()
+    comment = ProjectDriveComment(
+        project_id=project_id,
+        folder_id=folder_db_id,
+        author_user_id=user.id,
+        author_nickname=user.nickname,
+        body=body,
+        status="pending_llm",
+    )
+    db.add(comment)
+    db.flush()
+    folder_path = _folder_path(db, project_id, folder_db_id)
+    try:
+        decision = await classify_drive_comment(project.name, folder_path, body)
+    except Exception as exc:
+        comment.status = "review_failed"
+        comment.llm_kind = "review_failed"
+        comment.llm_reason = str(exc)[:1000]
+        db.commit()
+        db.refresh(comment)
+        return _comment_out(comment)
+
+    comment.llm_kind = decision.kind
+    comment.llm_reason = decision.reason
+    if decision.kind == "requirement_change":
+        project.next_seq += 1
+        code = f"{project.slug.upper()}-{project.next_seq:03d}"
+        draft = Requirement(
+            code=code,
+            project_id=project.id,
+            submitter_user_id=user.id,
+            title=decision.title,
+            raw_description=decision.draft_description or body,
+            priority="normal",
+            status="draft",
+        )
+        db.add(draft)
+        db.flush()
+        comment.status = "draft_created"
+        comment.draft_requirement_id = draft.id
+    else:
+        comment.status = "posted"
+    db.commit()
+    db.refresh(comment)
+    await bus.publish("all", "drive.comment", {
+        "project_id": project_id,
+        "folder_id": folder_db_id,
+        "status": comment.status,
+        "draft_requirement_id": comment.draft_requirement_id,
+    })
+    return _comment_out(comment)

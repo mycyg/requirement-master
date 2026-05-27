@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   Bot,
+  CalendarClock,
   CheckCircle2,
   FileText,
   Paperclip,
@@ -272,6 +273,14 @@ export function Clarify() {
             ? <SummaryCard
                 key={parsedKey(activeParsed)}
                 parsed={activeParsed}
+                dueAt={req.due_at}
+                onSchedule={async (dueAt) => {
+                  await api.updateRequirementSchedule(reqId, {
+                    start_at: req.start_at,
+                    due_at: dueAt,
+                  });
+                  await refresh();
+                }}
                 onDeliver={async ({ tryAi }) => {
                   if (tryAi) {
                     await api.autoProcess(reqId);
@@ -455,8 +464,27 @@ function QuestionCard({ parsed, onAnswer }: { parsed: AgentParsed; onAnswer: (b:
   return null;
 }
 
-function SummaryCard({ parsed, onDeliver }: { parsed: AgentParsed; onDeliver: (o: { tryAi: boolean }) => Promise<void> }) {
+function toLocalInput(value: string | null | undefined): string {
+  if (!value) return "";
+  const d = new Date(value.endsWith("Z") ? value : `${value}Z`);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function SummaryCard({
+  parsed,
+  dueAt,
+  onSchedule,
+  onDeliver,
+}: {
+  parsed: AgentParsed;
+  dueAt?: string | null;
+  onSchedule: (dueAt: string) => Promise<void>;
+  onDeliver: (o: { tryAi: boolean }) => Promise<void>;
+}) {
   const [tryAi, setTryAi] = useState<boolean | null>(null);
+  const [ddl, setDdl] = useState(toLocalInput(dueAt));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   if (parsed.action !== "summarize") return null;
@@ -494,6 +522,22 @@ function SummaryCard({ parsed, onDeliver }: { parsed: AgentParsed; onDeliver: (o
 
       <pre className="mt-5 overflow-auto whitespace-pre-wrap rounded-lg border border-stone-200 bg-[#fffaf1] p-4 text-sm leading-relaxed text-stone-700">{p.summary_md}</pre>
 
+      <div className="paper-panel mt-5 p-4">
+        <label className="block">
+          <span className="flex items-center gap-2 text-sm font-semibold text-stone-900">
+            <CalendarClock className="h-4 w-4 text-stone-500" aria-hidden="true" />
+            投递 DDL
+          </span>
+          <input
+            className="field mt-2"
+            type="datetime-local"
+            value={ddl}
+            onChange={(e) => setDdl(e.target.value)}
+          />
+        </label>
+        <p className="mt-2 text-xs text-stone-500">没有 DDL 不能投递，防止需求变成一张长期饭票。</p>
+      </div>
+
       <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <label className="flex items-center gap-2 text-sm text-stone-700">
           <input
@@ -513,6 +557,11 @@ function SummaryCard({ parsed, onDeliver }: { parsed: AgentParsed; onDeliver: (o
             setBusy(true);
             setErr(null);
             try {
+              if (!ddl) {
+                setErr("先填 DDL，再投递。");
+                return;
+              }
+              await onSchedule(new Date(ddl).toISOString());
               await onDeliver({ tryAi: finalTryAi });
             } catch (e: any) {
               setErr(String(e));
