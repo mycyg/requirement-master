@@ -123,6 +123,7 @@
 | TTS | CosyVoice 3 0.5B · 3 zero-shot 音色 |
 | LLM | DeepSeek (Anthropic 兼容端点)，支持 thinking blocks + tool_use |
 | 客户端 | Python · pystray · pywebview · plyer · Pillow |
+| E2E | Playwright · Chromium |
 | 部署 | systemd · uv (Python 版本) · pip 清华源 |
 | 文件解析 | markitdown (微软出品，覆盖 PDF/Word/Excel/PPT/HTML/...) |
 
@@ -207,6 +208,27 @@ python scripts/smoke_m6.py     # submit + push
 python scripts/smoke_m8.py     # 人工 delivery + LLM 文档
 python scripts/smoke_m12.py    # AI 自动处理（受限文件工具，不执行 shell）
 ```
+
+### 浏览器 E2E
+
+```bash
+cd web
+npm install
+npx playwright install chromium
+npm run e2e
+```
+
+这条会自动起一个临时 FastAPI + Vite 测试环境，默认用 `127.0.0.1:18080` 和 `127.0.0.1:15173`，数据落到 `.e2e/` 临时目录，不碰正式库。端口撞车时可以自己挪：
+
+```bash
+# Bash / zsh
+YQGL_E2E_API_PORT=18081 YQGL_E2E_WEB_PORT=15174 npm run e2e
+
+# Windows PowerShell
+$env:YQGL_E2E_API_PORT=18081; $env:YQGL_E2E_WEB_PORT=15174; npm run e2e
+```
+
+当前浏览器 E2E 覆盖：昵称登录、在线接单人 + 空闲状态展示、DDL 必填、指定负责人、日程创建、项目网盘上传与 Markdown 预览、文件夹留言转需求草稿、设置弹窗 TTS 服务异常友好提示。2026-05-27 本机已跑通：Chromium `1 passed`，这回不是“脑内测试通过”，是真的让浏览器上班了。
 
 ## ASR / TTS 一些坑（社区参考）
 

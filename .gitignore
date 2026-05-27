@@ -22,6 +22,7 @@ client/src-tauri/gen/
 # Local data
 app/data/
 data/
+.e2e/
 *.db
 *.db-journal
 
@@ -44,3 +45,5 @@ Thumbs.db
 
 # Local dev artifacts
 _probe*.py
+web/test-results/
+web/playwright-report/
