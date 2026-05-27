@@ -24,6 +24,7 @@ from services.assignments import ensure_public_claim_assignment, sync_legacy_lea
 from services.delivery_doc import generate_doc, inspect_zip_entries, list_zip_files
 from services.permissions import can_work_requirement
 from services.push_bus import bus
+from services.workspaces import ensure_workspaces_for_assignments, sync_workspace_to_status
 
 router = APIRouter(prefix="/api", tags=["delivery-upload"])
 
@@ -229,6 +230,8 @@ async def finalize(
     db.add(d)
     r.status = "delivery_doc_pending"
     r.delivered_at = datetime.utcnow()
+    ensure_workspaces_for_assignments(db, r)
+    sync_workspace_to_status(db, r, user)
     log_activity(
         db, requirement_id=req_id, actor_nickname=user.nickname,
         action="status_changed", detail={"to": "delivery_doc_pending", "round": round_num, "files": file_count},

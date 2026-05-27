@@ -17,6 +17,8 @@ from routers import chat as chat_router
 from routers import comments as comments_router
 from routers import deliveries as deliveries_router
 from routers import delivery_upload as delivery_upload_router
+from routers import jobs as jobs_router
+from routers import meetings as meetings_router
 from routers import projects as projects_router
 from routers import project_drive as project_drive_router
 from routers import push as push_router
@@ -25,6 +27,7 @@ from routers import requirements as requirements_router
 from routers import sync as sync_router
 from routers import users as users_router
 from routers import voice as voice_router
+from routers import workspaces as workspaces_router
 from services.partial_uploads import cleanup_stale_partials
 from services.schema_migrations import ensure_runtime_schema
 
@@ -84,6 +87,9 @@ app.include_router(delivery_upload_router.router)
 app.include_router(users_router.router)
 app.include_router(calendar_router.router)
 app.include_router(reminders_router.router)
+app.include_router(jobs_router.router)
+app.include_router(workspaces_router.router)
+app.include_router(meetings_router.router)
 
 
 @app.get("/api/health")

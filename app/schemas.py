@@ -158,6 +158,22 @@ class DriveCommentOut(BaseModel):
     updated_at: datetime
 
 
+# ---------- Background jobs ----------
+
+class BackgroundJobOut(BaseModel):
+    id: str
+    kind: str
+    status: str
+    progress_percent: int
+    message: Optional[str] = None
+    result_ref: Optional[str] = None
+    error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+
 # ---------- User ----------
 
 class UserOut(BaseModel):
@@ -218,6 +234,8 @@ class RequirementOut(BaseModel):
     priority: str
     start_at: Optional[datetime]
     due_at: Optional[datetime]
+    source_meeting_id: Optional[str] = None
+    source_requirement_id: Optional[str] = None
     claimed_at: Optional[datetime]
     done_at: Optional[datetime]
     delivered_at: Optional[datetime]
@@ -231,6 +249,69 @@ class RequirementOut(BaseModel):
 
 class StatusUpdateIn(BaseModel):
     status: str = Field(pattern=r"^(draft|clarifying|summary_ready|ready|claimed|doing|ai_processing|delivery_doc_pending|delivered|revision_requested|accepted|cancelled)$")
+
+
+# ---------- Requirement workspaces ----------
+
+class WorkspaceItemCreateIn(BaseModel):
+    title: str = Field(min_length=1, max_length=256)
+    status: str = Field(default="todo", pattern=r"^(todo|doing|done)$")
+    sort_order: int = 0
+
+
+class WorkspaceItemPatchIn(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    status: Optional[str] = Field(default=None, pattern=r"^(todo|doing|done)$")
+    sort_order: Optional[int] = None
+
+
+class WorkspaceItemOut(BaseModel):
+    id: str
+    workspace_id: str
+    title: str
+    status: str
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProgressUpdateCreateIn(BaseModel):
+    body: str = Field(min_length=1, max_length=5000)
+    kind: str = Field(default="manual", pattern=r"^(manual|status|item|system)$")
+
+
+class ProgressUpdateOut(BaseModel):
+    id: str
+    requirement_id: str
+    workspace_id: Optional[str]
+    actor_nickname: str
+    kind: str
+    body: str
+    phase: Optional[str]
+    progress_percent: Optional[int]
+    created_at: datetime
+
+
+class WorkspacePatchIn(BaseModel):
+    phase: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    progress_percent: Optional[int] = Field(default=None, ge=0, le=100)
+    status_note: Optional[str] = Field(default=None, max_length=5000)
+    blocked_reason: Optional[str] = Field(default=None, max_length=5000)
+
+
+class RequirementWorkspaceOut(BaseModel):
+    id: str
+    requirement_id: str
+    user_id: str
+    nickname: str
+    phase: str
+    progress_percent: int
+    status_note: Optional[str]
+    blocked_reason: Optional[str]
+    items: list[WorkspaceItemOut] = Field(default_factory=list)
+    updates: list[ProgressUpdateOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
 
 
 # ---------- Attachment ----------
@@ -319,6 +400,63 @@ class ReminderOut(BaseModel):
     due_at: datetime
     status: str
     minutes_until_due: int
+    phase: Optional[str] = None
+    progress_percent: Optional[int] = None
+    blocked_reason: Optional[str] = None
+
+
+# ---------- Meetings ----------
+
+class MeetingChunkInitIn(BaseModel):
+    filename: str = Field(min_length=1, max_length=256)
+    total_size: int = Field(ge=1, le=1024 * 1024 * 1024)
+    total_chunks: int = Field(ge=1)
+    mime: Optional[str] = None
+    title: Optional[str] = Field(default=None, max_length=256)
+    requirement_id: Optional[str] = None
+
+
+class MeetingChunkInitOut(BaseModel):
+    upload_id: str
+    chunk_size: int
+
+
+class MeetingPatchIn(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    transcript_text: Optional[str] = None
+    minutes_md: Optional[str] = None
+
+
+class MeetingInsightOut(BaseModel):
+    id: str
+    meeting_id: str
+    kind: str
+    title: str
+    description: str
+    target_requirement_id: Optional[str]
+    confidence_reason: Optional[str]
+    status: str
+    created_requirement_id: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class MeetingOut(BaseModel):
+    id: str
+    project_id: str
+    requirement_id: Optional[str]
+    title: str
+    audio_filename: str
+    audio_mime: Optional[str]
+    audio_size_bytes: int
+    transcript_text: Optional[str]
+    minutes_md: Optional[str]
+    status: str
+    job_id: Optional[str]
+    uploaded_by_nickname: str
+    insights: list[MeetingInsightOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
 
 
 # ---------- Activity ----------

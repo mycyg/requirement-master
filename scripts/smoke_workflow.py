@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -285,6 +286,30 @@ def main() -> None:
             r = alice.post(f"/api/requirements/{assigned_id}/submit")
             expect(200, r.status_code, r.text)
 
+            r = alice.get(f"/api/requirements/{assigned_id}/workspaces")
+            expect(200, r.status_code, r.text)
+            workspaces = r.json()
+            assert {w["user_id"] for w in workspaces} == {bob_id, carl_id}, r.text
+            carl_workspace = next(w for w in workspaces if w["user_id"] == carl_id)
+            r = dana.get(f"/api/requirements/{assigned_id}/workspaces")
+            expect(403, r.status_code, r.text)
+            r = carl.patch(
+                f"/api/requirements/{assigned_id}/workspaces/me",
+                json={"phase": "Smoke doing", "progress_percent": 42, "status_note": "halfway", "blocked_reason": "waiting for smoke"},
+            )
+            expect(200, r.status_code, r.text)
+            assert r.json()["progress_percent"] == 42 and r.json()["blocked_reason"], r.text
+            r = carl.post(f"/api/requirements/{assigned_id}/workspaces/me/items", json={"title": "write smoke item"})
+            expect(201, r.status_code, r.text)
+            item_id = r.json()["id"]
+            r = carl.patch(f"/api/workspace-items/{item_id}", json={"status": "done"})
+            expect(200, r.status_code, r.text)
+            assert r.json()["status"] == "done", r.text
+            r = carl.post(f"/api/requirements/{assigned_id}/workspaces/me/updates", json={"body": "workspace smoke update"})
+            expect(201, r.status_code, r.text)
+            r = bob.patch(f"/api/workspace-items/{item_id}", json={"status": "todo"})
+            expect(403, r.status_code, r.text)
+
             for client in (bob, carl, dana):
                 r = client.get(f"/api/requirements/{assigned_id}")
                 expect(200, r.status_code, r.text)
@@ -317,15 +342,94 @@ def main() -> None:
             )
             expect(200, r.status_code, r.text)
             assert any(a["user_id"] == dana_id and a["role"] == "collaborator" for a in r.json()), r.text
+            r = alice.get(f"/api/requirements/{assigned_id}/workspaces")
+            expect(200, r.status_code, r.text)
+            assert {w["user_id"] for w in r.json()} == {bob_id, carl_id, dana_id}, r.text
             r = dana.post(
                 f"/api/requirements/{assigned_id}/delivery/init",
                 json={"filename": "dana.zip", "total_size": 1, "total_chunks": 1},
             )
             expect(200, r.status_code, r.text)
+            r = carl.get(f"/api/requirements/{assigned_id}/sync-manifest")
+            expect(200, r.status_code, r.text)
+            assert any(w["nickname"] == "carl" for w in r.json()["workspaces"]), r.text
 
             r = alice.get("/api/voice/voices")
             expect(200, r.status_code, r.text)
             assert "ready" in r.json(), r.text
+
+            meeting_body = "会议记录：需求补充，请增加 smoke 会议导出的按钮，并进入需求评估。".encode("utf-8")
+            r = alice.post(
+                f"/api/projects/{project_id}/meetings/upload/init",
+                json={
+                    "filename": "meeting.txt",
+                    "total_size": len(meeting_body),
+                    "total_chunks": 1,
+                    "mime": "text/plain",
+                    "title": "Smoke meeting",
+                },
+            )
+            expect(200, r.status_code, r.text)
+            meeting_upload_id = r.json()["upload_id"]
+            r = alice.put(
+                f"/api/projects/{project_id}/meetings/upload/{meeting_upload_id}/chunk/0",
+                content=meeting_body,
+                headers={"Content-Type": "application/octet-stream"},
+            )
+            expect(200, r.status_code, r.text)
+            r = alice.post(f"/api/projects/{project_id}/meetings/upload/{meeting_upload_id}/finalize")
+            expect(200, r.status_code, r.text)
+            meeting_id = r.json()["id"]
+            job_id = r.json()["job_id"]
+            for _ in range(20):
+                r = alice.get(f"/api/jobs/{job_id}")
+                expect(200, r.status_code, r.text)
+                if r.json()["status"] in {"succeeded", "failed"}:
+                    break
+                time.sleep(0.1)
+            assert r.json()["status"] == "succeeded", r.text
+            r = alice.get(f"/api/meetings/{meeting_id}")
+            expect(200, r.status_code, r.text)
+            meeting = r.json()
+            assert meeting["status"] == "ready" and meeting["minutes_md"], r.text
+            actionable = next(i for i in meeting["insights"] if i["kind"] in {"new_requirement", "requirement_change"})
+            r = alice.post(f"/api/meeting-insights/{actionable['id']}/confirm")
+            expect(200, r.status_code, r.text)
+            created_req_id = r.json()["created_requirement_id"]
+            assert created_req_id, r.text
+            r = alice.get(f"/api/requirements/{created_req_id}")
+            expect(200, r.status_code, r.text)
+            assert r.json()["source_meeting_id"] == meeting_id, r.text
+
+            normal_body = "会议记录：只是同步一下文件已经放到网盘。".encode("utf-8")
+            r = alice.post(
+                f"/api/projects/{project_id}/meetings/upload/init",
+                json={"filename": "normal.txt", "total_size": len(normal_body), "total_chunks": 1, "mime": "text/plain"},
+            )
+            expect(200, r.status_code, r.text)
+            normal_upload_id = r.json()["upload_id"]
+            r = alice.put(
+                f"/api/projects/{project_id}/meetings/upload/{normal_upload_id}/chunk/0",
+                content=normal_body,
+                headers={"Content-Type": "application/octet-stream"},
+            )
+            expect(200, r.status_code, r.text)
+            r = alice.post(f"/api/projects/{project_id}/meetings/upload/{normal_upload_id}/finalize")
+            expect(200, r.status_code, r.text)
+            normal_meeting_id = r.json()["id"]
+            normal_job_id = r.json()["job_id"]
+            for _ in range(20):
+                r = alice.get(f"/api/jobs/{normal_job_id}")
+                expect(200, r.status_code, r.text)
+                if r.json()["status"] in {"succeeded", "failed"}:
+                    break
+                time.sleep(0.1)
+            r = alice.get(f"/api/meetings/{normal_meeting_id}")
+            expect(200, r.status_code, r.text)
+            normal_insight = r.json()["insights"][0]
+            r = alice.post(f"/api/meeting-insights/{normal_insight['id']}/dismiss")
+            expect(200, r.status_code, r.text)
+            assert r.json()["status"] == "dismissed", r.text
 
             r = alice.post(
                 f"/api/projects/{project_id}/requirements",

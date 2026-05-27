@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, CalendarClock, ClipboardList, HardDrive, Plus, UserRound, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarClock, ClipboardList, HardDrive, Mic2, Plus, UserRound, Users } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import { api } from "@/lib/api";
 import type { Project, Requirement } from "@/lib/types";
@@ -47,6 +47,10 @@ export function ProjectView() {
           <HardDrive className="h-4 w-4" aria-hidden="true" />
           网盘
         </Link>
+        <Link to={`/p/${project.id}/meetings`} className="tab-button border-transparent text-stone-500 hover:text-stone-950">
+          <Mic2 className="h-4 w-4" aria-hidden="true" />
+          会议
+        </Link>
       </div>
 
       <ul className="paper-surface mt-8 divide-y divide-stone-200/80 overflow-hidden">
@@ -56,6 +60,11 @@ export function ProjectView() {
         {reqs.map((r) => {
           const lead = r.assignees?.find((a) => a.role === "lead");
           const collaboratorCount = r.assignees?.filter((a) => a.role === "collaborator").length ?? 0;
+          const statusProgress: Record<string, number> = {
+            ready: 5, claimed: 15, doing: 45, ai_processing: 50, revision_requested: 60,
+            delivery_doc_pending: 85, delivered: 90, accepted: 100, cancelled: 0,
+          };
+          const progress = statusProgress[r.status] ?? 0;
           return (
           <li key={r.id} className="group px-4 py-4 transition hover:bg-white sm:px-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -81,6 +90,15 @@ export function ProjectView() {
                     {new Date(r.created_at + "Z").toLocaleString("zh-CN")}
                   </span>
                 </p>
+                <div className="mt-3 max-w-md">
+                  <div className="flex items-center justify-between text-[11px] text-stone-400">
+                    <span>进度</span>
+                    <span>{progress}%</span>
+                  </div>
+                  <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-stone-200">
+                    <div className="h-full rounded-full bg-stone-950" style={{ width: `${progress}%` }} />
+                  </div>
+                </div>
               </div>
               <div className="flex items-center justify-between gap-2 sm:justify-end">
                 <StatusBadge status={r.status} />

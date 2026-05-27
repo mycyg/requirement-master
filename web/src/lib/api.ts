@@ -1,7 +1,7 @@
 import type {
-  Activity, Attachment, Comment, Delivery, DriveComment, DriveItem, DriveList, DriveManifest, DrivePreview,
-  DriveTreeNode, DriveUploadInit, Identity, Project, Reminder, Requirement, RequirementAssignee, ScheduleEvent,
-  StoredChatMessage, UserOption,
+  Activity, Attachment, BackgroundJob, Comment, Delivery, DriveComment, DriveItem, DriveList, DriveManifest, DrivePreview,
+  DriveTreeNode, DriveUploadInit, Identity, Meeting, MeetingInsight, MeetingUploadInit, Project, Reminder, Requirement,
+  RequirementAssignee, RequirementWorkspace, ScheduleEvent, StoredChatMessage, UserOption, WorkspaceItem,
 } from "./types";
 
 const COMMON: RequestInit = { credentials: "include" };
@@ -247,4 +247,66 @@ export const api = {
     }),
   deleteCalendarEvent: (id: string) => json<{ ok: boolean }>(`/api/calendar/events/${id}`, { method: "DELETE" }),
   dueReminders: () => json<Reminder[]>("/api/reminders/due"),
+
+  getJob: (id: string) => json<BackgroundJob>(`/api/jobs/${id}`),
+
+  listRequirementWorkspaces: (reqId: string) => json<RequirementWorkspace[]>(`/api/requirements/${reqId}/workspaces`),
+  patchMyWorkspace: (reqId: string, input: {
+    phase?: string; progress_percent?: number; status_note?: string | null; blocked_reason?: string | null;
+  }) =>
+    json<RequirementWorkspace>(`/api/requirements/${reqId}/workspaces/me`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  createWorkspaceItem: (reqId: string, input: { title: string; status?: "todo" | "doing" | "done"; sort_order?: number }) =>
+    json<WorkspaceItem>(`/api/requirements/${reqId}/workspaces/me/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  patchWorkspaceItem: (itemId: string, input: Partial<{ title: string; status: "todo" | "doing" | "done"; sort_order: number }>) =>
+    json<WorkspaceItem>(`/api/workspace-items/${itemId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  deleteWorkspaceItem: (itemId: string) => json<{ ok: boolean }>(`/api/workspace-items/${itemId}`, { method: "DELETE" }),
+  addWorkspaceUpdate: (reqId: string, body: string) =>
+    json(`/api/requirements/${reqId}/workspaces/me/updates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body, kind: "manual" }),
+    }),
+
+  listMeetings: (projectId: string) => json<Meeting[]>(`/api/projects/${projectId}/meetings`),
+  initMeetingUpload: (projectId: string, input: {
+    filename: string; total_size: number; total_chunks: number; mime?: string | null; title?: string | null; requirement_id?: string | null;
+  }) =>
+    json<MeetingUploadInit>(`/api/projects/${projectId}/meetings/upload/init`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  uploadMeetingChunk: async (projectId: string, uploadId: string, idx: number, chunk: Blob) => {
+    const r = await fetch(`/api/projects/${projectId}/meetings/upload/${uploadId}/chunk/${idx}`, {
+      ...COMMON,
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: chunk,
+    });
+    if (!r.ok) throw new Error(`meeting chunk upload failed: ${r.status} ${await r.text()}`);
+    return r.json();
+  },
+  finalizeMeetingUpload: (projectId: string, uploadId: string) =>
+    json<Meeting>(`/api/projects/${projectId}/meetings/upload/${uploadId}/finalize`, { method: "POST" }),
+  getMeeting: (id: string) => json<Meeting>(`/api/meetings/${id}`),
+  patchMeeting: (id: string, input: Partial<{ title: string; transcript_text: string | null; minutes_md: string | null }>) =>
+    json<Meeting>(`/api/meetings/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  confirmMeetingInsight: (id: string) => json<MeetingInsight>(`/api/meeting-insights/${id}/confirm`, { method: "POST" }),
+  dismissMeetingInsight: (id: string) => json<MeetingInsight>(`/api/meeting-insights/${id}/dismiss`, { method: "POST" }),
 };

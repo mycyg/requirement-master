@@ -13,6 +13,7 @@ import { RequirementDetail } from "./pages/RequirementDetail";
 import { DriveHome } from "./pages/DriveHome";
 import { ProjectDrive } from "./pages/ProjectDrive";
 import { CalendarPage } from "./pages/CalendarPage";
+import { ProjectMeetings } from "./pages/ProjectMeetings";
 
 export function App() {
   const { me, identify, loading } = useIdentity();
@@ -105,6 +106,7 @@ export function App() {
             <Route path="/calendar" element={<CalendarPage />} />
             <Route path="/p/:id" element={<ProjectView />} />
             <Route path="/p/:id/drive" element={<ProjectDrive />} />
+            <Route path="/p/:id/meetings" element={<ProjectMeetings />} />
             <Route path="/p/:id/new" element={<NewRequirement />} />
             <Route path="/r/:id" element={<RequirementDetail />} />
             <Route path="/r/:id/clarify" element={<Clarify />} />

@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import {
   ArchiveRestore, CheckSquare, ChevronRight, Clipboard, Copy, Download, Eye, File, FileCode2,
   Folder, FolderInput, Grid3X3, HardDrive, List, Loader2, MessageSquare, MoreHorizontal, Plus, RotateCcw,
-  Scissors, Search, Send, Square, Trash2, UploadCloud, X,
+  Scissors, Search, Send, Square, Trash2, UploadCloud, X, Mic2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { DriveComment, DriveItem, DriveList, DrivePreview, DriveTreeNode, Project } from "@/lib/types";
@@ -386,6 +386,10 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
           <Link to={`/p/${project.id}/drive`} className="tab-button border-stone-950 text-stone-950">
             <HardDrive className="h-4 w-4" aria-hidden="true" />
             网盘
+          </Link>
+          <Link to={`/p/${project.id}/meetings`} className="tab-button border-transparent text-stone-500 hover:text-stone-950">
+            <Mic2 className="h-4 w-4" aria-hidden="true" />
+            会议
           </Link>
         </div>
       )}

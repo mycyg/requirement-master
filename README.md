@@ -39,6 +39,8 @@
 | "想指定谁干，别又公开喊麦" | 提需求时可指定负责人 + 多个协作者，还能看到谁在线，活人优先，别把锅甩给离线传说 |
 | "不知道谁现在有空，问一圈像钓鱼" | 在线列表升级成 **在线 + 空闲/忙碌/自定义状态**，接单人自己在客户端或网页设置状态 |
 | "DDL 没写，需求就开始永生" | 提需求必须选 DDL；日程表统一看预约和需求截止时间，客户端会提醒快到期/已逾期 |
+| "任务一长就没人知道进展" | 系统后台任务有进度条；每个接单人还有自己的工作区：阶段、百分比、清单、阻塞原因、动态都能看 |
+| "会议录音里冒出新需求，最后变成微信群悬案" | 导入会议录音后自动 ASR 转写、LLM 生成纪要，并把新增/变更需求抽出来，人工确认后进入澄清流程 |
 | "项目资料散在群里，翻到手抽筋" | **项目网盘**：文件夹树 / 列表 / 平铺、拖拽上传、在线预览、批量操作、复制剪切粘贴、回收站撤回 |
 | "本地项目文件和网盘谁新谁旧看命" | 客户端可选项目网盘自动同步：关闭 / 单向下载 / 双向同步，本地删除默认不动远端，先保命 |
 | "在项目文件夹留言，结果变成群聊考古" | 文件夹留言先过 LLM；普通留言入板，像需求变动的自动生成需求草稿继续澄清 |
@@ -58,6 +60,9 @@
 - 👥 **多人接单**：负责人 + 协作者模式；提需求时能搜索成员、看在线状态、指定多人，投递后全员可见但只有指定人能处理和交付
 - 🟢 **接单状态**：客户端 / Web 可设置空闲、忙碌、自定义状态；选接单人时在线空闲优先，不用靠玄学猜谁在摸键盘
 - 📅 **日程与 DDL**：提需求强制 DDL；新增日程表，需求截止时间自动入日程，客户端按 24h / 2h / 到期 / 逾期提醒
+- 📈 **长任务进度**：ASR、会议纪要、Auto Agent 这类后台长任务都有 `background_jobs` 进度；前端能轮询，SSE 也会广播更新
+- 🧭 **个人工作区**：需求详情按“项目 → 需求 → 接单方 → 个人工作区”重组；负责人/协作者自动拥有工作区，可维护阶段、进度、阻塞、清单和动态
+- 🧾 **会议纪要**：项目页支持导入会议录音/文本，ASR 转写后由 LLM 生成纪要，并识别新增需求或变更需求，确认后生成草稿继续澄清
 - 🗄️ **项目网盘**：项目级文件管理器，支持文件夹树 / 列表 / 平铺视图、版本替换、批量下载、软删除回收站、PDF/MD/HTML/代码/Office 文本预览
 - 🔁 **项目文件同步**：托盘客户端可把项目网盘同步到本地；默认关闭，支持单向下载和双向同步，本地删除默认不传播，避免手滑变事故
 - 💬 **文件夹留言板**：每个网盘文件夹都有留言；LLM 自动判断“普通留言”还是“需求变动”，后者直接生成需求草稿走澄清流程
@@ -87,13 +92,20 @@
 |---|
 | ![new requirement mobile](screenshots/ui-new-requirement-mobile.png) |
 
+| 会议纪要（录音/文本导入后自动抽需求） | 个人工作区（进度、阻塞、清单、动态） |
+|---|---|
+| ![meetings](screenshots/05_meetings.png) | ![workspace](screenshots/06_workspace.png) |
+
 ## 架构
 
 ```
 ┌──────────── 服务器 (Ubuntu + GPU) ────────────┐
 │  yqgl-web :8080     FastAPI + SPA + SSE        │
 │      ├─ LLM clarify (DeepSeek streaming)       │
+│      ├─ background_jobs (ASR / meetings / AI)  │
+│      ├─ personal workspaces + progress         │
 │      ├─ Auto-process agent (tool_use)          │
+│      ├─ meeting minutes + insight routing      │
 │      └─ LLM 写交付文档                          │
 │                                                 │
 │  yqgl-asr :8001     Qwen3-ASR-1.7B 常驻显存    │
@@ -228,7 +240,7 @@ YQGL_E2E_API_PORT=18081 YQGL_E2E_WEB_PORT=15174 npm run e2e
 $env:YQGL_E2E_API_PORT=18081; $env:YQGL_E2E_WEB_PORT=15174; npm run e2e
 ```
 
-当前浏览器 E2E 覆盖：昵称登录、在线接单人 + 空闲状态展示、DDL 必填、指定负责人、日程创建、项目网盘上传与 Markdown 预览、文件夹留言转需求草稿、设置弹窗 TTS 服务异常友好提示。2026-05-27 本机已跑通：Chromium `1 passed`，这回不是“脑内测试通过”，是真的让浏览器上班了。
+当前浏览器 E2E 覆盖：昵称登录、在线接单人 + 空闲状态展示、DDL 必填、指定负责人、日程创建、项目网盘上传与 Markdown 预览、文件夹留言转需求草稿、会议导入 → 纪要 → insight 确认 → 需求草稿、个人工作区 UI、语音输入 mock、设置弹窗 TTS 服务异常友好提示。2026-05-27 本机已跑通：Chromium `2 passed`，这回不是“脑内测试通过”，是真的让浏览器上班了。
 
 ## ASR / TTS 一些坑（社区参考）
 
@@ -251,6 +263,9 @@ $env:YQGL_E2E_API_PORT=18081; $env:YQGL_E2E_WEB_PORT=15174; npm run e2e
 - [x] 接单人空闲 / 忙碌 / 自定义状态
 - [x] 项目网盘自动同步（单向 / 双向可选）
 - [x] 项目文件夹留言板 + LLM 需求草稿分流
+- [x] 长任务进度（ASR / 会议 / Agent 后台任务）
+- [x] 个人工作区（接单人阶段、进度、清单、阻塞、动态）
+- [x] 会议录音导入 → ASR → 纪要 → 新增/变更需求确认
 - [ ] 用户密码 + RBAC（当前只内网无密码）
 - [ ] 企业微信 / 钉钉 / 飞书机器人推送
 - [x] 跨平台客户端启动脚本（Windows / Linux / macOS）
@@ -279,6 +294,9 @@ $env:YQGL_E2E_API_PORT=18081; $env:YQGL_E2E_WEB_PORT=15174; npm run e2e
 - After summarization, the requester explicitly confirms dispatch before the requirement appears on the shared board.
 - Requirements can be assigned to one lead and multiple collaborators, with online/free/busy/custom availability shown during dispatch.
 - DDL is mandatory before dispatch; requirement deadlines automatically appear in the calendar and tray clients show due/overdue reminders.
+- Long-running ASR, meeting-minutes, and Auto Agent jobs are tracked with first-class progress records and SSE updates.
+- Each assignee gets a personal workspace under the requirement, with phase, progress percentage, notes, blocker reason, checklist items, and progress updates.
+- Project meetings can be imported from recordings or text; ASR creates transcripts, the LLM writes minutes, and humans confirm whether detected new/change requirements become clarification drafts.
 - Project Drive supports folders, versioned files, preview, comments, optional local sync, and LLM-routed folder comments that can become requirement drafts.
 - An LLM judges complexity. If "low / AI-doable", an in-process Anthropic-tool_use worker can preload attachments, write deliverables under `outputs/`, and run controlled sandbox commands for simple validation. On failure, it falls back to human.
 - Drafts, clarification conversations, attachments, deliveries, chunk uploads, and sync acknowledgements now have workflow-aware permission checks, because "LAN-only" is not a personality trait.

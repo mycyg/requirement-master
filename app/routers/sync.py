@@ -21,6 +21,7 @@ from services.permissions import can_ack_requirement_sync, can_claim_requirement
 from services.schedule import sync_requirement_due_event
 from services.push_bus import bus
 from services.sync_manifest import build as build_manifest
+from services.workspaces import ensure_workspaces_for_assignments, sync_workspace_to_status
 from sqlalchemy.orm import selectinload
 
 router = APIRouter(prefix="/api", tags=["sync"])
@@ -105,6 +106,8 @@ async def claim(req_id: str, db: Session = Depends(get_db), user: User = Depends
         ensure_public_claim_assignment(db, r, user)
     else:
         sync_legacy_lead(r)
+    ensure_workspaces_for_assignments(db, r)
+    sync_workspace_to_status(db, r, user)
     log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="claimed", detail={})
     db.commit()
     db.refresh(r)

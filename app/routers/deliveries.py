@@ -17,6 +17,7 @@ from services.activity import log_activity
 from services.delivery_doc import inspect_zip_entries
 from services.permissions import can_view_requirement_assets
 from services.push_bus import bus
+from services.workspaces import ensure_workspaces_for_assignments, sync_workspace_to_status
 
 router = APIRouter(prefix="/api", tags=["deliveries"])
 
@@ -142,6 +143,8 @@ async def accept_delivery(req_id: str, db: Session = Depends(get_db), user: User
     r.status = "accepted"
     r.accepted_at = datetime.utcnow()
     r.done_at = r.accepted_at
+    ensure_workspaces_for_assignments(db, r)
+    sync_workspace_to_status(db, r, user)
     log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="accepted", detail={})
     db.commit()
 
@@ -178,6 +181,8 @@ async def request_revision(
     )
     db.add(rr)
     r.status = "revision_requested"
+    ensure_workspaces_for_assignments(db, r)
+    sync_workspace_to_status(db, r, user)
     log_activity(
         db, requirement_id=r.id, actor_nickname=user.nickname,
         action="revision_requested",

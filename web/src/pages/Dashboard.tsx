@@ -177,6 +177,11 @@ function Card({ r }: { r: Requirement }) {
     r.priority === "urgent" ? "text-red-700"
     : r.priority === "high" ? "text-[#8a5d10]"
     : "text-stone-500";
+  const statusProgress: Record<string, number> = {
+    ready: 5, claimed: 15, doing: 45, ai_processing: 50, revision_requested: 60,
+    delivery_doc_pending: 85, delivered: 90, accepted: 100, cancelled: 0,
+  };
+  const progress = statusProgress[r.status] ?? 0;
   return (
     <Link
       to={`/r/${r.id}`}
@@ -200,6 +205,15 @@ function Card({ r }: { r: Requirement }) {
       <div className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full border border-stone-200 bg-[#fffdf8] px-2 py-1 text-xs text-stone-500">
         <Users className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         <span className="truncate">{assigneeText}</span>
+      </div>
+      <div className="mt-3">
+        <div className="flex items-center justify-between text-[11px] text-stone-400">
+          <span>进度</span>
+          <span>{progress}%</span>
+        </div>
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-stone-200">
+          <div className="h-full rounded-full bg-stone-950" style={{ width: `${progress}%` }} />
+        </div>
       </div>
     </Link>
   );

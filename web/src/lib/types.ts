@@ -123,6 +123,8 @@ export type Requirement = {
   priority: string;
   start_at: string | null;
   due_at: string | null;
+  source_meeting_id: string | null;
+  source_requirement_id: string | null;
   claimed_at: string | null;
   done_at: string | null;
   delivered_at: string | null;
@@ -130,6 +132,57 @@ export type Requirement = {
   accepted_at: string | null;
   sync_state: string;
   assignees: RequirementAssignee[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type BackgroundJob = {
+  id: string;
+  kind: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  progress_percent: number;
+  message: string | null;
+  result_ref: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export type WorkspaceItem = {
+  id: string;
+  workspace_id: string;
+  title: string;
+  status: "todo" | "doing" | "done";
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ProgressUpdate = {
+  id: string;
+  requirement_id: string;
+  workspace_id: string | null;
+  actor_nickname: string;
+  kind: string;
+  body: string;
+  phase: string | null;
+  progress_percent: number | null;
+  created_at: string;
+};
+
+export type RequirementWorkspace = {
+  id: string;
+  requirement_id: string;
+  user_id: string;
+  nickname: string;
+  phase: string;
+  progress_percent: number;
+  status_note: string | null;
+  blocked_reason: string | null;
+  items: WorkspaceItem[];
+  updates: ProgressUpdate[];
   created_at: string;
   updated_at: string;
 };
@@ -235,4 +288,44 @@ export type Reminder = {
   due_at: string;
   status: string;
   minutes_until_due: number;
+  phase: string | null;
+  progress_percent: number | null;
+  blocked_reason: string | null;
+};
+
+export type MeetingInsight = {
+  id: string;
+  meeting_id: string;
+  kind: "new_requirement" | "requirement_change" | "normal_note";
+  title: string;
+  description: string;
+  target_requirement_id: string | null;
+  confidence_reason: string | null;
+  status: "pending" | "confirmed" | "dismissed";
+  created_requirement_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Meeting = {
+  id: string;
+  project_id: string;
+  requirement_id: string | null;
+  title: string;
+  audio_filename: string;
+  audio_mime: string | null;
+  audio_size_bytes: number;
+  transcript_text: string | null;
+  minutes_md: string | null;
+  status: "processing" | "ready" | "failed";
+  job_id: string | null;
+  uploaded_by_nickname: string;
+  insights: MeetingInsight[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type MeetingUploadInit = {
+  upload_id: string;
+  chunk_size: number;
 };

@@ -50,6 +50,23 @@ class Project(Base, TimestampMixin):
     drive_items: Mapped[list[ProjectDriveItem]] = relationship(back_populates="project", cascade="all, delete-orphan")
 
 
+class BackgroundJob(Base, TimestampMixin):
+    __tablename__ = "background_jobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="queued", nullable=False, index=True)
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    message: Mapped[Optional[str]] = mapped_column(Text)
+    result_ref: Mapped[Optional[str]] = mapped_column(String(128), index=True)
+    error: Mapped[Optional[str]] = mapped_column(Text)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    created_by: Mapped[User] = relationship()
+
+
 class ProjectDriveItem(Base, TimestampMixin):
     __tablename__ = "project_drive_items"
 
@@ -150,6 +167,47 @@ class ScheduleEvent(Base, TimestampMixin):
     created_by: Mapped[User] = relationship()
 
 
+class MeetingRecord(Base, TimestampMixin):
+    __tablename__ = "meeting_records"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    requirement_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirements.id", ondelete="SET NULL"), index=True)
+    uploaded_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    audio_filename: Mapped[str] = mapped_column(String(256), nullable=False)
+    audio_mime: Mapped[Optional[str]] = mapped_column(String(128))
+    audio_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    audio_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    transcript_text: Mapped[Optional[str]] = mapped_column(Text)
+    minutes_md: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="processing", nullable=False, index=True)
+    job_id: Mapped[Optional[str]] = mapped_column(ForeignKey("background_jobs.id"), index=True)
+
+    project: Mapped[Project] = relationship()
+    uploaded_by: Mapped[User] = relationship()
+    job: Mapped[Optional[BackgroundJob]] = relationship()
+
+
+class MeetingInsight(Base, TimestampMixin):
+    __tablename__ = "meeting_insights"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    meeting_id: Mapped[str] = mapped_column(ForeignKey("meeting_records.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    target_requirement_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirements.id"), index=True)
+    confidence_reason: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
+    created_requirement_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirements.id"), index=True)
+    confirmed_by_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), index=True)
+    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    meeting: Mapped[MeetingRecord] = relationship()
+    confirmed_by: Mapped[Optional[User]] = relationship()
+
+
 class Requirement(Base, TimestampMixin):
     __tablename__ = "requirements"
 
@@ -171,6 +229,8 @@ class Requirement(Base, TimestampMixin):
 
     start_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     due_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    source_meeting_id: Mapped[Optional[str]] = mapped_column(ForeignKey("meeting_records.id"), index=True)
+    source_requirement_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirements.id"), index=True)
     claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     done_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
@@ -185,6 +245,7 @@ class Requirement(Base, TimestampMixin):
     chat_messages: Mapped[list[ChatMessage]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
     deliveries: Mapped[list[Delivery]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
     assignments: Mapped[list[RequirementAssignment]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
+    workspaces: Mapped[list[RequirementWorkspace]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
 
 
 class RequirementAssignment(Base, TimestampMixin):
@@ -200,6 +261,53 @@ class RequirementAssignment(Base, TimestampMixin):
     requirement: Mapped[Requirement] = relationship(back_populates="assignments")
     user: Mapped[User] = relationship(foreign_keys=[user_id])
     assigned_by: Mapped[User] = relationship(foreign_keys=[assigned_by_user_id])
+
+
+class RequirementWorkspace(Base, TimestampMixin):
+    __tablename__ = "requirement_workspaces"
+    __table_args__ = (UniqueConstraint("requirement_id", "user_id", name="uq_requirement_workspace_user"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    phase: Mapped[str] = mapped_column(String(64), default="未开始", nullable=False)
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status_note: Mapped[Optional[str]] = mapped_column(Text)
+    blocked_reason: Mapped[Optional[str]] = mapped_column(Text)
+
+    requirement: Mapped[Requirement] = relationship(back_populates="workspaces")
+    user: Mapped[User] = relationship()
+    items: Mapped[list[RequirementWorkspaceItem]] = relationship(back_populates="workspace", cascade="all, delete-orphan")
+    updates: Mapped[list[RequirementProgressUpdate]] = relationship(back_populates="workspace", cascade="all, delete-orphan")
+
+
+class RequirementWorkspaceItem(Base, TimestampMixin):
+    __tablename__ = "requirement_workspace_items"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("requirement_workspaces.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="todo", nullable=False, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    workspace: Mapped[RequirementWorkspace] = relationship(back_populates="items")
+
+
+class RequirementProgressUpdate(Base, TimestampMixin):
+    __tablename__ = "requirement_progress_updates"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirement_workspaces.id", ondelete="CASCADE"), index=True)
+    actor_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    actor_nickname: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    phase: Mapped[Optional[str]] = mapped_column(String(64))
+    progress_percent: Mapped[Optional[int]] = mapped_column(Integer)
+
+    workspace: Mapped[Optional[RequirementWorkspace]] = relationship(back_populates="updates")
+    actor: Mapped[User] = relationship()
 
 
 class Attachment(Base, TimestampMixin):

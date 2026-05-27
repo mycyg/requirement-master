@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from auth import current_user
 from db import get_db
-from models import Project, Requirement, RequirementAssignment, User
+from models import Project, Requirement, RequirementAssignment, RequirementWorkspace, User
 from schemas import ReminderOut
 
 router = APIRouter(prefix="/api/reminders", tags=["reminders"])
@@ -58,6 +58,11 @@ def due_reminders(
     for req, project_slug in rows:
         minutes = int((req.due_at - now).total_seconds() // 60) if req.due_at else 0
         title = req.title or ((req.raw_description or "").strip()[:80]) or req.code
+        workspace = (
+            db.query(RequirementWorkspace)
+            .filter(RequirementWorkspace.requirement_id == req.id, RequirementWorkspace.user_id == user.id)
+            .first()
+        )
         out.append(ReminderOut(
             id=f"requirement:{req.id}:{_kind(minutes)}",
             kind=_kind(minutes),
@@ -68,5 +73,8 @@ def due_reminders(
             due_at=req.due_at,
             status=req.status,
             minutes_until_due=minutes,
+            phase=workspace.phase if workspace else None,
+            progress_percent=workspace.progress_percent if workspace else None,
+            blocked_reason=workspace.blocked_reason if workspace else None,
         ))
     return out

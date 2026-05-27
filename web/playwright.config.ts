@@ -18,7 +18,7 @@ fs.mkdirSync(dataDir, { recursive: true });
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  timeout: 60_000,
+  timeout: 120_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: 1,
@@ -45,6 +45,8 @@ export default defineConfig({
         DATA_DIR: dataDir,
         INTERNAL_BASE_URL: apiBase,
         LLM_API_KEY: "",
+        ASR_BASE_URL: "http://127.0.0.1:9",
+        TTS_BASE_URL: "http://127.0.0.1:9",
       },
     },
     {

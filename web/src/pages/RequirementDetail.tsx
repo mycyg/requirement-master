@@ -4,7 +4,9 @@ import {
   Activity,
   ArrowLeft,
   Bot,
+  BriefcaseBusiness,
   CalendarClock,
+  CheckSquare,
   ClipboardCheck,
   FileText,
   MessageSquare,
@@ -13,6 +15,7 @@ import {
   Play,
   Save,
   Settings2,
+  Square,
   Star,
   UserCheck,
   Users,
@@ -28,11 +31,12 @@ import { CommentsPanel } from "@/components/CommentsPanel";
 import { DeliverablesTab } from "@/components/DeliverablesTab";
 import { StatusBadge } from "@/components/StatusBadge";
 import { SpeakButton } from "@/components/SpeakButton";
-import type { Attachment, Identity, Requirement } from "@/lib/types";
+import type { Attachment, Identity, Requirement, RequirementWorkspace } from "@/lib/types";
 
-type Tab = "overview" | "chat" | "attachments" | "deliveries" | "comments" | "activity";
+type Tab = "overview" | "workspace" | "chat" | "attachments" | "deliveries" | "comments" | "activity";
 const DETAIL_TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
   { key: "overview", label: "概览", Icon: FileText },
+  { key: "workspace", label: "工作区", Icon: BriefcaseBusiness },
   { key: "chat", label: "对话历史", Icon: Bot },
   { key: "attachments", label: "附件", Icon: Paperclip },
   { key: "deliveries", label: "交付物", Icon: PackageCheck },
@@ -41,11 +45,24 @@ const DETAIL_TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
 ];
 const ASSIGNEE_MANAGE_STATUSES = new Set(["ready", "claimed", "doing", "revision_requested"]);
 
+function parseServerDate(value?: string | null): Date | null {
+  if (!value) return null;
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
+  const date = new Date(hasZone ? value : `${value}Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatServerDate(value?: string | null): string {
+  const date = parseServerDate(value);
+  return date ? date.toLocaleString("zh-CN", { hour12: false }) : "-";
+}
+
 export function RequirementDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
   const [req, setReq] = useState<Requirement | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [workspaces, setWorkspaces] = useState<RequirementWorkspace[]>([]);
   const [me, setMe] = useState<Identity | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
   const [actionBusy, setActionBusy] = useState(false);
@@ -60,7 +77,12 @@ export function RequirementDetail() {
     if (!id) return;
     const r = await api.getRequirement(id);
     setReq(r);
-    setAttachments(await api.listAttachments(id));
+    const [nextAttachments, nextWorkspaces] = await Promise.all([
+      api.listAttachments(id),
+      api.listRequirementWorkspaces(id).catch(() => []),
+    ]);
+    setAttachments(nextAttachments);
+    setWorkspaces(nextWorkspaces);
   };
 
   useEffect(() => { refresh(); }, [id]);
@@ -99,7 +121,15 @@ export function RequirementDetail() {
   const canManageAssignees = !!me && me.nickname === req.submitter_nickname && ASSIGNEE_MANAGE_STATUSES.has(currentStatus);
   const mustKeepLead = ["claimed", "doing", "revision_requested"].includes(currentStatus);
   const selectedUsers = assignees.map((a) => ({ id: a.user_id, nickname: a.nickname }));
-  const due = req.due_at ? new Date(req.due_at + (req.due_at.endsWith("Z") ? "" : "Z")) : null;
+  const due = parseServerDate(req.due_at);
+  const statusProgress: Record<string, number> = {
+    ready: 5, claimed: 15, doing: 45, ai_processing: 50, revision_requested: 60,
+    delivery_doc_pending: 85, delivered: 90, accepted: 100, cancelled: 0,
+  };
+  const aggregateProgress = workspaces.length
+    ? Math.round(workspaces.reduce((sum, workspace) => sum + workspace.progress_percent, 0) / workspaces.length)
+    : statusProgress[currentStatus] ?? 0;
+  const blockedCount = workspaces.filter((workspace) => !!workspace.blocked_reason).length;
   const dueTone = due && due.getTime() < Date.now()
     ? "border-red-200 bg-red-50 text-red-700"
     : due && due.toDateString() === new Date().toDateString()
@@ -175,13 +205,25 @@ export function RequirementDetail() {
               <span>公开待接单池</span>
             )}
             <span>·</span>
-            <span>{new Date(req.created_at + "Z").toLocaleString("zh-CN")}</span>
+            <span>{formatServerDate(req.created_at)}</span>
           </div>
           <div className="mt-3">
             <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${dueTone}`}>
               <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
               {due ? `DDL ${due.toLocaleString("zh-CN", { hour12: false })}` : "还没写 DDL"}
             </span>
+          </div>
+          <div className="mt-4 max-w-xl">
+            <div className="flex items-center justify-between gap-3 text-xs text-stone-500">
+              <span className="inline-flex items-center gap-1.5">
+                <BriefcaseBusiness className="h-3.5 w-3.5" aria-hidden="true" />
+                工作区进度
+              </span>
+              <span>{aggregateProgress}%{blockedCount ? ` · ${blockedCount} 个阻塞` : ""}</span>
+            </div>
+            <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-stone-200">
+              <div className="h-full rounded-full bg-stone-950 transition-all" style={{ width: `${aggregateProgress}%` }} />
+            </div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {assignees.length === 0 ? (
@@ -299,6 +341,7 @@ export function RequirementDetail() {
             <pre className="mt-3 overflow-auto whitespace-pre-wrap rounded-lg border border-stone-200 bg-[#fffaf1] p-4 text-sm leading-relaxed text-stone-700">{req.summary_md || req.raw_description || "(空)"}</pre>
           </div>
         )}
+        {tab === "workspace" && <WorkspaceBoard req={req} me={me} workspaces={workspaces} onChange={refresh} />}
         {tab === "chat" && <ChatHistory reqId={id} />}
         {tab === "attachments" && (
           <ul className="paper-surface divide-y divide-stone-200/80 overflow-hidden">
@@ -344,5 +387,221 @@ function ChatHistory({ reqId }: { reqId: string }) {
         );
       })}
     </div>
+  );
+}
+
+function WorkspaceBoard({
+  req,
+  me,
+  workspaces,
+  onChange,
+}: {
+  req: Requirement;
+  me: Identity | null;
+  workspaces: RequirementWorkspace[];
+  onChange: () => Promise<void>;
+}) {
+  if (workspaces.length === 0) {
+    return <div className="empty-state">还没有个人工作区。接单后这里会长出进度、清单和一点点责任感。</div>;
+  }
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="paper-surface p-4">
+          <div className="text-xs text-stone-500">参与者</div>
+          <div className="mt-1 text-2xl font-semibold text-stone-950">{workspaces.length}</div>
+        </div>
+        <div className="paper-surface p-4">
+          <div className="text-xs text-stone-500">平均进度</div>
+          <div className="mt-1 text-2xl font-semibold text-stone-950">
+            {Math.round(workspaces.reduce((sum, item) => sum + item.progress_percent, 0) / workspaces.length)}%
+          </div>
+        </div>
+        <div className="paper-surface p-4">
+          <div className="text-xs text-stone-500">阻塞</div>
+          <div className="mt-1 text-2xl font-semibold text-stone-950">{workspaces.filter((item) => item.blocked_reason).length}</div>
+        </div>
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        {workspaces.map((workspace) => (
+          <WorkspaceCard
+            key={workspace.id}
+            req={req}
+            workspace={workspace}
+            canEdit={me?.id === workspace.user_id}
+            onChange={onChange}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceCard({
+  req,
+  workspace,
+  canEdit,
+  onChange,
+}: {
+  req: Requirement;
+  workspace: RequirementWorkspace;
+  canEdit: boolean;
+  onChange: () => Promise<void>;
+}) {
+  const [phase, setPhase] = useState(workspace.phase);
+  const [progress, setProgress] = useState(workspace.progress_percent);
+  const [note, setNote] = useState(workspace.status_note || "");
+  const [blocked, setBlocked] = useState(workspace.blocked_reason || "");
+  const [newItem, setNewItem] = useState("");
+  const [updateText, setUpdateText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPhase(workspace.phase);
+    setProgress(workspace.progress_percent);
+    setNote(workspace.status_note || "");
+    setBlocked(workspace.blocked_reason || "");
+  }, [workspace]);
+
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await api.patchMyWorkspace(req.id, {
+        phase,
+        progress_percent: progress,
+        status_note: note || null,
+        blocked_reason: blocked || null,
+      });
+      await onChange();
+    } catch (e: any) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addItem = async () => {
+    if (!newItem.trim()) return;
+    setBusy(true); setErr(null);
+    try {
+      await api.createWorkspaceItem(req.id, { title: newItem.trim(), sort_order: workspace.items.length + 1 });
+      setNewItem("");
+      await onChange();
+    } catch (e: any) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addUpdate = async () => {
+    if (!updateText.trim()) return;
+    setBusy(true); setErr(null);
+    try {
+      await api.addWorkspaceUpdate(req.id, updateText.trim());
+      setUpdateText("");
+      await onChange();
+    } catch (e: any) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const patchItem = async (itemId: string, status: "todo" | "doing" | "done") => {
+    setBusy(true); setErr(null);
+    try {
+      await api.patchWorkspaceItem(itemId, { status });
+      await onChange();
+    } catch (e: any) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className={`paper-surface p-4 ${workspace.blocked_reason ? "border-red-200" : ""}`}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="text-base font-semibold text-stone-950">{workspace.nickname}</h3>
+          <p className="mt-1 text-xs text-stone-500">{canEdit ? "我的个人区" : "个人区只读"}</p>
+        </div>
+        <span className={`pill ${workspace.blocked_reason ? "border-red-200 bg-red-50 text-red-700" : ""}`}>
+          {workspace.phase} · {workspace.progress_percent}%
+        </span>
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-stone-200">
+        <div className="h-full rounded-full bg-stone-950 transition-all" style={{ width: `${workspace.progress_percent}%` }} />
+      </div>
+
+      {canEdit ? (
+        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_120px]">
+          <input className="field" value={phase} onChange={(e) => setPhase(e.target.value)} placeholder="阶段" />
+          <input className="field" type="number" min={0} max={100} value={progress} onChange={(e) => setProgress(Number(e.target.value))} />
+          <textarea className="textarea-field min-h-20 sm:col-span-2" value={note} onChange={(e) => setNote(e.target.value)} placeholder="现在干到哪了？" />
+          <textarea className="textarea-field min-h-16 sm:col-span-2" value={blocked} onChange={(e) => setBlocked(e.target.value)} placeholder="有阻塞就写，没有就留空" />
+          <button className="button-primary sm:col-span-2" disabled={busy || !phase.trim()} onClick={save}>
+            <Save className="h-4 w-4" aria-hidden="true" />
+            {busy ? "保存中..." : "保存进度"}
+          </button>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-2 text-sm text-stone-700">
+          {workspace.status_note && <p className="whitespace-pre-wrap rounded-lg border border-stone-200 bg-[#fffaf1] p-3">{workspace.status_note}</p>}
+          {workspace.blocked_reason && <p className="whitespace-pre-wrap rounded-lg border border-red-200 bg-red-50 p-3 text-red-700">阻塞：{workspace.blocked_reason}</p>}
+        </div>
+      )}
+
+      <div className="mt-4">
+        <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">清单</h4>
+        <div className="mt-2 space-y-1">
+          {workspace.items.length === 0 && <div className="rounded-lg border border-dashed border-stone-300 p-3 text-xs text-stone-400">清单还空着。</div>}
+          {workspace.items.map((item) => (
+            <div key={item.id} className="flex items-center gap-2 rounded-lg border border-stone-200 bg-[#fffdf8] px-3 py-2 text-sm">
+              {item.status === "done" ? <CheckSquare className="h-4 w-4 text-[#4e7146]" /> : <Square className="h-4 w-4 text-stone-300" />}
+              <span className={`min-w-0 flex-1 break-words ${item.status === "done" ? "text-stone-400 line-through" : "text-stone-800"}`}>{item.title}</span>
+              {canEdit && (
+                <select className="select-field min-h-8 w-24 py-1 text-xs" value={item.status} disabled={busy} onChange={(e) => patchItem(item.id, e.target.value as "todo" | "doing" | "done")}>
+                  <option value="todo">待办</option>
+                  <option value="doing">进行</option>
+                  <option value="done">完成</option>
+                </select>
+              )}
+            </div>
+          ))}
+        </div>
+        {canEdit && (
+          <div className="mt-2 flex gap-2">
+            <input className="field min-h-9 flex-1" value={newItem} onChange={(e) => setNewItem(e.target.value)} placeholder="加一个待办" />
+            <button className="button-secondary min-h-9 px-3 py-1.5 text-xs" disabled={busy || !newItem.trim()} onClick={addItem}>添加</button>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4">
+        <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">动态</h4>
+        {canEdit && (
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+            <input className="field min-h-9 flex-1" value={updateText} onChange={(e) => setUpdateText(e.target.value)} placeholder="写一句进展" />
+            <button className="button-secondary min-h-9 px-3 py-1.5 text-xs" disabled={busy || !updateText.trim()} onClick={addUpdate}>发布</button>
+          </div>
+        )}
+        <div className="mt-2 space-y-1">
+          {workspace.updates.length === 0 && <div className="text-xs text-stone-400">还没有动态。</div>}
+          {workspace.updates.map((update) => (
+            <div key={update.id} className="rounded-lg border border-stone-200 bg-[#fffdf8] p-2 text-xs text-stone-600">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-medium text-stone-800">{update.actor_nickname}</span>
+                <span className="text-stone-400">{formatServerDate(update.created_at)}</span>
+              </div>
+              <p className="mt-1 whitespace-pre-wrap">{update.body}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+      {err && <p className="mt-3 text-xs text-red-700">{err}</p>}
+    </section>
   );
 }

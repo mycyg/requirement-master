@@ -27,6 +27,7 @@ from services.permissions import (
 )
 from services.push_bus import bus
 from services.schedule import sync_requirement_due_event
+from services.workspaces import ensure_workspaces_for_assignments, sync_workspace_to_status
 
 router = APIRouter(prefix="/api", tags=["requirements"])
 
@@ -49,6 +50,8 @@ def _to_out(r: Requirement, *, submitter_nickname: str, project_slug: str) -> Re
         title=r.title, raw_description=r.raw_description, summary_md=r.summary_md,
         status=r.status, priority=r.priority,
         start_at=r.start_at, due_at=r.due_at,
+        source_meeting_id=r.source_meeting_id,
+        source_requirement_id=r.source_requirement_id,
         claimed_at=r.claimed_at, done_at=r.done_at,
         delivered_at=r.delivered_at, accepted_at=r.accepted_at,
         delivery_doc_ready_at=r.delivery_doc_ready_at,
@@ -113,6 +116,7 @@ def create_requirement(
                     collaborator_user_ids=payload.collaborator_user_ids,
                     actor=user,
                 )
+                ensure_workspaces_for_assignments(db, r)
             log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="created", detail={"code": code})
             if r.due_at:
                 sync_requirement_due_event(db, r, user)
@@ -254,6 +258,8 @@ async def update_status(
         db, requirement_id=r.id, actor_nickname=user.nickname,
         action="status_changed", detail={"from": old, "to": new},
     )
+    ensure_workspaces_for_assignments(db, r)
+    sync_workspace_to_status(db, r, user)
     db.commit()
     db.refresh(r)
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status})
@@ -300,6 +306,7 @@ async def update_assignees(
         collaborator_user_ids=payload.collaborator_user_ids,
         actor=user,
     )
+    ensure_workspaces_for_assignments(db, r)
     log_activity(
         db,
         requirement_id=r.id,

@@ -464,6 +464,24 @@ def sync_requirement(client: ServerClient, cfg: Config, req_id: str) -> Path:
     (target / "metadata.json").write_text(
         json.dumps(meta_keep, ensure_ascii=False, indent=2), encoding="utf-8",
     )
+    my_workspace = next(
+        (w for w in m.get("workspaces", []) if (w.get("nickname") or "").lower() == (cfg.nickname or "").lower()),
+        None,
+    )
+    if my_workspace:
+        items_md = "\n".join(
+            f"- [{'x' if item.get('status') == 'done' else ' '}] {item.get('title')} ({item.get('status')})"
+            for item in my_workspace.get("items", [])
+        ) or "- 暂无清单"
+        (target / "workspace.md").write_text(
+            f"# 我的工作区\n\n"
+            f"- 阶段：{my_workspace.get('phase') or '未开始'}\n"
+            f"- 进度：{my_workspace.get('progress_percent') or 0}%\n"
+            f"- 状态说明：{my_workspace.get('status_note') or '无'}\n"
+            f"- 阻塞原因：{my_workspace.get('blocked_reason') or '无'}\n\n"
+            f"## 清单\n\n{items_md}\n",
+            encoding="utf-8",
+        )
     # attachments/
     att_dir = target / "attachments"
     att_dir.mkdir(exist_ok=True)
@@ -1064,15 +1082,20 @@ class TrayApp:
             self.cfg.known_reminders[key] = due_at
             changed = True
             code = item.get("requirement_code") or ""
+            progress = item.get("progress_percent")
+            phase = item.get("phase") or item.get("status") or ""
+            blocked = item.get("blocked_reason") or ""
+            progress_line = f"\n进度：{phase} {progress}%" if progress is not None else ""
+            blocked_line = f"\n阻塞：{blocked[:80]}" if blocked else ""
             if bucket.startswith("overdue"):
                 title = "DDL 已逾期"
-                msg = f"{code} · {item.get('title','')}\n已经超时 {abs(minutes)} 分钟。"
+                msg = f"{code} · {item.get('title','')}\n已经超时 {abs(minutes)} 分钟。{progress_line}{blocked_line}"
             elif bucket == "due_now":
                 title = "DDL 到点了"
-                msg = f"{code} · {item.get('title','')}\n现在就到期。"
+                msg = f"{code} · {item.get('title','')}\n现在就到期。{progress_line}{blocked_line}"
             else:
                 title = "DDL 快到了"
-                msg = f"{code} · {item.get('title','')}\n还有 {minutes} 分钟。"
+                msg = f"{code} · {item.get('title','')}\n还有 {minutes} 分钟。{progress_line}{blocked_line}"
             notify(title, msg)
         if changed:
             save_config(self.cfg)

@@ -5,7 +5,7 @@ import json
 
 from sqlalchemy.orm import Session
 
-from models import Attachment, ChatMessage, Project, Requirement, RequirementAssignment, User
+from models import Attachment, ChatMessage, Project, Requirement, RequirementAssignment, RequirementWorkspace, User
 
 
 def build(db: Session, req: Requirement) -> dict:
@@ -28,6 +28,11 @@ def build(db: Session, req: Requirement) -> dict:
         .filter(RequirementAssignment.requirement_id == req.id)
         .all()
     )
+    workspaces = (
+        db.query(RequirementWorkspace)
+        .filter(RequirementWorkspace.requirement_id == req.id)
+        .all()
+    )
     assignments.sort(key=lambda a: (0 if a.role == "lead" else 1, a.user.nickname.lower()))
     return {
         "code": req.code,
@@ -41,6 +46,21 @@ def build(db: Session, req: Requirement) -> dict:
         "assignees": [
             {"user_id": a.user_id, "nickname": a.user.nickname, "role": a.role}
             for a in assignments
+        ],
+        "workspaces": [
+            {
+                "user_id": w.user_id,
+                "nickname": w.user.nickname,
+                "phase": w.phase,
+                "progress_percent": w.progress_percent,
+                "status_note": w.status_note,
+                "blocked_reason": w.blocked_reason,
+                "items": [
+                    {"title": i.title, "status": i.status, "sort_order": i.sort_order}
+                    for i in sorted(w.items, key=lambda x: (x.sort_order, x.created_at))
+                ],
+            }
+            for w in sorted(workspaces, key=lambda x: x.user.nickname.lower())
         ],
         "created_at": req.created_at.isoformat(),
         "summary_md": req.summary_md or "",

@@ -15,6 +15,8 @@ REQUIREMENT_COLUMNS: dict[str, str] = {
     "delivery_doc_ready_at": "DATETIME",
     "start_at": "DATETIME",
     "due_at": "DATETIME",
+    "source_meeting_id": "VARCHAR(32)",
+    "source_requirement_id": "VARCHAR(32)",
 }
 
 USER_COLUMNS: dict[str, str] = {
@@ -49,6 +51,14 @@ def ensure_runtime_schema(engine: Engine) -> None:
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_requirements_claimed_by_user_id "
             "ON requirements (claimed_by_user_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_requirements_source_meeting_id "
+            "ON requirements (source_meeting_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_requirements_source_requirement_id "
+            "ON requirements (source_requirement_id)"
         ))
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS requirement_assignments (
@@ -272,3 +282,141 @@ def ensure_runtime_schema(engine: Engine) -> None:
             "CREATE INDEX IF NOT EXISTS ix_schedule_events_end_at "
             "ON schedule_events (end_at)"
         ))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS background_jobs (
+                id VARCHAR(32) PRIMARY KEY,
+                kind VARCHAR(64) NOT NULL,
+                status VARCHAR(16) DEFAULT 'queued' NOT NULL,
+                progress_percent INTEGER DEFAULT 0 NOT NULL,
+                message TEXT,
+                result_ref VARCHAR(128),
+                error TEXT,
+                created_by_user_id VARCHAR(32) NOT NULL,
+                started_at DATETIME,
+                finished_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                FOREIGN KEY(created_by_user_id) REFERENCES users (id)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_background_jobs_kind ON background_jobs (kind)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_background_jobs_status ON background_jobs (status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_background_jobs_result_ref ON background_jobs (result_ref)"))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_background_jobs_created_by_user_id "
+            "ON background_jobs (created_by_user_id)"
+        ))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS meeting_records (
+                id VARCHAR(32) PRIMARY KEY,
+                project_id VARCHAR(32) NOT NULL,
+                requirement_id VARCHAR(32),
+                uploaded_by_user_id VARCHAR(32) NOT NULL,
+                title VARCHAR(256) NOT NULL,
+                audio_filename VARCHAR(256) NOT NULL,
+                audio_mime VARCHAR(128),
+                audio_size_bytes BIGINT NOT NULL,
+                audio_path VARCHAR(512) NOT NULL,
+                transcript_text TEXT,
+                minutes_md TEXT,
+                status VARCHAR(32) DEFAULT 'processing' NOT NULL,
+                job_id VARCHAR(32),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE,
+                FOREIGN KEY(requirement_id) REFERENCES requirements (id) ON DELETE SET NULL,
+                FOREIGN KEY(uploaded_by_user_id) REFERENCES users (id),
+                FOREIGN KEY(job_id) REFERENCES background_jobs (id)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_meeting_records_project_id ON meeting_records (project_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_meeting_records_requirement_id ON meeting_records (requirement_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_meeting_records_uploaded_by_user_id ON meeting_records (uploaded_by_user_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_meeting_records_status ON meeting_records (status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_meeting_records_job_id ON meeting_records (job_id)"))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS meeting_insights (
+                id VARCHAR(32) PRIMARY KEY,
+                meeting_id VARCHAR(32) NOT NULL,
+                kind VARCHAR(32) NOT NULL,
+                title VARCHAR(256) NOT NULL,
+                description TEXT NOT NULL,
+                target_requirement_id VARCHAR(32),
+                confidence_reason TEXT,
+                status VARCHAR(32) DEFAULT 'pending' NOT NULL,
+                created_requirement_id VARCHAR(32),
+                confirmed_by_user_id VARCHAR(32),
+                confirmed_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                FOREIGN KEY(meeting_id) REFERENCES meeting_records (id) ON DELETE CASCADE,
+                FOREIGN KEY(target_requirement_id) REFERENCES requirements (id),
+                FOREIGN KEY(created_requirement_id) REFERENCES requirements (id),
+                FOREIGN KEY(confirmed_by_user_id) REFERENCES users (id)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_meeting_insights_meeting_id ON meeting_insights (meeting_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_meeting_insights_kind ON meeting_insights (kind)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_meeting_insights_status ON meeting_insights (status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_meeting_insights_target_requirement_id ON meeting_insights (target_requirement_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_meeting_insights_created_requirement_id ON meeting_insights (created_requirement_id)"))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS requirement_workspaces (
+                id VARCHAR(32) PRIMARY KEY,
+                requirement_id VARCHAR(32) NOT NULL,
+                user_id VARCHAR(32) NOT NULL,
+                phase VARCHAR(64) DEFAULT '未开始' NOT NULL,
+                progress_percent INTEGER DEFAULT 0 NOT NULL,
+                status_note TEXT,
+                blocked_reason TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                CONSTRAINT uq_requirement_workspace_user UNIQUE (requirement_id, user_id),
+                FOREIGN KEY(requirement_id) REFERENCES requirements (id) ON DELETE CASCADE,
+                FOREIGN KEY(user_id) REFERENCES users (id)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_requirement_workspaces_requirement_id ON requirement_workspaces (requirement_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_requirement_workspaces_user_id ON requirement_workspaces (user_id)"))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS requirement_workspace_items (
+                id VARCHAR(32) PRIMARY KEY,
+                workspace_id VARCHAR(32) NOT NULL,
+                title VARCHAR(256) NOT NULL,
+                status VARCHAR(16) DEFAULT 'todo' NOT NULL,
+                sort_order INTEGER DEFAULT 0 NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                FOREIGN KEY(workspace_id) REFERENCES requirement_workspaces (id) ON DELETE CASCADE
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_requirement_workspace_items_workspace_id ON requirement_workspace_items (workspace_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_requirement_workspace_items_status ON requirement_workspace_items (status)"))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS requirement_progress_updates (
+                id VARCHAR(32) PRIMARY KEY,
+                requirement_id VARCHAR(32) NOT NULL,
+                workspace_id VARCHAR(32),
+                actor_user_id VARCHAR(32) NOT NULL,
+                actor_nickname VARCHAR(64) NOT NULL,
+                kind VARCHAR(32) NOT NULL,
+                body TEXT NOT NULL,
+                phase VARCHAR(64),
+                progress_percent INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                FOREIGN KEY(requirement_id) REFERENCES requirements (id) ON DELETE CASCADE,
+                FOREIGN KEY(workspace_id) REFERENCES requirement_workspaces (id) ON DELETE CASCADE,
+                FOREIGN KEY(actor_user_id) REFERENCES users (id)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_requirement_progress_updates_requirement_id ON requirement_progress_updates (requirement_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_requirement_progress_updates_workspace_id ON requirement_progress_updates (workspace_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_requirement_progress_updates_actor_user_id ON requirement_progress_updates (actor_user_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_requirement_progress_updates_kind ON requirement_progress_updates (kind)"))

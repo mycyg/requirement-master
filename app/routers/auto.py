@@ -15,9 +15,10 @@ from sqlalchemy.orm import Session
 from auth import current_user
 from config import settings
 from db import SessionLocal, get_db
-from models import Attachment, Delivery, Requirement, User
+from models import Attachment, BackgroundJob, Delivery, Requirement, User
 from services.activity import log_activity
 from services.auto_agent import auto_process
+from services.jobs import create_job, publish_job, update_job
 from services.push_bus import bus
 
 router = APIRouter(prefix="/api", tags=["auto"])
@@ -64,20 +65,32 @@ async def trigger_auto(
         raise HTTPException(status_code=400, detail=f"cannot auto-process from status {r.status}")
 
     r.status = "ai_processing"
+    job = create_job(db, kind="auto_agent", user=user, message="AI 自动处理已排队")
     log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="ai_started", detail={})
     db.commit()
+    await publish_job(job)
 
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status})
     await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status})
 
-    asyncio.create_task(_run_and_finalize(r.id, r.title or r.code, r.summary_md, user.nickname))
-    return {"ok": True, "status": r.status}
+    asyncio.create_task(_run_and_finalize(r.id, r.title or r.code, r.summary_md, user.nickname, job.id))
+    return {"ok": True, "status": r.status, "job_id": job.id}
 
 
-async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str) -> None:
+async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str, job_id: str | None = None) -> None:
     """Background task. On success → wrap as Delivery, status=delivered. On failure → status=ready."""
     workdir = _workdir(req_id)
     try:
+        if job_id:
+            db_job = SessionLocal()
+            try:
+                job = db_job.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
+                if job:
+                    update_job(db_job, job, status="running", progress_percent=20, message="正在准备附件和沙箱")
+                    db_job.commit()
+                    await publish_job(job)
+            finally:
+                db_job.close()
         db_inputs = SessionLocal()
         try:
             attachments = (
@@ -93,8 +106,18 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
             req_id=req_id, req_title=title, summary_md=summary_md, workdir=workdir,
             input_files=input_files,
         )
+        if job_id:
+            db_job = SessionLocal()
+            try:
+                job = db_job.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
+                if job:
+                    update_job(db_job, job, status="running", progress_percent=85, message="AI 已完成，正在登记交付")
+                    db_job.commit()
+                    await publish_job(job)
+            finally:
+                db_job.close()
     except Exception as e:
-        await _mark_auto_failed(req_id, actor, title, f"{type(e).__name__}: {e}")
+        await _mark_auto_failed(req_id, actor, title, f"{type(e).__name__}: {e}", job_id=job_id)
         return
 
     db = SessionLocal()
@@ -143,6 +166,12 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
                 detail={"round": round_num, "files": file_count, "seconds": outcome.seconds},
             )
             db.commit()
+            if job_id:
+                job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
+                if job:
+                    update_job(db, job, status="succeeded", progress_percent=100, message="AI 自动处理已交付", result_ref=req_id)
+                    db.commit()
+                    await publish_job(job)
 
             await bus.publish(f"req:{req_id}", "requirement.updated", {"status": "delivered"})
             await bus.publish("all", "requirement.updated", {"requirement_id": req_id, "status": "delivered"})
@@ -155,6 +184,12 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
                 detail={"reason": outcome.reason, "notes": outcome.notes, "seconds": outcome.seconds},
             )
             db.commit()
+            if job_id:
+                job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
+                if job:
+                    update_job(db, job, status="failed", progress_percent=100, message="AI 自动处理失败，已转人工", result_ref=req_id, error=outcome.reason)
+                    db.commit()
+                    await publish_job(job)
             await bus.publish(f"req:{req_id}", "ai.failed", {
                 "reason": outcome.reason, "notes": outcome.notes,
             })
@@ -173,9 +208,10 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
         db.close()
 
 
-async def _mark_auto_failed(req_id: str, actor: str, title: str, reason: str) -> None:
+async def _mark_auto_failed(req_id: str, actor: str, title: str, reason: str, job_id: str | None = None) -> None:
     db = SessionLocal()
     try:
+        job = None
         r = db.query(Requirement).filter(Requirement.id == req_id).first()
         if not r:
             return
@@ -184,7 +220,13 @@ async def _mark_auto_failed(req_id: str, actor: str, title: str, reason: str) ->
             db, requirement_id=req_id, actor_nickname=actor,
             action="ai_failed", detail={"reason": reason},
         )
+        if job_id:
+            job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
+            if job:
+                update_job(db, job, status="failed", progress_percent=100, message="AI 自动处理失败，已转人工", result_ref=req_id, error=reason)
         db.commit()
+        if job_id and job:
+            await publish_job(job)
         await bus.publish(f"req:{req_id}", "ai.failed", {"reason": reason, "notes": ""})
         await bus.publish(f"req:{req_id}", "requirement.updated", {"status": "ready"})
         await bus.publish("all", "requirement.updated", {"requirement_id": req_id, "status": "ready"})
