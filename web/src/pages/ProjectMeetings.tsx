@@ -122,12 +122,12 @@ export function ProjectMeetings() {
     <main className="app-container">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="eyebrow">Project Meetings</p>
+          <p className="eyebrow">会议要点</p>
           <h1 className="mt-2 flex items-center gap-2 text-3xl font-semibold tracking-tight text-stone-950">
             <Mic2 className="h-7 w-7 text-stone-500" aria-hidden="true" />
             {project?.name || "会议纪要"}
           </h1>
-          <p className="mt-2 text-xs text-stone-500">录音先进 ASR，再进纪要，最后让人类点头。少一点“会议上说过”的玄学。</p>
+          <p className="mt-2 text-xs text-stone-500">上传录音 → 自动转写 → AI 助理整理要点 → 人工确认 → 生成需求草稿。</p>
         </div>
         <button className="button-secondary" onClick={() => load()}>
           <RefreshCw className="h-4 w-4" aria-hidden="true" />
@@ -180,7 +180,7 @@ export function ProjectMeetings() {
           </section>
 
           <section className="paper-surface max-h-[520px] overflow-auto p-2 scrollbar-thin-warm">
-            {meetings.length === 0 && <div className="empty-state m-2">还没有会议。终于有个地方不用先开会了。</div>}
+            {meetings.length === 0 && <div className="empty-state m-2">还没有会议录音。点上方按钮试一下？</div>}
             {meetings.map((meeting) => (
               <button
                 key={meeting.id}
@@ -210,7 +210,7 @@ export function ProjectMeetings() {
               <section className="paper-surface p-5">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
-                    <p className="eyebrow">Meeting</p>
+                    <p className="eyebrow">会议</p>
                     <h2 className="mt-2 break-words text-2xl font-semibold text-stone-950">{active.title}</h2>
                     <p className="mt-2 text-xs text-stone-500">{active.audio_filename} · {dateLabel(active.created_at)}</p>
                   </div>

@@ -77,7 +77,9 @@ export function Combobox<T = string>({
         <span className={cn("truncate", !selected && "text-ink-faint")}>
           {renderValue ? renderValue(selected) : selected?.label ?? placeholder}
         </span>
-        <span className="text-ink-muted">▾</span>
+        <svg className="h-3.5 w-3.5 text-ink-muted shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
       </button>
 
       {searchInline && open && (
@@ -133,7 +135,11 @@ export function Combobox<T = string>({
               >
                 <span className="flex-1 min-w-0 truncate">{o.label}</span>
                 {o.description && <span className="text-caption text-ink-faint shrink-0">{o.description}</span>}
-                {active && <span className="text-accent">✓</span>}
+                {active && (
+                  <svg className="h-3.5 w-3.5 text-accent shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
               </button>
             );
           })}

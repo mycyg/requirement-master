@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, EmptyState, Progress, Badge } from "@yqgl/shared";
+import { clientFetch } from "@/lib/tauri";
 
 type Health = {
   project_id: string;
@@ -23,7 +24,7 @@ export function ProjectPulse() {
   const [list, setList] = useState<Health[] | null>(null);
 
   useEffect(() => {
-    fetch("/api/project-health", { credentials: "include" })
+    clientFetch("/api/project-health")
       .then((r) => r.json())
       .then(setList)
       .catch(() => setList([]));

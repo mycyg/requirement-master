@@ -103,7 +103,7 @@ export function CalendarPage() {
     <main className="app-container">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="eyebrow">Calendar</p>
+          <p className="eyebrow">日程</p>
           <h1 className="mt-2 flex items-center gap-2 text-3xl font-semibold tracking-tight text-stone-950">
             <CalendarDays className="h-7 w-7 text-stone-500" aria-hidden="true" />
             日程表

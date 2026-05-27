@@ -57,7 +57,7 @@ export function ProjectView() {
       </Link>
       <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <p className="eyebrow">Project</p>
+          <p className="eyebrow">项目</p>
           <h1 className="mt-2 break-words text-3xl font-semibold tracking-tight text-stone-950">{project.name}</h1>
           <div className="mt-2 flex flex-wrap gap-2">
             <p className="inline-flex items-center rounded-full border border-stone-200 bg-[#fffdf8] px-2.5 py-1 font-mono text-xs text-stone-500">{project.slug}</p>

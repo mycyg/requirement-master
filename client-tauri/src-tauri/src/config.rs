@@ -108,6 +108,9 @@ impl Config {
         }
     }
 
+    /// Used by the Tauri setup hook to decide whether to route to onboarding.
+    /// Kept on the Rust side so we can short-circuit window creation later.
+    #[allow(dead_code)]
     pub fn is_complete(&self) -> bool {
         !self.nickname.is_empty() && !self.cookie_token.is_empty() && !self.client_token.is_empty()
     }

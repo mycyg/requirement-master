@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, EmptyState, Badge } from "@yqgl/shared";
+import { clientFetch } from "@/lib/tauri";
 
 type Event = {
   id: string;
@@ -36,7 +37,7 @@ export function Calendar() {
       end: end.toISOString(),
       mine: "true",
     });
-    fetch(`/api/calendar/events?${qs}`, { credentials: "include" })
+    clientFetch(`/api/calendar/events?${qs}`)
       .then((r) => r.json())
       .then(setEvents)
       .catch(() => setEvents([]));

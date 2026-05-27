@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Maximize2, Minus, X, Sparkles } from "lucide-react";
+import { Maximize2, Minus, Monitor, Moon, Sparkles, Sun, X } from "lucide-react";
 import { useTheme } from "@yqgl/shared";
 
 export function TitleBar({ sseConnected }: { sseConnected: boolean }) {
@@ -34,7 +34,7 @@ export function TitleBar({ sseConnected }: { sseConnected: boolean }) {
           className="h-7 w-7 grid place-items-center rounded-xs text-ink-soft hover:bg-accent-soft"
           title={`外观：${mode}`}
         >
-          {mode === "dark" ? "🌙" : mode === "light" ? "☀️" : "🖥"}
+          {mode === "dark" ? <Moon className="h-3.5 w-3.5" /> : mode === "light" ? <Sun className="h-3.5 w-3.5" /> : <Monitor className="h-3.5 w-3.5" />}
         </button>
         <button
           onClick={() => winApi?.minimize?.()}

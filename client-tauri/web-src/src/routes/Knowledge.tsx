@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Search, Sparkles } from "lucide-react";
 import { Button, Card, Input, EmptyState, Skeleton } from "@yqgl/shared";
+import { clientFetch } from "@/lib/tauri";
 
 type Hit = {
   document_id: string;
@@ -31,9 +32,7 @@ export function Knowledge() {
     setBusy(true);
     setHits(null);
     try {
-      const r = await fetch(`/api/knowledge/search?q=${encodeURIComponent(q.trim())}&limit=30`, {
-        credentials: "include",
-      }).then((r) => r.json());
+      const r = await clientFetch(`/api/knowledge/search?q=${encodeURIComponent(q.trim())}&limit=30`).then((r) => r.json());
       setHits(r.hits || []);
     } catch {
       setHits([]);
@@ -44,16 +43,15 @@ export function Knowledge() {
     if (!askQ.trim()) return;
     setBusy(true);
     try {
-      const start = await fetch("/api/knowledge/ask", {
+      const start = await clientFetch("/api/knowledge/ask", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: askQ.trim() }),
       }).then((r) => r.json());
 
       let attempts = 0;
       while (attempts < 20) {
-        const r: AskRun = await fetch(`/api/knowledge/runs/${start.id}`, { credentials: "include" }).then((r) => r.json());
+        const r: AskRun = await clientFetch(`/api/knowledge/runs/${start.id}`).then((r) => r.json());
         setRun(r);
         if (r.status !== "running") break;
         await new Promise((res) => setTimeout(res, 1000));

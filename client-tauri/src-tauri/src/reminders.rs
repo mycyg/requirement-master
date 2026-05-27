@@ -11,7 +11,7 @@ use crate::config::ConfigState;
 use crate::http;
 
 pub fn spawn(app: AppHandle, state: Arc<ConfigState>) {
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(60));
         loop {
             ticker.tick().await;

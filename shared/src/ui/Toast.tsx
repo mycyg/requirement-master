@@ -89,7 +89,10 @@ export function ToastHost({ max = 4 }: { max?: number }) {
               className="text-ink-faint hover:text-ink h-6 w-6 grid place-items-center rounded-xs hover:bg-accent-soft"
               aria-label="关闭"
             >
-              ×
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
             </button>
           </div>
           {t.action && (

@@ -127,11 +127,11 @@ export function KnowledgePage() {
             className="textarea-field mt-3 min-h-28"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            placeholder="问一个必须基于项目证据回答的问题"
+            placeholder="问一个基于项目历史的问题"
           />
           <button className="button-accent mt-3 w-full" disabled={busy || !question.trim()} onClick={ask}>
             <Sparkles className="h-4 w-4" aria-hidden="true" />
-            {busy ? "搜索证据中..." : "让 Agent grep 一下"}
+            {busy ? "正在查找证据…" : "让 AI 助理找证据"}
           </button>
           {run && (
             <div className="mt-4 rounded-lg border border-stone-200 bg-[#fffdf8] p-4">
@@ -139,13 +139,13 @@ export function KnowledgePage() {
                 <span>{run.status}</span>
                 <span>{run.citations.length} 条证据</span>
               </div>
-              <pre className="whitespace-pre-wrap text-sm leading-6 text-stone-800">{run.answer_md || "还在翻资料..."}</pre>
+              <pre className="whitespace-pre-wrap text-sm leading-6 text-stone-800">{run.answer_md || "正在翻资料…"}</pre>
             </div>
           )}
           {err && <p className="mt-3 text-sm text-red-700">{err}</p>}
           <div className="mt-4 rounded-lg border border-stone-200 bg-[#fffaf1] p-3 text-xs leading-5 text-stone-500">
             <FileSearch className="mr-1 inline h-3.5 w-3.5" aria-hidden="true" />
-            Agent 只允许用受控 grep 和打开语料文档；找不到证据就得认怂。
+            AI 助理只能基于项目的需求、会议、文档等历史回答；找不到证据时会直接说明。
           </div>
         </aside>
       </div>

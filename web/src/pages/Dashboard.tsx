@@ -27,11 +27,11 @@ type Bucket = {
 };
 
 const BUCKETS: Bucket[] = [
-  { key: "ready", title: "待接单", Icon: Flame, statuses: ["ready"], tone: "border-[#e0c895] bg-[#fff7e2]", empty: "没有待接单需求" },
-  { key: "ai", title: "AI 处理中", Icon: Bot, statuses: ["ai_processing"], tone: "border-[#cbb8d8] bg-[#f5eef8]", empty: "无 AI 任务" },
-  { key: "doing", title: "进行中", Icon: Hammer, statuses: ["claimed", "doing"], tone: "border-[#bbd6d0] bg-[#eef8f5]", empty: "没有进行中需求" },
-  { key: "revision", title: "待返工", Icon: RotateCcw, statuses: ["revision_requested"], tone: "border-[#e0b8ad] bg-[#fff0ec]", empty: "无返工请求" },
-  { key: "delivered", title: "交付中/待验收", Icon: PackageCheck, statuses: ["delivery_doc_pending", "delivered"], tone: "border-[#bdd2b7] bg-[#f1f7ed]", empty: "无交付中事项" },
+  { key: "ready", title: "等接单", Icon: Flame, statuses: ["ready"], tone: "border-[#e0c895] bg-[#fff7e2]", empty: "暂时没有等接的需求" },
+  { key: "ai", title: "AI 助理处理中", Icon: Bot, statuses: ["ai_processing"], tone: "border-[#cbb8d8] bg-[#f5eef8]", empty: "目前没有 AI 助理处理中" },
+  { key: "doing", title: "进行中", Icon: Hammer, statuses: ["claimed", "doing"], tone: "border-[#bbd6d0] bg-[#eef8f5]", empty: "没有进行中的需求" },
+  { key: "revision", title: "等你重做", Icon: RotateCcw, statuses: ["revision_requested"], tone: "border-[#e0b8ad] bg-[#fff0ec]", empty: "目前没有要重做的" },
+  { key: "delivered", title: "等验收", Icon: PackageCheck, statuses: ["delivery_doc_pending", "delivered"], tone: "border-[#bdd2b7] bg-[#f1f7ed]", empty: "目前没有待验收的" },
 ];
 
 const DASHBOARD_STATUSES = ["ready", "ai_processing", "claimed", "doing", "revision_requested", "delivery_doc_pending", "delivered"];
@@ -101,7 +101,7 @@ export function Dashboard() {
     <main className="app-container">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="eyebrow">{desktopRuntime ? "Local Workbench" : "Dispatch Board"}</p>
+          <p className="eyebrow">{desktopRuntime ? "本地工作台" : "派活看板"}</p>
           <h1 className="mt-2 flex items-center gap-2 text-3xl font-semibold tracking-tight text-stone-950">
             <Gauge className="h-7 w-7 text-stone-500" aria-hidden="true" />
             {desktopRuntime ? "本地工作台" : "派活看板"}
@@ -118,7 +118,7 @@ export function Dashboard() {
               </span>
             )}
             <span className={connected ? "text-[#4e7146]" : "text-stone-400"}>
-              {connected ? "实时在线" : "推送断线"}
+              {connected ? "实时连接" : "已断开连接"}
             </span>
           </p>
         </div>
@@ -152,11 +152,11 @@ function byUrgency(a: Requirement, b: Requirement): number {
 function BucketCard({ bucket, items, desktopRuntime }: { bucket: Bucket; items: Requirement[]; desktopRuntime: boolean }) {
   const Icon = bucket.Icon;
   const webTitles: Record<string, string> = {
-    ready: "待分派/待处理",
-    ai: "AI 处理中",
-    doing: "处理中",
-    revision: "返工中",
-    delivered: "交付中/待验收",
+    ready: "等接单",
+    ai: "AI 助理处理中",
+    doing: "进行中",
+    revision: "等你重做",
+    delivered: "等验收",
   };
   const title = desktopRuntime ? bucket.title : (webTitles[bucket.key] || bucket.title);
   return (

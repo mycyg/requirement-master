@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle2, FolderOpen, ServerCog, Sparkles, UserRound } from "lucide-react";
+import { CheckCircle2, Check, FolderOpen, ServerCog, Sparkles, UserRound, XCircle } from "lucide-react";
 import { Button, Card, Input, Stepper, toast } from "@yqgl/shared";
 import { invoke } from "@/lib/tauri";
 
@@ -84,8 +84,16 @@ export function Onboarding() {
                 <Input prefixSlot=":" value={port} onChange={(e) => setPort(e.target.value)} />
               </div>
               <Button onClick={testServer} loading={busy} variant="secondary">测试连接</Button>
-              {serverOk === true && <div className="text-success text-body-sm">✓ 服务器可达</div>}
-              {serverOk === false && <div className="text-error text-body-sm">✗ 连不上，检查 IP/端口/防火墙</div>}
+              {serverOk === true && (
+                <div className="text-success text-body-sm inline-flex items-center gap-1.5">
+                  <Check className="h-4 w-4" /> 服务器可达
+                </div>
+              )}
+              {serverOk === false && (
+                <div className="text-error text-body-sm inline-flex items-center gap-1.5">
+                  <XCircle className="h-4 w-4" /> 连不上，检查 IP/端口/防火墙
+                </div>
+              )}
               <div className="pt-3 flex justify-end">
                 <Button disabled={!serverOk} onClick={() => setStep(1)}>下一步</Button>
               </div>
@@ -141,10 +149,10 @@ export function Onboarding() {
               <CheckCircle2 className="mx-auto h-12 w-12 text-success" />
               <h2 className="text-h3 text-ink">全部就绪</h2>
               <ul className="inline-block text-left text-body-sm text-ink-soft space-y-1">
-                <li>√ 已连接 {ip}:{port}</li>
-                <li>√ 已注册设备</li>
-                <li>√ 工作目录：{syncRoot}</li>
-                <li>√ 网盘同步：{driveMode === "off" ? "关" : driveMode === "download" ? "仅下载" : "双向"}</li>
+                <li className="flex items-center gap-2"><Check className="h-4 w-4 text-success" /> 已连接 {ip}:{port}</li>
+                <li className="flex items-center gap-2"><Check className="h-4 w-4 text-success" /> 已注册设备</li>
+                <li className="flex items-center gap-2"><Check className="h-4 w-4 text-success" /> 工作目录：{syncRoot}</li>
+                <li className="flex items-center gap-2"><Check className="h-4 w-4 text-success" /> 网盘同步：{driveMode === "off" ? "关" : driveMode === "download" ? "仅下载" : "双向"}</li>
               </ul>
               <div className="pt-4">
                 <Button variant="accent" onClick={() => nav("/")}>打开主窗口 →</Button>

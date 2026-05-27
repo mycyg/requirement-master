@@ -47,7 +47,7 @@ export function NotificationsPage() {
     <main className="app-container max-w-5xl">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="eyebrow">Notification Center</p>
+          <p className="eyebrow">通知中心</p>
           <h1 className="mt-2 text-3xl font-semibold text-stone-950">通知中心</h1>
           <p className="mt-2 text-sm text-stone-500">指派、DDL、阻塞、返工、Agent 完成，全在这里排队等你审判。</p>
         </div>

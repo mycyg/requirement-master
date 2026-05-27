@@ -20,7 +20,7 @@ pub struct PushEvent {
 pub fn spawn(app: AppHandle, state: std::sync::Arc<ConfigState>) -> oneshot::Sender<()> {
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
 
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let mut backoff_ms: u64 = 1000;
         loop {
             // Allow caller-side abort.

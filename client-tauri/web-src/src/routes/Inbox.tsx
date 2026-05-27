@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell } from "lucide-react";
 import { Button, Card, EmptyState, Badge } from "@yqgl/shared";
-import { useEvent } from "@/lib/tauri";
+import { clientFetch, useEvent } from "@/lib/tauri";
 
 type Notif = {
   id: string;
@@ -23,13 +23,10 @@ export function Inbox() {
 
   const refresh = async () => {
     try {
-      const list = await fetch(`/api/notifications?status=${view}`, {
-        credentials: "include",
-        headers: { "X-YQGL-Client-Token": "" }, // header is added by Rust client; here we just call browser fetch
-      }).then((r) => r.json()) as Notif[];
+      const list = await clientFetch(`/api/notifications?status=${view}`).then((r) => r.json()) as Notif[];
       setItems(list);
     } catch {
-      // fallback: invoke a future command if introduced
+      // ignore — empty inbox is fine
     }
   };
 
@@ -38,12 +35,12 @@ export function Inbox() {
   useEvent("notification", () => refresh());
 
   const markRead = async (id: string) => {
-    await fetch(`/api/notifications/${id}/read`, { method: "POST", credentials: "include" });
+    await clientFetch(`/api/notifications/${id}/read`, { method: "POST" });
     refresh();
   };
 
   const readAll = async () => {
-    await fetch(`/api/notifications/read-all`, { method: "POST", credentials: "include" });
+    await clientFetch(`/api/notifications/read-all`, { method: "POST" });
     refresh();
   };
 

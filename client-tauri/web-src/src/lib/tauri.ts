@@ -43,3 +43,42 @@ export function useEvent<T = unknown>(event: string, handler: (payload: T) => vo
 }
 
 export { isTauri };
+
+/**
+ * Cached worker client_token (filled the first time we read config from Rust).
+ * Auto-attached to every clientFetch call so backend `require_local_client`
+ * routes work the same as `invoke()`.
+ */
+let _clientToken: string | null = null;
+
+async function ensureClientToken(): Promise<string | null> {
+  if (_clientToken !== null) return _clientToken;
+  if (!isTauri()) {
+    _clientToken = ""; // browser dev fallback
+    return _clientToken;
+  }
+  try {
+    const cfg = await invoke<{ client_token?: string; server_url?: string }>("get_config");
+    _clientToken = cfg?.client_token ?? "";
+  } catch {
+    _clientToken = "";
+  }
+  return _clientToken;
+}
+
+/**
+ * Drop-in `fetch` for pages that hit the FastAPI server directly. Injects the
+ * worker client_token header in Tauri context so endpoints guarded by
+ * `require_local_client` (claim, sync, delivery, …) actually authorize.
+ */
+export async function clientFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const token = await ensureClientToken();
+  const headers = new Headers(init.headers || {});
+  if (token) headers.set("X-YQGL-Client-Token", token);
+  return fetch(input, { ...init, credentials: "include", headers });
+}
+
+/** Reset the cached token; call after a successful re-login / device-register. */
+export function resetClientTokenCache() {
+  _clientToken = null;
+}

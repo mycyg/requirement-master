@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, Progress, EmptyState, Badge } from "@yqgl/shared";
+import { clientFetch } from "@/lib/tauri";
 
 type Workload = {
   user_id: string;
@@ -21,8 +22,8 @@ export function MyWorkload() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/planning/workload", { credentials: "include" }).then((r) => r.json()),
-      fetch("/api/auth/me", { credentials: "include" }).then((r) => r.json()),
+      clientFetch("/api/planning/workload").then((r) => r.json()),
+      clientFetch("/api/auth/me").then((r) => r.json()),
     ]).then(([list, me]: [Workload[], any]) => {
       const own = list.find((w) => w.user_id === me?.id) ?? null;
       setMine(own);
