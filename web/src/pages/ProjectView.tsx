@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, CalendarClock, ClipboardList, HardDrive, Mic2, Plus, UserRound, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarClock, ClipboardList, HardDrive, HeartPulse, Mic2, Plus, Search, UserRound, Users } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
 import { api } from "@/lib/api";
 import type { Project, Requirement } from "@/lib/types";
@@ -50,6 +50,18 @@ export function ProjectView() {
         <Link to={`/p/${project.id}/meetings`} className="tab-button border-transparent text-stone-500 hover:text-stone-950">
           <Mic2 className="h-4 w-4" aria-hidden="true" />
           会议
+        </Link>
+        <Link to={`/knowledge?project_id=${project.id}`} className="tab-button border-transparent text-stone-500 hover:text-stone-950">
+          <Search className="h-4 w-4" aria-hidden="true" />
+          知识库
+        </Link>
+        <Link to={`/planning?project_id=${project.id}`} className="tab-button border-transparent text-stone-500 hover:text-stone-950">
+          <Users className="h-4 w-4" aria-hidden="true" />
+          排期
+        </Link>
+        <Link to={`/health?project_id=${project.id}`} className="tab-button border-transparent text-stone-500 hover:text-stone-950">
+          <HeartPulse className="h-4 w-4" aria-hidden="true" />
+          健康
         </Link>
       </div>
 

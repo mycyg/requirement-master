@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -65,6 +65,63 @@ class BackgroundJob(Base, TimestampMixin):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
     created_by: Mapped[User] = relationship()
+
+
+class KnowledgeDocument(Base, TimestampMixin):
+    __tablename__ = "knowledge_documents"
+    __table_args__ = (UniqueConstraint("source_type", "source_id", name="uq_knowledge_source"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    project_id: Mapped[Optional[str]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    requirement_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirements.id", ondelete="CASCADE"), index=True)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    source_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    corpus_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    project: Mapped[Optional[Project]] = relationship()
+    requirement: Mapped[Optional[Requirement]] = relationship()
+
+
+class KnowledgeAskRun(Base, TimestampMixin):
+    __tablename__ = "knowledge_ask_runs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    project_id: Mapped[Optional[str]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), index=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    job_id: Mapped[Optional[str]] = mapped_column(ForeignKey("background_jobs.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="running", nullable=False, index=True)
+    answer_md: Mapped[Optional[str]] = mapped_column(Text)
+    citations_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    trace_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+
+    project: Mapped[Optional[Project]] = relationship()
+    created_by: Mapped[User] = relationship()
+    job: Mapped[Optional[BackgroundJob]] = relationship()
+
+
+class Notification(Base, TimestampMixin):
+    __tablename__ = "notifications"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(16), default="normal", nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    body: Mapped[Optional[str]] = mapped_column(Text)
+    target_url: Mapped[Optional[str]] = mapped_column(String(512))
+    project_id: Mapped[Optional[str]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), index=True)
+    requirement_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirements.id", ondelete="SET NULL"), index=True)
+    dedupe_key: Mapped[Optional[str]] = mapped_column(String(256), index=True)
+    read_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
+
+    user: Mapped[User] = relationship(foreign_keys=[user_id])
+    project: Mapped[Optional[Project]] = relationship()
+    requirement: Mapped[Optional[Requirement]] = relationship()
 
 
 class ProjectDriveItem(Base, TimestampMixin):
@@ -226,6 +283,9 @@ class Requirement(Base, TimestampMixin):
     # draft | clarifying | summary_ready | ready | ai_processing | claimed | doing
     # delivery_doc_pending | delivered | revision_requested | accepted | cancelled
     priority: Mapped[str] = mapped_column(String(16), default="normal", nullable=False)
+    estimate_hours: Mapped[Optional[float]] = mapped_column(Float)
+    estimate_confidence: Mapped[Optional[str]] = mapped_column(String(16))
+    planning_note: Mapped[Optional[str]] = mapped_column(Text)
 
     start_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     due_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
@@ -246,6 +306,8 @@ class Requirement(Base, TimestampMixin):
     deliveries: Mapped[list[Delivery]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
     assignments: Mapped[list[RequirementAssignment]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
     workspaces: Mapped[list[RequirementWorkspace]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
+    task_plans: Mapped[list[RequirementTaskPlan]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
+    acceptance_items: Mapped[list[RequirementAcceptanceItem]] = relationship(back_populates="requirement", cascade="all, delete-orphan")
 
 
 class RequirementAssignment(Base, TimestampMixin):
@@ -308,6 +370,60 @@ class RequirementProgressUpdate(Base, TimestampMixin):
 
     workspace: Mapped[Optional[RequirementWorkspace]] = relationship(back_populates="updates")
     actor: Mapped[User] = relationship()
+
+
+class RequirementTaskPlan(Base, TimestampMixin):
+    __tablename__ = "requirement_task_plans"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id", ondelete="CASCADE"), index=True)
+    stage: Mapped[str] = mapped_column(String(16), nullable=False, index=True)  # dispatch | worker
+    status: Mapped[str] = mapped_column(String(16), default="draft", nullable=False, index=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text)
+    risks: Mapped[Optional[str]] = mapped_column(Text)
+    job_id: Mapped[Optional[str]] = mapped_column(ForeignKey("background_jobs.id"), index=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    target_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), index=True)
+    confirmed_by_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), index=True)
+    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    requirement: Mapped[Requirement] = relationship(back_populates="task_plans")
+    job: Mapped[Optional[BackgroundJob]] = relationship()
+    created_by: Mapped[User] = relationship(foreign_keys=[created_by_user_id])
+    target_user: Mapped[Optional[User]] = relationship(foreign_keys=[target_user_id])
+    confirmed_by: Mapped[Optional[User]] = relationship(foreign_keys=[confirmed_by_user_id])
+    items: Mapped[list[RequirementTaskItem]] = relationship(back_populates="plan", cascade="all, delete-orphan")
+
+
+class RequirementTaskItem(Base, TimestampMixin):
+    __tablename__ = "requirement_task_items"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    plan_id: Mapped[str] = mapped_column(ForeignKey("requirement_task_plans.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    item_type: Mapped[str] = mapped_column(String(16), default="task", nullable=False, index=True)  # task | risk | acceptance
+    suggested_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), index=True)
+    estimate_hours: Mapped[Optional[float]] = mapped_column(Float)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    plan: Mapped[RequirementTaskPlan] = relationship(back_populates="items")
+    suggested_user: Mapped[Optional[User]] = relationship()
+
+
+class RequirementAcceptanceItem(Base, TimestampMixin):
+    __tablename__ = "requirement_acceptance_items"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="open", nullable=False, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    source_plan_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirement_task_plans.id"), index=True)
+
+    requirement: Mapped[Requirement] = relationship(back_populates="acceptance_items")
+    source_plan: Mapped[Optional[RequirementTaskPlan]] = relationship()
 
 
 class Attachment(Base, TimestampMixin):

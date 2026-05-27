@@ -40,6 +40,11 @@
 | "不知道谁现在有空，问一圈像钓鱼" | 在线列表升级成 **在线 + 空闲/忙碌/自定义状态**，接单人自己在客户端或网页设置状态 |
 | "DDL 没写，需求就开始永生" | 提需求必须选 DDL；日程表统一看预约和需求截止时间，客户端会提醒快到期/已逾期 |
 | "任务一长就没人知道进展" | 系统后台任务有进度条；每个接单人还有自己的工作区：阶段、百分比、清单、阻塞原因、动态都能看 |
+| "项目事实散得像开盲盒，搜不到就全靠记忆力" | **项目级知识库** 把需求、会议、网盘解析文本、交付、工作区动态写成 Markdown；不搞 embedding，Agent 只能 grep 证据回答 |
+| "谁忙谁闲全靠感觉，排期像玄学占卜" | **资源排期 / 负载视图** 按人、DDL、估算工时、阻塞和空闲/忙碌状态算负载，忙碌人员自动半产能 |
+| "一个需求到底怎么拆、怎么验收，每个人理解不同" | **两阶段 Agent 拆解**：投递前给任务/风险/验收标准，接单后给个人执行清单；人工确认才写入需求或工作区 |
+| "消息散在各处，等发现已经逾期" | **通知中心** 持久保存指派、DDL、阻塞、返工、拆解完成、知识库问答等提醒；托盘客户端也轮询关键通知 |
+| "项目到底健康不健康，开会前才开始翻" | **项目健康仪表盘** 给健康分、风险原因和效率指标，不改状态，只负责在旁边敲桌子 |
 | "会议录音里冒出新需求，最后变成微信群悬案" | 导入会议录音后自动 ASR 转写、LLM 生成纪要，并把新增/变更需求抽出来，人工确认后进入澄清流程 |
 | "项目资料散在群里，翻到手抽筋" | **项目网盘**：文件夹树 / 列表 / 平铺、拖拽上传、在线预览、批量操作、复制剪切粘贴、回收站撤回 |
 | "本地项目文件和网盘谁新谁旧看命" | 客户端可选项目网盘自动同步：关闭 / 单向下载 / 双向同步，本地删除默认不动远端，先保命 |
@@ -62,6 +67,12 @@
 - 📅 **日程与 DDL**：提需求强制 DDL；新增日程表，需求截止时间自动入日程，客户端按 24h / 2h / 到期 / 逾期提醒
 - 📈 **长任务进度**：ASR、会议纪要、Auto Agent 这类后台长任务都有 `background_jobs` 进度；前端能轮询，SSE 也会广播更新
 - 🧭 **个人工作区**：需求详情按“项目 → 需求 → 接单方 → 个人工作区”重组；负责人/协作者自动拥有工作区，可维护阶段、进度、阻塞、清单和动态
+- 🔎 **项目级知识库**：项目信息、需求、对话、评论、活动、工作区、会议、网盘解析文本、交付文档全部增量生成可 grep 的 Markdown 语料；`/knowledge` 可全局搜，也能限定项目搜
+- 🧠 **Grep Agent 问答**：不走 embedding，不接向量库；Agent 只有 `grep_corpus` / `open_knowledge_doc` 这类只读能力，必须给证据链接，没证据就乖乖认怂
+- 🧮 **资源排期 / 负载**：需求支持估算工时、估算信心和计划备注；`/planning` 按接单人统计任务数、估算工时、容量、逾期、阻塞和本周 DDL
+- 🧩 **两阶段任务拆解**：`dispatch` 阶段产出任务、风险、验收标准和建议工时；`worker` 阶段产出个人执行清单。确认后才写入验收区或个人工作区
+- 🔔 **通知中心**：Web 持久通知 + 未读 / 全部视图 + 一键已读；托盘客户端轮询高优先级通知，避免大家错过“锅已经到你桌上了”
+- ❤️ **项目健康度**：全局和项目级健康页展示健康分、风险清单、逾期/阻塞/无人接单/即将到期/返工/变更/吞吐/平均周期/当前负载
 - 🧾 **会议纪要**：项目页支持导入会议录音/文本，ASR 转写后由 LLM 生成纪要，并识别新增需求或变更需求，确认后生成草稿继续澄清
 - 🗄️ **项目网盘**：项目级文件管理器，支持文件夹树 / 列表 / 平铺视图、版本替换、批量下载、软删除回收站、PDF/MD/HTML/代码/Office 文本预览
 - 🔁 **项目文件同步**：托盘客户端可把项目网盘同步到本地；默认关闭，支持单向下载和双向同步，本地删除默认不传播，避免手滑变事故
@@ -96,6 +107,14 @@
 |---|---|
 | ![meetings](screenshots/05_meetings.png) | ![workspace](screenshots/06_workspace.png) |
 
+| grep 知识库（证据回答，不许胡说） | 排期负载（谁满谁闲别再靠猜） |
+|---|---|
+| ![knowledge](screenshots/07_knowledge.png) | ![planning](screenshots/08_planning.png) |
+
+| 通知中心（锅来了会敲门） | 项目健康度（风险和效率一起看） |
+|---|---|
+| ![notifications](screenshots/09_notifications.png) | ![health](screenshots/10_health.png) |
+
 ## 架构
 
 ```
@@ -103,7 +122,10 @@
 │  yqgl-web :8080     FastAPI + SPA + SSE        │
 │      ├─ LLM clarify (DeepSeek streaming)       │
 │      ├─ background_jobs (ASR / meetings / AI)  │
+│      ├─ knowledge_corpus (Markdown + grep)     │
+│      ├─ workload / notifications / health      │
 │      ├─ personal workspaces + progress         │
+│      ├─ task decomposition (confirm-to-apply)  │
 │      ├─ Auto-process agent (tool_use)          │
 │      ├─ meeting minutes + insight routing      │
 │      └─ LLM 写交付文档                          │
@@ -240,7 +262,7 @@ YQGL_E2E_API_PORT=18081 YQGL_E2E_WEB_PORT=15174 npm run e2e
 $env:YQGL_E2E_API_PORT=18081; $env:YQGL_E2E_WEB_PORT=15174; npm run e2e
 ```
 
-当前浏览器 E2E 覆盖：昵称登录、在线接单人 + 空闲状态展示、DDL 必填、指定负责人、日程创建、项目网盘上传与 Markdown 预览、文件夹留言转需求草稿、会议导入 → 纪要 → insight 确认 → 需求草稿、个人工作区 UI、语音输入 mock、设置弹窗 TTS 服务异常友好提示。2026-05-27 本机已跑通：Chromium `2 passed`，这回不是“脑内测试通过”，是真的让浏览器上班了。
+当前浏览器 E2E 覆盖：昵称登录、在线接单人 + 空闲状态展示、DDL 必填、指定负责人、日程创建、项目网盘上传与 Markdown 预览、文件夹留言转需求草稿、会议导入 → 纪要 → insight 确认 → 需求草稿、知识库 grep 搜索 + Agent 证据回答、排期负载页、通知中心、项目健康页、个人工作区 UI、语音输入 mock、设置弹窗 TTS 服务异常友好提示。2026-05-27 本机已跑通：Chromium `2 passed`，这回不是“脑内测试通过”，是真的让浏览器上班了。
 
 ## ASR / TTS 一些坑（社区参考）
 
@@ -266,6 +288,11 @@ $env:YQGL_E2E_API_PORT=18081; $env:YQGL_E2E_WEB_PORT=15174; npm run e2e
 - [x] 长任务进度（ASR / 会议 / Agent 后台任务）
 - [x] 个人工作区（接单人阶段、进度、清单、阻塞、动态）
 - [x] 会议录音导入 → ASR → 纪要 → 新增/变更需求确认
+- [x] 项目级知识库 + 全局 grep 搜索 Agent（无 embedding，无向量库）
+- [x] 资源排期 / 负载视图
+- [x] 两阶段 Agent 任务拆解（投递前 / 接单后，人工确认落库）
+- [x] 通知中心 + 托盘关键通知轮询
+- [x] 项目健康度仪表盘（风险预警 + 效率统计）
 - [ ] 用户密码 + RBAC（当前只内网无密码）
 - [ ] 企业微信 / 钉钉 / 飞书机器人推送
 - [x] 跨平台客户端启动脚本（Windows / Linux / macOS）
@@ -298,6 +325,11 @@ $env:YQGL_E2E_API_PORT=18081; $env:YQGL_E2E_WEB_PORT=15174; npm run e2e
 - Each assignee gets a personal workspace under the requirement, with phase, progress percentage, notes, blocker reason, checklist items, and progress updates.
 - Project meetings can be imported from recordings or text; ASR creates transcripts, the LLM writes minutes, and humans confirm whether detected new/change requirements become clarification drafts.
 - Project Drive supports folders, versioned files, preview, comments, optional local sync, and LLM-routed folder comments that can become requirement drafts.
+- Project knowledge is exported into grep-friendly Markdown corpus files; search and Q&A deliberately avoid embeddings/vector databases, and the agent must cite evidence links.
+- Resource planning shows per-assignee workload, capacity, overdue/blocker counts, and DDL pressure.
+- Two-stage task decomposition creates dispatch plans and worker checklists, but only after a human confirms the draft.
+- Notification Center persists assignment, DDL, blocker, rework, decomposition, knowledge-answer, and agent-result events; tray clients poll high-priority notifications.
+- Project Health ranks projects with risk warnings and efficiency metrics.
 - An LLM judges complexity. If "low / AI-doable", an in-process Anthropic-tool_use worker can preload attachments, write deliverables under `outputs/`, and run controlled sandbox commands for simple validation. On failure, it falls back to human.
 - Drafts, clarification conversations, attachments, deliveries, chunk uploads, and sync acknowledgements now have workflow-aware permission checks, because "LAN-only" is not a personality trait.
 - Voice in (Qwen3-ASR) and voice out (CosyVoice, 3 presets) wired throughout.

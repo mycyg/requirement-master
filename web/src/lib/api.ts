@@ -1,7 +1,8 @@
 import type {
   Activity, Attachment, BackgroundJob, Comment, Delivery, DriveComment, DriveItem, DriveList, DriveManifest, DrivePreview,
-  DriveTreeNode, DriveUploadInit, Identity, Meeting, MeetingInsight, MeetingUploadInit, Project, Reminder, Requirement,
-  RequirementAssignee, RequirementWorkspace, ScheduleEvent, StoredChatMessage, UserOption, WorkspaceItem,
+  DriveTreeNode, DriveUploadInit, Identity, KnowledgeAskRun, KnowledgeSearchHit, Meeting, MeetingInsight, MeetingUploadInit,
+  Notification, Project, ProjectHealth, Reminder, Requirement, RequirementAcceptanceItem,
+  RequirementAssignee, RequirementWorkspace, ScheduleEvent, StoredChatMessage, TaskPlan, UserOption, UserWorkload, WorkspaceItem,
 } from "./types";
 
 const COMMON: RequestInit = { credentials: "include" };
@@ -133,6 +134,9 @@ export const api = {
     collaborator_user_ids?: string[];
     start_at?: string | null;
     due_at?: string | null;
+    estimate_hours?: number | null;
+    estimate_confidence?: "low" | "medium" | "high" | null;
+    planning_note?: string | null;
   }) =>
     json<Requirement>(`/api/projects/${project_id}/requirements`, {
       method: "POST",
@@ -157,6 +161,14 @@ export const api = {
     }),
   updateRequirementSchedule: (id: string, input: { start_at?: string | null; due_at?: string | null }) =>
     json<Requirement>(`/api/requirements/${id}/schedule`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  updateRequirementPlanning: (id: string, input: {
+    estimate_hours?: number | null; estimate_confidence?: "low" | "medium" | "high" | null; planning_note?: string | null;
+  }) =>
+    json<Requirement>(`/api/requirements/${id}/planning`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
@@ -309,4 +321,44 @@ export const api = {
     }),
   confirmMeetingInsight: (id: string) => json<MeetingInsight>(`/api/meeting-insights/${id}/confirm`, { method: "POST" }),
   dismissMeetingInsight: (id: string) => json<MeetingInsight>(`/api/meeting-insights/${id}/dismiss`, { method: "POST" }),
+
+  searchKnowledge: (params: { q: string; project_id?: string | null; scope?: string | null; limit?: number }) => {
+    const q = new URLSearchParams({ q: params.q });
+    if (params.project_id) q.set("project_id", params.project_id);
+    if (params.scope) q.set("scope", params.scope);
+    if (params.limit) q.set("limit", String(params.limit));
+    return json<{ query: string; hits: KnowledgeSearchHit[] }>(`/api/knowledge/search?${q.toString()}`);
+  },
+  askKnowledge: (input: { question: string; project_id?: string | null }) =>
+    json<{ id: string; job_id: string; status: string }>("/api/knowledge/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  getKnowledgeRun: (id: string) => json<KnowledgeAskRun>(`/api/knowledge/runs/${id}`),
+
+  workload: (params: { start?: string; end?: string; project_id?: string | null } = {}) => {
+    const q = new URLSearchParams();
+    if (params.start) q.set("start", params.start);
+    if (params.end) q.set("end", params.end);
+    if (params.project_id) q.set("project_id", params.project_id);
+    return json<UserWorkload[]>(`/api/planning/workload?${q.toString()}`);
+  },
+  listNotifications: (status: "unread" | "all" = "unread") => json<Notification[]>(`/api/notifications?status=${status}`),
+  readNotification: (id: string) => json<Notification>(`/api/notifications/${id}/read`, { method: "POST" }),
+  readAllNotifications: () => json<{ ok: boolean; count: number }>("/api/notifications/read-all", { method: "POST" }),
+  projectHealth: () => json<ProjectHealth[]>("/api/project-health"),
+  getProjectHealth: (projectId: string) => json<ProjectHealth>(`/api/projects/${projectId}/health`),
+
+  listTaskPlans: (reqId: string) => json<TaskPlan[]>(`/api/requirements/${reqId}/decompositions`),
+  createTaskPlan: (reqId: string, stage: "dispatch" | "worker") =>
+    json<TaskPlan>(`/api/requirements/${reqId}/decompositions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stage }),
+    }),
+  confirmTaskPlan: (id: string) =>
+    json<{ plan: TaskPlan; acceptance_items: RequirementAcceptanceItem[]; workspace_items: WorkspaceItem[] }>(`/api/decompositions/${id}/confirm`, { method: "POST" }),
+  dismissTaskPlan: (id: string) => json<TaskPlan>(`/api/decompositions/${id}/dismiss`, { method: "POST" }),
+  listAcceptanceItems: (reqId: string) => json<RequirementAcceptanceItem[]>(`/api/requirements/${reqId}/acceptance`),
 };

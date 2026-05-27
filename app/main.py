@@ -15,10 +15,15 @@ from routers import auto as auto_router
 from routers import calendar as calendar_router
 from routers import chat as chat_router
 from routers import comments as comments_router
+from routers import decompositions as decompositions_router
 from routers import deliveries as deliveries_router
 from routers import delivery_upload as delivery_upload_router
+from routers import health as health_router
+from routers import knowledge as knowledge_router
 from routers import jobs as jobs_router
 from routers import meetings as meetings_router
+from routers import notifications as notifications_router
+from routers import planning as planning_router
 from routers import projects as projects_router
 from routers import project_drive as project_drive_router
 from routers import push as push_router
@@ -50,6 +55,7 @@ async def lifespan(_: FastAPI):
     (settings.data_dir / "voice").mkdir(exist_ok=True)
     (settings.data_dir / "outputs").mkdir(exist_ok=True)
     (settings.data_dir / "outputs" / "project_drive").mkdir(parents=True, exist_ok=True)
+    (settings.data_dir / "knowledge_corpus").mkdir(parents=True, exist_ok=True)
     (settings.data_dir / "project_drive").mkdir(exist_ok=True)
     (settings.data_dir / "project_drive" / "_partial").mkdir(parents=True, exist_ok=True)
     (settings.data_dir / "deliveries").mkdir(exist_ok=True)
@@ -90,6 +96,11 @@ app.include_router(reminders_router.router)
 app.include_router(jobs_router.router)
 app.include_router(workspaces_router.router)
 app.include_router(meetings_router.router)
+app.include_router(decompositions_router.router)
+app.include_router(knowledge_router.router)
+app.include_router(planning_router.router)
+app.include_router(notifications_router.router)
+app.include_router(health_router.router)
 
 
 @app.get("/api/health")

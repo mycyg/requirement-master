@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { BrowserRouter, Link, NavLink, Route, Routes } from "react-router-dom";
-import { CalendarDays, FolderKanban, Gauge, HardDrive, Settings, UserRound } from "lucide-react";
+import { Bell, CalendarDays, FolderKanban, Gauge, HardDrive, HeartPulse, Search, Settings, UserRound, Users } from "lucide-react";
 import { useIdentity } from "./hooks/useIdentity";
 import { NicknameDialog } from "./components/NicknameDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -14,6 +14,10 @@ import { DriveHome } from "./pages/DriveHome";
 import { ProjectDrive } from "./pages/ProjectDrive";
 import { CalendarPage } from "./pages/CalendarPage";
 import { ProjectMeetings } from "./pages/ProjectMeetings";
+import { KnowledgePage } from "./pages/KnowledgePage";
+import { PlanningPage } from "./pages/PlanningPage";
+import { NotificationsPage } from "./pages/NotificationsPage";
+import { HealthPage } from "./pages/HealthPage";
 
 export function App() {
   const { me, identify, loading } = useIdentity();
@@ -81,6 +85,42 @@ export function App() {
                     <CalendarDays className="h-4 w-4" aria-hidden="true" />
                     日程
                   </NavLink>
+                  <NavLink
+                    to="/knowledge"
+                    className={({ isActive }) =>
+                      `button-ghost min-h-9 px-3 py-1.5 text-xs ${isActive ? "bg-stone-900/10 text-stone-950" : ""}`
+                    }
+                  >
+                    <Search className="h-4 w-4" aria-hidden="true" />
+                    知识库
+                  </NavLink>
+                  <NavLink
+                    to="/planning"
+                    className={({ isActive }) =>
+                      `button-ghost min-h-9 px-3 py-1.5 text-xs ${isActive ? "bg-stone-900/10 text-stone-950" : ""}`
+                    }
+                  >
+                    <Users className="h-4 w-4" aria-hidden="true" />
+                    排期
+                  </NavLink>
+                  <NavLink
+                    to="/notifications"
+                    className={({ isActive }) =>
+                      `button-ghost min-h-9 px-3 py-1.5 text-xs ${isActive ? "bg-stone-900/10 text-stone-950" : ""}`
+                    }
+                  >
+                    <Bell className="h-4 w-4" aria-hidden="true" />
+                    通知
+                  </NavLink>
+                  <NavLink
+                    to="/health"
+                    className={({ isActive }) =>
+                      `button-ghost min-h-9 px-3 py-1.5 text-xs ${isActive ? "bg-stone-900/10 text-stone-950" : ""}`
+                    }
+                  >
+                    <HeartPulse className="h-4 w-4" aria-hidden="true" />
+                    健康
+                  </NavLink>
                 </nav>
               </div>
               <div className="flex min-w-0 items-center gap-2 text-xs text-stone-500">
@@ -104,6 +144,10 @@ export function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/drive" element={<DriveHome />} />
             <Route path="/calendar" element={<CalendarPage />} />
+            <Route path="/knowledge" element={<KnowledgePage />} />
+            <Route path="/planning" element={<PlanningPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
+            <Route path="/health" element={<HealthPage />} />
             <Route path="/p/:id" element={<ProjectView />} />
             <Route path="/p/:id/drive" element={<ProjectDrive />} />
             <Route path="/p/:id/meetings" element={<ProjectMeetings />} />

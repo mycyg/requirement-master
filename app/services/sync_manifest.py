@@ -5,7 +5,18 @@ import json
 
 from sqlalchemy.orm import Session
 
-from models import Attachment, ChatMessage, Project, Requirement, RequirementAssignment, RequirementWorkspace, User
+from models import (
+    Attachment,
+    ChatMessage,
+    Project,
+    Requirement,
+    RequirementAcceptanceItem,
+    RequirementAssignment,
+    RequirementTaskItem,
+    RequirementTaskPlan,
+    RequirementWorkspace,
+    User,
+)
 
 
 def build(db: Session, req: Requirement) -> dict:
@@ -33,6 +44,18 @@ def build(db: Session, req: Requirement) -> dict:
         .filter(RequirementWorkspace.requirement_id == req.id)
         .all()
     )
+    acceptance_items = (
+        db.query(RequirementAcceptanceItem)
+        .filter(RequirementAcceptanceItem.requirement_id == req.id)
+        .order_by(RequirementAcceptanceItem.sort_order.asc(), RequirementAcceptanceItem.created_at.asc())
+        .all()
+    )
+    confirmed_plans = (
+        db.query(RequirementTaskPlan)
+        .filter(RequirementTaskPlan.requirement_id == req.id, RequirementTaskPlan.status == "confirmed")
+        .order_by(RequirementTaskPlan.created_at.asc())
+        .all()
+    )
     assignments.sort(key=lambda a: (0 if a.role == "lead" else 1, a.user.nickname.lower()))
     return {
         "code": req.code,
@@ -42,6 +65,9 @@ def build(db: Session, req: Requirement) -> dict:
         "title": req.title,
         "status": req.status,
         "priority": req.priority,
+        "estimate_hours": req.estimate_hours,
+        "estimate_confidence": req.estimate_confidence,
+        "planning_note": req.planning_note,
         "claimed_by_nickname": req.claimed_by_nickname,
         "assignees": [
             {"user_id": a.user_id, "nickname": a.user.nickname, "role": a.role}
@@ -65,6 +91,35 @@ def build(db: Session, req: Requirement) -> dict:
         "created_at": req.created_at.isoformat(),
         "summary_md": req.summary_md or "",
         "raw_description": req.raw_description or "",
+        "acceptance_items": [
+            {
+                "title": item.title,
+                "description": item.description,
+                "status": item.status,
+                "sort_order": item.sort_order,
+            }
+            for item in acceptance_items
+        ],
+        "task_plans": [
+            {
+                "id": plan.id,
+                "stage": plan.stage,
+                "summary": plan.summary,
+                "risks": plan.risks,
+                "target_user_id": plan.target_user_id,
+                "items": [
+                    {
+                        "title": item.title,
+                        "description": item.description,
+                        "type": item.item_type,
+                        "estimate_hours": item.estimate_hours,
+                        "sort_order": item.sort_order,
+                    }
+                    for item in sorted(plan.items, key=lambda x: (x.sort_order, x.created_at))
+                ],
+            }
+            for plan in confirmed_plans
+        ],
         "files": [
             {
                 "id": a.id,

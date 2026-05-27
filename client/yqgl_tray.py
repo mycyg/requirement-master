@@ -69,6 +69,7 @@ class Config:
     availability_text: str = ""
     reminder_offsets_minutes: list[int] = field(default_factory=lambda: [1440, 120, 0])
     known_reminders: dict[str, str] = field(default_factory=dict)
+    known_notifications: dict[str, str] = field(default_factory=dict)
     paused: bool = False
     known_reqs: dict[str, str] = field(default_factory=dict)  # req_id -> code (avoid duplicate downloads)
     known_revision_requests: dict[str, str] = field(default_factory=dict)  # req_id -> updated_at marker
@@ -259,6 +260,11 @@ class ServerClient:
 
     def due_reminders(self) -> list[dict]:
         r = self._client.get("/api/reminders/due")
+        r.raise_for_status()
+        return r.json()
+
+    def unread_notifications(self) -> list[dict]:
+        r = self._client.get("/api/notifications", params={"status": "unread"})
         r.raise_for_status()
         return r.json()
 
@@ -459,7 +465,8 @@ def sync_requirement(client: ServerClient, cfg: Config, req_id: str) -> Path:
     # metadata.json
     meta_keep = {k: m.get(k) for k in (
         "code", "title", "submitter_nickname", "priority", "created_at",
-        "raw_description", "chat", "assignees",
+        "raw_description", "chat", "assignees", "estimate_hours",
+        "estimate_confidence", "planning_note", "acceptance_items", "task_plans",
     )}
     (target / "metadata.json").write_text(
         json.dumps(meta_keep, ensure_ascii=False, indent=2), encoding="utf-8",
@@ -469,16 +476,39 @@ def sync_requirement(client: ServerClient, cfg: Config, req_id: str) -> Path:
         None,
     )
     if my_workspace:
+        acceptance_md = "\n".join(
+            f"- [ ] {item.get('title')}{f': {item.get('description')}' if item.get('description') else ''}"
+            for item in m.get("acceptance_items", [])
+        ) or "- 暂无验收标准"
+        my_user_id = my_workspace.get("user_id")
+        plan_lines: list[str] = []
+        for plan in m.get("task_plans", []):
+            if plan.get("stage") == "dispatch" or plan.get("target_user_id") == my_user_id:
+                plan_lines.append(f"### {plan.get('stage')} · {plan.get('summary') or '已确认拆解'}")
+                if plan.get("risks"):
+                    plan_lines.append(f"\n风险：{plan.get('risks')}")
+                for item in plan.get("items", []):
+                    if item.get("type") == "task":
+                        hours = f" · {item.get('estimate_hours')}h" if item.get("estimate_hours") is not None else ""
+                        plan_lines.append(f"- [ ] {item.get('title')}{hours}")
+                plan_lines.append("")
+        plans_md = "\n".join(plan_lines).strip() or "- 暂无已确认拆解"
         items_md = "\n".join(
             f"- [{'x' if item.get('status') == 'done' else ' '}] {item.get('title')} ({item.get('status')})"
             for item in my_workspace.get("items", [])
         ) or "- 暂无清单"
         (target / "workspace.md").write_text(
             f"# 我的工作区\n\n"
+            f"## 排期\n\n"
+            f"- 估算工时：{m.get('estimate_hours') if m.get('estimate_hours') is not None else '未估'}\n"
+            f"- 估算信心：{m.get('estimate_confidence') or '未知'}\n"
+            f"- 计划备注：{m.get('planning_note') or '无'}\n\n"
             f"- 阶段：{my_workspace.get('phase') or '未开始'}\n"
             f"- 进度：{my_workspace.get('progress_percent') or 0}%\n"
             f"- 状态说明：{my_workspace.get('status_note') or '无'}\n"
             f"- 阻塞原因：{my_workspace.get('blocked_reason') or '无'}\n\n"
+            f"## 验收标准\n\n{acceptance_md}\n\n"
+            f"## 已确认拆解\n\n{plans_md}\n\n"
             f"## 清单\n\n{items_md}\n",
             encoding="utf-8",
         )
@@ -1053,6 +1083,7 @@ class TrayApp:
         while not self.stop.is_set():
             if not self.cfg.paused:
                 self._check_reminders()
+                self._check_notifications()
             self.stop.wait(60)
 
     def _check_reminders(self) -> None:
@@ -1097,6 +1128,35 @@ class TrayApp:
                 title = "DDL 快到了"
                 msg = f"{code} · {item.get('title','')}\n还有 {minutes} 分钟。{progress_line}{blocked_line}"
             notify(title, msg)
+        if changed:
+            save_config(self.cfg)
+
+    def _check_notifications(self) -> None:
+        try:
+            items = self.client.unread_notifications()
+        except Exception as e:
+            log(f"notification check failed: {e}")
+            return
+        changed = False
+        for item in items:
+            notification_id = item.get("id") or ""
+            if not notification_id:
+                continue
+            marker = item.get("updated_at") or item.get("created_at") or ""
+            if self.cfg.known_notifications.get(notification_id) == marker:
+                continue
+            severity = item.get("severity") or "normal"
+            ntype = item.get("type") or ""
+            important = severity in {"urgent", "high"} or ntype.startswith(("due_", "revision", "workspace_blocked", "assigned"))
+            if not important:
+                self.cfg.known_notifications[notification_id] = marker
+                changed = True
+                continue
+            self.cfg.known_notifications[notification_id] = marker
+            changed = True
+            title = item.get("title") or "需求管理大师通知"
+            body = item.get("body") or item.get("target_url") or ""
+            notify(title, body[:200])
         if changed:
             save_config(self.cfg)
 

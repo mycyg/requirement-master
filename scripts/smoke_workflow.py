@@ -26,6 +26,7 @@ def main() -> None:
         os.environ["DATA_DIR"] = str(root / "data")
         os.environ["APP_ENV"] = "development"
         os.environ["COOKIE_SECRET"] = "dev-test-secret"
+        os.environ["LLM_API_KEY"] = ""
 
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
@@ -353,6 +354,81 @@ def main() -> None:
             r = carl.get(f"/api/requirements/{assigned_id}/sync-manifest")
             expect(200, r.status_code, r.text)
             assert any(w["nickname"] == "carl" for w in r.json()["workspaces"]), r.text
+
+            r = alice.patch(
+                f"/api/requirements/{assigned_id}/planning",
+                json={"estimate_hours": 6, "estimate_confidence": "medium", "planning_note": "smoke planning note"},
+            )
+            expect(200, r.status_code, r.text)
+            assert r.json()["estimate_hours"] == 6, r.text
+            r = alice.post(f"/api/requirements/{assigned_id}/decompositions", json={"stage": "dispatch"})
+            expect(200, r.status_code, r.text)
+            dispatch_plan_id = r.json()["id"]
+            dispatch_job_id = r.json()["job_id"]
+            for _ in range(10):
+                r = alice.get(f"/api/jobs/{dispatch_job_id}")
+                expect(200, r.status_code, r.text)
+                if r.json()["status"] in {"succeeded", "failed"}:
+                    break
+                time.sleep(0.1)
+            assert r.json()["status"] == "succeeded", r.text
+            r = alice.get(f"/api/requirements/{assigned_id}/decompositions")
+            expect(200, r.status_code, r.text)
+            dispatch_plan = next(p for p in r.json() if p["id"] == dispatch_plan_id)
+            assert dispatch_plan["items"], r.text
+            r = alice.post(f"/api/decompositions/{dispatch_plan_id}/confirm")
+            expect(200, r.status_code, r.text)
+            assert r.json()["acceptance_items"], r.text
+            r = carl.post(f"/api/requirements/{assigned_id}/decompositions", json={"stage": "worker"})
+            expect(200, r.status_code, r.text)
+            worker_plan_id = r.json()["id"]
+            worker_job_id = r.json()["job_id"]
+            for _ in range(10):
+                r = carl.get(f"/api/jobs/{worker_job_id}")
+                expect(200, r.status_code, r.text)
+                if r.json()["status"] in {"succeeded", "failed"}:
+                    break
+                time.sleep(0.1)
+            assert r.json()["status"] == "succeeded", r.text
+            r = carl.post(f"/api/decompositions/{worker_plan_id}/confirm")
+            expect(200, r.status_code, r.text)
+            assert r.json()["workspace_items"], r.text
+            r = carl.get(f"/api/requirements/{assigned_id}/sync-manifest")
+            expect(200, r.status_code, r.text)
+            assert r.json()["acceptance_items"] and r.json()["task_plans"], r.text
+
+            r = alice.post("/api/knowledge/reindex", json={})
+            expect(200, r.status_code, r.text)
+            r = alice.get("/api/knowledge/search", params={"q": "Assigned group delivery", "project_id": project_id})
+            expect(200, r.status_code, r.text)
+            assert r.json()["hits"], r.text
+            r = alice.post("/api/knowledge/ask", json={"question": "Assigned group delivery 的验收标准是什么？", "project_id": project_id})
+            expect(200, r.status_code, r.text)
+            run_id = r.json()["id"]
+            for _ in range(10):
+                r = alice.get(f"/api/knowledge/runs/{run_id}")
+                expect(200, r.status_code, r.text)
+                if r.json()["status"] in {"succeeded", "failed"}:
+                    break
+                time.sleep(0.1)
+            assert r.json()["status"] == "succeeded" and r.json()["citations"], r.text
+
+            r = alice.get("/api/planning/workload", params={"project_id": project_id})
+            expect(200, r.status_code, r.text)
+            assert any(row["user_id"] == carl_id and row["task_count"] >= 1 for row in r.json()), r.text
+            r = bob.get("/api/notifications", params={"status": "unread"})
+            expect(200, r.status_code, r.text)
+            assert any(n["type"] in {"assigned", "due_soon", "due_changed"} for n in r.json()), r.text
+            notification_id = r.json()[0]["id"]
+            r = bob.post(f"/api/notifications/{notification_id}/read")
+            expect(200, r.status_code, r.text)
+            assert r.json()["read_at"], r.text
+            r = alice.get("/api/project-health")
+            expect(200, r.status_code, r.text)
+            assert any(p["project_id"] == project_id for p in r.json()), r.text
+            r = alice.get(f"/api/projects/{project_id}/health")
+            expect(200, r.status_code, r.text)
+            assert "score" in r.json() and "risks" in r.json(), r.text
 
             r = alice.get("/api/voice/voices")
             expect(200, r.status_code, r.text)

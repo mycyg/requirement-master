@@ -121,6 +121,9 @@ export type Requirement = {
     | "draft" | "clarifying" | "summary_ready" | "ready" | "claimed" | "doing" | "ai_processing"
     | "delivery_doc_pending" | "delivered" | "revision_requested" | "accepted" | "cancelled";
   priority: string;
+  estimate_hours: number | null;
+  estimate_confidence: "low" | "medium" | "high" | null;
+  planning_note: string | null;
   start_at: string | null;
   due_at: string | null;
   source_meeting_id: string | null;
@@ -328,4 +331,136 @@ export type Meeting = {
 export type MeetingUploadInit = {
   upload_id: string;
   chunk_size: number;
+};
+
+export type RequirementAcceptanceItem = {
+  id: string;
+  requirement_id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  sort_order: number;
+  source_plan_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskPlanItem = {
+  id: string;
+  plan_id: string;
+  title: string;
+  description: string | null;
+  item_type: "task" | "risk" | "acceptance";
+  suggested_user_id: string | null;
+  suggested_nickname: string | null;
+  estimate_hours: number | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskPlan = {
+  id: string;
+  requirement_id: string;
+  stage: "dispatch" | "worker";
+  status: "draft" | "confirmed" | "dismissed";
+  summary: string | null;
+  risks: string | null;
+  job_id: string | null;
+  created_by_nickname: string;
+  target_user_id: string | null;
+  target_nickname: string | null;
+  confirmed_at: string | null;
+  items: TaskPlanItem[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type KnowledgeSearchHit = {
+  document_id: string;
+  project_id: string | null;
+  requirement_id: string | null;
+  source_type: string;
+  source_id: string;
+  title: string;
+  source_url: string;
+  line_no: number;
+  snippet: string;
+};
+
+export type KnowledgeAskRun = {
+  id: string;
+  question: string;
+  project_id: string | null;
+  status: "running" | "succeeded" | "failed";
+  job_id: string | null;
+  answer_md: string | null;
+  citations: KnowledgeSearchHit[];
+  trace: Record<string, any>[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type WorkloadRequirement = {
+  id: string;
+  code: string;
+  title: string | null;
+  project_id: string;
+  project_slug: string;
+  status: string;
+  due_at: string | null;
+  estimate_hours: number | null;
+  progress_percent: number | null;
+  blocked_reason: string | null;
+};
+
+export type UserWorkload = {
+  user_id: string;
+  nickname: string;
+  is_online: boolean;
+  availability_status: "free" | "busy" | "custom";
+  availability_text: string | null;
+  task_count: number;
+  estimate_hours: number;
+  capacity_hours: number;
+  load_percent: number;
+  overdue_count: number;
+  blocked_count: number;
+  due_this_week_count: number;
+  requirements: WorkloadRequirement[];
+};
+
+export type Notification = {
+  id: string;
+  type: string;
+  severity: "normal" | "high" | "urgent" | string;
+  title: string;
+  body: string | null;
+  target_url: string | null;
+  project_id: string | null;
+  requirement_id: string | null;
+  read_at: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ProjectHealth = {
+  project_id: string;
+  project_name: string;
+  project_slug: string;
+  score: number;
+  risk_level: "healthy" | "watch" | "risk" | string;
+  risks: string[];
+  overdue_count: number;
+  blocked_count: number;
+  unclaimed_count: number;
+  due_soon_count: number;
+  revision_count: number;
+  change_count: number;
+  active_count: number;
+  accepted_count: number;
+  throughput_30d: number;
+  avg_cycle_hours: number | null;
+  load_hours: number;
 };

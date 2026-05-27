@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Activity,
   ArrowLeft,
@@ -9,6 +9,7 @@ import {
   CheckSquare,
   ClipboardCheck,
   FileText,
+  ListChecks,
   MessageSquare,
   PackageCheck,
   Paperclip,
@@ -31,12 +32,13 @@ import { CommentsPanel } from "@/components/CommentsPanel";
 import { DeliverablesTab } from "@/components/DeliverablesTab";
 import { StatusBadge } from "@/components/StatusBadge";
 import { SpeakButton } from "@/components/SpeakButton";
-import type { Attachment, Identity, Requirement, RequirementWorkspace } from "@/lib/types";
+import type { Attachment, Identity, Requirement, RequirementAcceptanceItem, RequirementWorkspace, TaskPlan } from "@/lib/types";
 
-type Tab = "overview" | "workspace" | "chat" | "attachments" | "deliveries" | "comments" | "activity";
+type Tab = "overview" | "workspace" | "decomposition" | "chat" | "attachments" | "deliveries" | "comments" | "activity";
 const DETAIL_TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
   { key: "overview", label: "概览", Icon: FileText },
   { key: "workspace", label: "工作区", Icon: BriefcaseBusiness },
+  { key: "decomposition", label: "拆解", Icon: ListChecks },
   { key: "chat", label: "对话历史", Icon: Bot },
   { key: "attachments", label: "附件", Icon: Paperclip },
   { key: "deliveries", label: "交付物", Icon: PackageCheck },
@@ -60,11 +62,14 @@ function formatServerDate(value?: string | null): string {
 export function RequirementDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
+  const [searchParams] = useSearchParams();
   const [req, setReq] = useState<Requirement | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [workspaces, setWorkspaces] = useState<RequirementWorkspace[]>([]);
+  const [taskPlans, setTaskPlans] = useState<TaskPlan[]>([]);
+  const [acceptanceItems, setAcceptanceItems] = useState<RequirementAcceptanceItem[]>([]);
   const [me, setMe] = useState<Identity | null>(null);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>((searchParams.get("tab") as Tab) || "overview");
   const [actionBusy, setActionBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
@@ -77,18 +82,26 @@ export function RequirementDetail() {
     if (!id) return;
     const r = await api.getRequirement(id);
     setReq(r);
-    const [nextAttachments, nextWorkspaces] = await Promise.all([
+    const [nextAttachments, nextWorkspaces, nextPlans, nextAcceptance] = await Promise.all([
       api.listAttachments(id),
       api.listRequirementWorkspaces(id).catch(() => []),
+      api.listTaskPlans(id).catch(() => []),
+      api.listAcceptanceItems(id).catch(() => []),
     ]);
     setAttachments(nextAttachments);
     setWorkspaces(nextWorkspaces);
+    setTaskPlans(nextPlans);
+    setAcceptanceItems(nextAcceptance);
   };
 
   useEffect(() => { refresh(); }, [id]);
   useEffect(() => {
     api.me().then(setMe).catch(() => setMe(null));
   }, []);
+  useEffect(() => {
+    const nextTab = searchParams.get("tab") as Tab | null;
+    if (nextTab && DETAIL_TABS.some((item) => item.key === nextTab)) setTab(nextTab);
+  }, [searchParams]);
   // Reload from server when SSE says status changed
   useEffect(() => { if (latestStatus) refresh(); }, [latestStatus]);
   useEffect(() => {
@@ -333,15 +346,54 @@ export function RequirementDetail() {
 
       <section className="mt-6">
         {tab === "overview" && (
-          <div className="paper-surface p-6">
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-[#4e7146]">
-              <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
-              需求描述
-            </h3>
-            <pre className="mt-3 overflow-auto whitespace-pre-wrap rounded-lg border border-stone-200 bg-[#fffaf1] p-4 text-sm leading-relaxed text-stone-700">{req.summary_md || req.raw_description || "(空)"}</pre>
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="paper-surface p-4">
+                <div className="text-xs text-stone-500">估算工时</div>
+                <div className="mt-1 text-2xl font-semibold text-stone-950">{req.estimate_hours ?? "-"}h</div>
+              </div>
+              <div className="paper-surface p-4">
+                <div className="text-xs text-stone-500">估算信心</div>
+                <div className="mt-1 text-2xl font-semibold text-stone-950">{req.estimate_confidence || "-"}</div>
+              </div>
+              <div className="paper-surface p-4">
+                <div className="text-xs text-stone-500">验收标准</div>
+                <div className="mt-1 text-2xl font-semibold text-stone-950">{acceptanceItems.length}</div>
+              </div>
+            </div>
+            {req.planning_note && (
+              <div className="paper-panel p-4 text-sm leading-6 text-stone-700">
+                <div className="mb-1 text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">Planning note</div>
+                {req.planning_note}
+              </div>
+            )}
+            {acceptanceItems.length > 0 && (
+              <div className="paper-surface p-4">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-[#4e7146]">
+                  <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+                  验收标准
+                </h3>
+                <ul className="mt-3 space-y-2">
+                  {acceptanceItems.map((item) => (
+                    <li key={item.id} className="rounded-lg border border-stone-200 bg-[#fffdf8] p-3 text-sm">
+                      <div className="font-medium text-stone-950">{item.title}</div>
+                      {item.description && <p className="mt-1 text-stone-500">{item.description}</p>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="paper-surface p-6">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-[#4e7146]">
+                <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+                需求描述
+              </h3>
+              <pre className="mt-3 overflow-auto whitespace-pre-wrap rounded-lg border border-stone-200 bg-[#fffaf1] p-4 text-sm leading-relaxed text-stone-700">{req.summary_md || req.raw_description || "(空)"}</pre>
+            </div>
           </div>
         )}
         {tab === "workspace" && <WorkspaceBoard req={req} me={me} workspaces={workspaces} onChange={refresh} />}
+        {tab === "decomposition" && <DecompositionPanel req={req} me={me} plans={taskPlans} onChange={refresh} />}
         {tab === "chat" && <ChatHistory reqId={id} />}
         {tab === "attachments" && (
           <ul className="paper-surface divide-y divide-stone-200/80 overflow-hidden">
@@ -384,6 +436,152 @@ function ChatHistory({ reqId }: { reqId: string }) {
               {text}
             </div>
           </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DecompositionPanel({
+  req,
+  me,
+  plans,
+  onChange,
+}: {
+  req: Requirement;
+  me: Identity | null;
+  plans: TaskPlan[];
+  onChange: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const assignedIds = new Set(req.assignees.map((item) => item.user_id));
+  const canDispatch = me?.nickname === req.submitter_nickname;
+  const canWorker = !!me && (assignedIds.has(me.id) || req.claimed_by_user_id === me.id);
+
+  const trigger = async (stage: "dispatch" | "worker") => {
+    setBusy(`create-${stage}`);
+    setErr(null);
+    try {
+      await api.createTaskPlan(req.id, stage);
+      await onChange();
+      window.setTimeout(() => onChange(), 1400);
+    } catch (e: any) {
+      setErr(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const confirm = async (planId: string) => {
+    setBusy(`confirm-${planId}`);
+    setErr(null);
+    try {
+      await api.confirmTaskPlan(planId);
+      await onChange();
+    } catch (e: any) {
+      setErr(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const dismiss = async (planId: string) => {
+    setBusy(`dismiss-${planId}`);
+    setErr(null);
+    try {
+      await api.dismissTaskPlan(planId);
+      await onChange();
+    } catch (e: any) {
+      setErr(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="paper-surface p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-stone-950">两阶段 Agent 拆解</h3>
+            <p className="mt-1 text-sm text-stone-500">投递前拆验收，接单后拆个人清单；都要人工确认才落库。</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {canDispatch && (
+              <button className="button-secondary" disabled={!!busy} onClick={() => trigger("dispatch")}>
+                <ListChecks className="h-4 w-4" aria-hidden="true" />
+                {busy === "create-dispatch" ? "拆解中..." : "生成投递拆解"}
+              </button>
+            )}
+            {canWorker && (
+              <button className="button-primary" disabled={!!busy} onClick={() => trigger("worker")}>
+                <BriefcaseBusiness className="h-4 w-4" aria-hidden="true" />
+                {busy === "create-worker" ? "拆解中..." : "生成我的清单"}
+              </button>
+            )}
+          </div>
+        </div>
+        {err && <p className="mt-3 text-sm text-red-700">{err}</p>}
+      </div>
+
+      {plans.length === 0 ? (
+        <div className="empty-state">还没有拆解草稿。放心，按钮按下去之前它不会假装自己很懂。</div>
+      ) : plans.map((plan) => {
+        const canConfirm = plan.status === "draft" && (
+          (plan.stage === "dispatch" && canDispatch) ||
+          (plan.stage === "worker" && plan.target_user_id === me?.id)
+        );
+        const grouped = {
+          task: plan.items.filter((item) => item.item_type === "task"),
+          acceptance: plan.items.filter((item) => item.item_type === "acceptance"),
+          risk: plan.items.filter((item) => item.item_type === "risk"),
+        };
+        return (
+          <section key={plan.id} className="paper-surface p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="pill">{plan.stage === "dispatch" ? "投递前" : "接单后"}</span>
+                  <span className="pill">{plan.status}</span>
+                  {plan.target_nickname && <span className="pill">给 {plan.target_nickname}</span>}
+                </div>
+                <h4 className="mt-3 text-lg font-semibold text-stone-950">{plan.summary || "拆解还在生成中"}</h4>
+                {plan.risks && <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-stone-600">{plan.risks}</p>}
+              </div>
+              {canConfirm && (
+                <div className="flex gap-2">
+                  <button className="button-secondary min-h-9 px-3 py-1.5 text-xs" disabled={!!busy} onClick={() => dismiss(plan.id)}>
+                    忽略
+                  </button>
+                  <button className="button-accent min-h-9 px-3 py-1.5 text-xs" disabled={!!busy || plan.items.length === 0} onClick={() => confirm(plan.id)}>
+                    确认写入
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+              {([
+                ["task", "任务"],
+                ["acceptance", "验收"],
+                ["risk", "风险"],
+              ] as const).map(([key, label]) => (
+                <div key={key} className="paper-panel p-3">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">{label}</div>
+                  <div className="space-y-2">
+                    {grouped[key].length === 0 && <div className="text-xs text-stone-400">空</div>}
+                    {grouped[key].map((item) => (
+                      <div key={item.id} className="rounded-lg border border-stone-200 bg-[#fffdf8] p-3 text-sm">
+                        <div className="font-medium text-stone-950">{item.title}</div>
+                        {item.description && <p className="mt-1 text-xs leading-5 text-stone-500">{item.description}</p>}
+                        {item.estimate_hours != null && <p className="mt-2 text-xs text-stone-400">{item.estimate_hours}h</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
         );
       })}
     </div>

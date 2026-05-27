@@ -16,6 +16,8 @@ export function NewRequirement() {
   const [collaboratorUserIds, setCollaboratorUserIds] = useState<string[]>([]);
   const [startAt, setStartAt] = useState("");
   const [dueAt, setDueAt] = useState("");
+  const [estimateHours, setEstimateHours] = useState("");
+  const [estimateConfidence, setEstimateConfidence] = useState<"low" | "medium" | "high">("medium");
   const [reqId, setReqId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [busy, setBusy] = useState(false);
@@ -36,6 +38,8 @@ export function NewRequirement() {
         collaborator_user_ids: collaboratorUserIds,
         start_at: startAt ? new Date(startAt).toISOString() : null,
         due_at: dueAt ? new Date(dueAt).toISOString() : null,
+        estimate_hours: estimateHours ? Number(estimateHours) : null,
+        estimate_confidence: estimateHours ? estimateConfidence : null,
       });
       setReqId(r.id);
     } catch (e: any) {
@@ -116,6 +120,41 @@ export function NewRequirement() {
                 disabled={!!reqId}
                 onChange={(e) => setDueAt(e.target.value)}
               />
+            </label>
+          </div>
+        </div>
+
+        <div className="paper-panel mt-5 p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-stone-900">
+            <FileText className="h-4 w-4 text-stone-500" aria-hidden="true" />
+            轻量估算
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_180px]">
+            <label className="block">
+              <span className="text-xs font-medium text-stone-500">预计工时（可选）</span>
+              <input
+                className="field mt-1"
+                type="number"
+                min="0"
+                step="0.5"
+                value={estimateHours}
+                disabled={!!reqId}
+                onChange={(e) => setEstimateHours(e.target.value)}
+                placeholder="比如 6"
+              />
+            </label>
+            <label className="block">
+              <span className="text-xs font-medium text-stone-500">信心</span>
+              <select
+                className="select-field mt-1"
+                value={estimateConfidence}
+                disabled={!!reqId || !estimateHours}
+                onChange={(e) => setEstimateConfidence(e.target.value as "low" | "medium" | "high")}
+              >
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+              </select>
             </label>
           </div>
         </div>

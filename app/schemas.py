@@ -200,6 +200,9 @@ class RequirementCreateIn(BaseModel):
     collaborator_user_ids: list[str] = Field(default_factory=list)
     start_at: Optional[datetime] = None
     due_at: Optional[datetime] = None
+    estimate_hours: Optional[float] = Field(default=None, ge=0, le=10000)
+    estimate_confidence: Optional[str] = Field(default=None, pattern=r"^(low|medium|high)$")
+    planning_note: Optional[str] = Field(default=None, max_length=5000)
 
 
 class RequirementAssigneeOut(BaseModel):
@@ -219,6 +222,12 @@ class RequirementScheduleUpdateIn(BaseModel):
     due_at: Optional[datetime] = None
 
 
+class RequirementPlanningUpdateIn(BaseModel):
+    estimate_hours: Optional[float] = Field(default=None, ge=0, le=10000)
+    estimate_confidence: Optional[str] = Field(default=None, pattern=r"^(low|medium|high)$")
+    planning_note: Optional[str] = Field(default=None, max_length=5000)
+
+
 class RequirementOut(BaseModel):
     id: str
     code: str
@@ -232,6 +241,9 @@ class RequirementOut(BaseModel):
     summary_md: Optional[str]
     status: str
     priority: str
+    estimate_hours: Optional[float] = None
+    estimate_confidence: Optional[str] = None
+    planning_note: Optional[str] = None
     start_at: Optional[datetime]
     due_at: Optional[datetime]
     source_meeting_id: Optional[str] = None
@@ -312,6 +324,170 @@ class RequirementWorkspaceOut(BaseModel):
     updates: list[ProgressUpdateOut] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+
+# ---------- Task decomposition / acceptance ----------
+
+class RequirementAcceptanceItemOut(BaseModel):
+    id: str
+    requirement_id: str
+    title: str
+    description: Optional[str] = None
+    status: str
+    sort_order: int
+    source_plan_id: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskDecompositionCreateIn(BaseModel):
+    stage: str = Field(default="worker", pattern=r"^(dispatch|worker)$")
+
+
+class TaskPlanItemOut(BaseModel):
+    id: str
+    plan_id: str
+    title: str
+    description: Optional[str] = None
+    item_type: str
+    suggested_user_id: Optional[str] = None
+    suggested_nickname: Optional[str] = None
+    estimate_hours: Optional[float] = None
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskPlanOut(BaseModel):
+    id: str
+    requirement_id: str
+    stage: str
+    status: str
+    summary: Optional[str] = None
+    risks: Optional[str] = None
+    job_id: Optional[str] = None
+    created_by_nickname: str
+    target_user_id: Optional[str] = None
+    target_nickname: Optional[str] = None
+    confirmed_at: Optional[datetime] = None
+    items: list[TaskPlanItemOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskPlanConfirmOut(BaseModel):
+    plan: TaskPlanOut
+    acceptance_items: list[RequirementAcceptanceItemOut] = Field(default_factory=list)
+    workspace_items: list[WorkspaceItemOut] = Field(default_factory=list)
+
+
+# ---------- Knowledge search ----------
+
+class KnowledgeSearchHit(BaseModel):
+    document_id: str
+    project_id: Optional[str] = None
+    requirement_id: Optional[str] = None
+    source_type: str
+    source_id: str
+    title: str
+    source_url: str
+    line_no: int
+    snippet: str
+
+
+class KnowledgeSearchOut(BaseModel):
+    query: str
+    hits: list[KnowledgeSearchHit] = Field(default_factory=list)
+
+
+class KnowledgeAskIn(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    project_id: Optional[str] = None
+
+
+class KnowledgeAskCreateOut(BaseModel):
+    id: str
+    job_id: str
+    status: str
+
+
+class KnowledgeAskRunOut(BaseModel):
+    id: str
+    question: str
+    project_id: Optional[str]
+    status: str
+    job_id: Optional[str]
+    answer_md: Optional[str]
+    citations: list[KnowledgeSearchHit] = Field(default_factory=list)
+    trace: list[dict] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------- Planning / notifications / health ----------
+
+class WorkloadRequirementOut(BaseModel):
+    id: str
+    code: str
+    title: Optional[str]
+    project_id: str
+    project_slug: str
+    status: str
+    due_at: Optional[datetime]
+    estimate_hours: Optional[float]
+    progress_percent: Optional[int] = None
+    blocked_reason: Optional[str] = None
+
+
+class UserWorkloadOut(BaseModel):
+    user_id: str
+    nickname: str
+    is_online: bool = False
+    availability_status: str = "free"
+    availability_text: Optional[str] = None
+    task_count: int
+    estimate_hours: float
+    capacity_hours: float
+    load_percent: int
+    overdue_count: int
+    blocked_count: int
+    due_this_week_count: int
+    requirements: list[WorkloadRequirementOut] = Field(default_factory=list)
+
+
+class NotificationOut(BaseModel):
+    id: str
+    type: str
+    severity: str
+    title: str
+    body: Optional[str]
+    target_url: Optional[str]
+    project_id: Optional[str]
+    requirement_id: Optional[str]
+    read_at: Optional[datetime]
+    archived_at: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectHealthOut(BaseModel):
+    project_id: str
+    project_name: str
+    project_slug: str
+    score: int
+    risk_level: str
+    risks: list[str] = Field(default_factory=list)
+    overdue_count: int
+    blocked_count: int
+    unclaimed_count: int
+    due_soon_count: int
+    revision_count: int
+    change_count: int
+    active_count: int
+    accepted_count: int
+    throughput_30d: int
+    avg_cycle_hours: Optional[float] = None
+    load_hours: float
 
 
 # ---------- Attachment ----------
