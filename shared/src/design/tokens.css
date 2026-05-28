@@ -132,6 +132,38 @@
   --info-soft: rgba(107, 160, 255, 0.18);
 }
 
+/*
+ * Space accent override (派活 / dispatch lens) — swaps the primary accent from
+ * electric purple to coral while keeping everything else (canvas, ink, lines,
+ * semantic colors) untouched. Applied via `<html data-space="dispatch">`, set by
+ * the `useSpace` hook. The default state (`data-space="work"`) inherits the
+ * regular accent values defined above.
+ */
+[data-space="dispatch"] {
+  --accent: #ff6e8e;
+  --accent-hover: #f04b73;
+  --accent-soft: rgba(255, 110, 142, 0.14);
+}
+[data-theme="dark"][data-space="dispatch"] {
+  --accent: #ff8aa5;
+  --accent-hover: #ffa3b9;
+  --accent-soft: rgba(255, 138, 165, 0.2);
+}
+
+/*
+ * View Transitions API names — let the browser morph between Space layouts.
+ * Components opt-in by adding `style={{ viewTransitionName: "..." }}`.
+ */
+::view-transition-old(yqgl-sidebar),
+::view-transition-new(yqgl-sidebar),
+::view-transition-old(yqgl-hub),
+::view-transition-new(yqgl-hub),
+::view-transition-old(yqgl-space-chip),
+::view-transition-new(yqgl-space-chip) {
+  animation-duration: 320ms;
+  animation-timing-function: var(--ease-out-soft);
+}
+
 /* Base body + selection treatment shared by both themes */
 html {
   color: var(--ink);

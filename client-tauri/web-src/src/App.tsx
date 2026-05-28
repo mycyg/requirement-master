@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
-import { ToastHost, toast } from "@yqgl/shared";
+import { ToastHost, toast, useSpace } from "@yqgl/shared";
 import { TitleBar } from "@/components/TitleBar";
 import { Sidebar } from "@/components/Sidebar";
 import { Hub } from "@/routes/Hub";
+import { HubDispatch } from "@/routes/HubDispatch";
+import { NewRequirement } from "@/routes/NewRequirement";
+import { ProjectDrive } from "@/routes/ProjectDrive";
 import { TaskDetail } from "@/routes/TaskDetail";
 import { Inbox } from "@/routes/Inbox";
 import { Onboarding } from "@/routes/Onboarding";
@@ -14,12 +17,39 @@ import { ProjectPulse } from "@/routes/ProjectPulse";
 import { Calendar } from "@/routes/Calendar";
 import { invoke, useEvent, isTauri } from "@/lib/tauri";
 
+/**
+ * Routes `/` to either HubWork (接活 / claimant view) or HubDispatch
+ * (派活 / submitter view) based on the active Space. The route element is
+ * the same — just the page contents change — so URLs stay stable.
+ */
+function HubRouter() {
+  const { space } = useSpace();
+  return space === "dispatch" ? <HubDispatch /> : <Hub />;
+}
+
 type Cfg = { nickname: string; cookie_token: string; client_token: string };
 
 export function App() {
   const nav = useNavigate();
+  const { setSpace } = useSpace();
   const [cfg, setCfg] = useState<Cfg | null>(null);
   const [sseConnected, setSseConnected] = useState(false);
+
+  // Ctrl+1 / Ctrl+2 (Cmd on mac, though we ship windows-only) jumps between
+  // the 接活 and 派活 spaces. We listen at the document level so it works
+  // regardless of focused element — except text inputs, where ctrl+1 might
+  // mean something else to a power user.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.key === "1") { e.preventDefault(); setSpace("work"); }
+      else if (e.key === "2") { e.preventDefault(); setSpace("dispatch"); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setSpace]);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -116,8 +146,11 @@ export function App() {
           <Sidebar />
           <div className="flex-1 min-w-0 min-h-0 flex flex-col">
             <Routes>
-              <Route path="/" element={<Hub />} />
+              <Route path="/" element={<HubRouter />} />
+              <Route path="/r/new" element={<NewRequirement />} />
               <Route path="/r/:id" element={<TaskDetail />} />
+              <Route path="/p" element={<ProjectDrive />} />
+              <Route path="/p/:projectId" element={<ProjectDrive />} />
               <Route path="/inbox" element={<Inbox />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/me/workload" element={<MyWorkload />} />

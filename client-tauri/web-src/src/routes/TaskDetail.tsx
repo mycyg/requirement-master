@@ -21,6 +21,7 @@ import {
 } from "@yqgl/shared";
 import type { Requirement, RequirementWorkspace } from "@yqgl/shared";
 import { DeliveryWizard } from "@/components/DeliveryWizard";
+import { ActionRailDispatch } from "@/components/ActionRailDispatch";
 
 export function TaskDetail() {
   const { id = "" } = useParams();
@@ -115,6 +116,11 @@ export function TaskDetail() {
       >
         <ArrowLeft className="h-4 w-4" /> 返回工单
       </button>
+
+      {/* Submitter-only operations live in their own card up top so the verify /
+          revise affordance is impossible to miss when status=delivered. The
+          component returns null for non-submitters. */}
+      <ActionRailDispatch req={req} meId={me?.id ?? null} onChange={refresh} />
 
       <Card variant="glass-strong" padding="lg" className="mb-5">
         <div className="flex items-start justify-between gap-4">

@@ -7,8 +7,10 @@ mod http;
 mod notify;
 mod reminders;
 mod sse;
+mod spec_watch;
 mod sync;
 mod tray;
+mod upload;
 mod window;
 
 use std::sync::Arc;
@@ -97,6 +99,23 @@ pub fn run() {
             commands::config::set_config,
             commands::config::test_server,
             commands::shell::open_folder,
+            commands::submitter::list_my_projects,
+            commands::submitter::list_users,
+            commands::submitter::create_requirement,
+            commands::submitter::patch_planning,
+            commands::submitter::patch_schedule,
+            commands::submitter::put_assignees,
+            commands::submitter::submit_requirement,
+            commands::submitter::accept_requirement,
+            commands::submitter::request_revision,
+            commands::submitter::list_attachments,
+            commands::submitter::upload_attachment,
+            commands::submitter::download_delivery,
+            commands::submitter::start_spec_watcher,
+            commands::submitter::stop_spec_watcher,
+            commands::submitter::open_spec_folder,
+            commands::submitter::list_drive_root,
+            commands::submitter::upload_drive_item,
         ])
         .run(tauri::generate_context!())
         .expect("error while running yqgl client");

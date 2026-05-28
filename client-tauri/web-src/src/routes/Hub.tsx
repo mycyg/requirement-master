@@ -73,7 +73,7 @@ export function Hub() {
   };
 
   return (
-    <div className="flex-1 p-6 overflow-auto">
+    <div className="flex-1 p-6 overflow-auto" style={{ viewTransitionName: "yqgl-hub" }}>
       <header className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-h2 text-ink">{title}</h1>

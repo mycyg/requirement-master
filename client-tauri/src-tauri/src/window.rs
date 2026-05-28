@@ -13,8 +13,14 @@ pub fn decorate<R: Runtime>(app: &tauri::AppHandle<R>) {
 
     #[cfg(target_os = "windows")]
     {
-        if apply_mica(&window, Some(true)).is_err() {
-            let _ = apply_acrylic(&window, Some((255, 255, 255, 30)));
+        // Acrylic = true semi-transparent blur (real-time, sees the desktop
+        // + other windows through the blur), much closer to the macOS Dock
+        // look than Mica (which uses the wallpaper as a static texture).
+        // Tint = light wash on top so the dark theme still has some lift.
+        if apply_acrylic(&window, Some((255, 255, 255, 18))).is_err() {
+            // Older Win11 builds may have deprecated Acrylic — fall back to
+            // base Mica (light variant: `false`) which is gentler than MicaAlt.
+            let _ = apply_mica(&window, Some(false));
         }
     }
 
