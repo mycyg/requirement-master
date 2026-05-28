@@ -127,6 +127,26 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
             return
 
         if outcome.success:
+            # Race check FIRST — if the requirement was cancelled while AI ran,
+            # don't write a zip, don't add a Delivery row, don't clobber state.
+            # Also short-circuit the job into "succeeded but skipped" so the
+            # UI doesn't show a perpetual 85% spinner.
+            if r.status != "ai_processing":
+                if job_id:
+                    job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
+                    if job:
+                        update_job(
+                            db, job,
+                            status="succeeded",
+                            progress_percent=100,
+                            message=f"AI 完成但需求状态已是 {r.status}，跳过登记交付",
+                            result_ref=req_id,
+                        )
+                        db.commit()
+                        await publish_job(job)
+                shutil.rmtree(workdir, ignore_errors=True)
+                return
+
             # Package + register a Delivery
             round_num = 1 + (db.query(Delivery).filter(Delivery.requirement_id == req_id).count())
             pkg_dir = settings.data_dir / "deliveries" / req_id
@@ -157,12 +177,6 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
                 submitted_by_nickname=f"AI ({settings.llm_model})",
             )
             db.add(d)
-            # If the requirement got cancelled while AI was running,
-            # don't clobber it back to delivered. Allowed transitions
-            # from `ai_processing` are only `cancelled` — anything else
-            # means a race / manual intervention we shouldn't overwrite.
-            if r.status != "ai_processing":
-                return
             r.status = "delivered"
             r.delivered_at = datetime.utcnow()
             r.delivery_doc_ready_at = r.delivered_at

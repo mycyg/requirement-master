@@ -187,6 +187,7 @@ class UserOut(BaseModel):
     availability_text: Optional[str] = None
     availability_updated_at: Optional[datetime] = None
     is_admin: bool = False
+    deleted_at: Optional[datetime] = None
 
 
 class UserStatusUpdateIn(BaseModel):

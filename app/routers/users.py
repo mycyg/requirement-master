@@ -43,7 +43,7 @@ def list_users(
     return [
         UserOut(
             id=u.id,
-            nickname=u.nickname,
+            nickname=u.display_name,
             is_online=presence[u.id].is_online,
             last_seen_at=presence[u.id].last_seen_at,
             availability_status=u.availability_status or "free",
@@ -70,13 +70,14 @@ def update_my_status(
     presence = get_presence_map([user.id])[user.id]
     return UserOut(
         id=user.id,
-        nickname=user.nickname,
+        nickname=user.display_name,
         is_online=presence.is_online,
         last_seen_at=presence.last_seen_at,
         availability_status=user.availability_status,
         availability_text=user.availability_text,
         availability_updated_at=user.availability_updated_at,
         is_admin=bool(getattr(user, "is_admin", False)),
+        deleted_at=getattr(user, "deleted_at", None),
     )
 
 
@@ -158,11 +159,12 @@ def set_user_admin(
     presence = get_presence_map([target.id])[target.id]
     return UserOut(
         id=target.id,
-        nickname=target.nickname,
+        nickname=target.display_name,
         is_online=presence.is_online,
         last_seen_at=presence.last_seen_at,
         availability_status=target.availability_status or "free",
         availability_text=target.availability_text,
         availability_updated_at=target.availability_updated_at,
         is_admin=bool(target.is_admin),
+        deleted_at=target.deleted_at,
     )

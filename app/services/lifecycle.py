@@ -93,7 +93,12 @@ def _resolve_recipients(db: Session, req: Requirement, recipient_role: str, acto
     user_ids.discard(actor.id)
     if not user_ids:
         return []
-    return db.query(User).filter(User.id.in_(user_ids)).all()
+    # Skip soft-deleted users — they can't log in to see the notification,
+    # so creating one just clutters the DB and the unread badge for a
+    # ghost account no one will see.
+    return db.query(User).filter(
+        User.id.in_(user_ids), User.deleted_at.is_(None),
+    ).all()
 
 
 def queue_status_notifications(

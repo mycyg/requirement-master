@@ -69,6 +69,13 @@ def update_job(
 
 
 async def publish_job(job: BackgroundJob) -> None:
+    """Publish job updates ONLY to (a) the per-job topic for callers
+    polling a specific job, and (b) the owner's user channel so their
+    desktop client can react. We deliberately do NOT publish to the
+    global `all` topic — that would leak `result_ref` (= requirement_id),
+    progress, and message text to every connected user, same class of
+    cross-user info disclosure as the notification leak fixed earlier."""
     data = job_out(job).model_dump(mode="json")
-    await bus.publish("all", "job.updated", data)
     await bus.publish(f"job:{job.id}", "job.updated", data)
+    if job.created_by_user_id:
+        await bus.publish(f"user:{job.created_by_user_id}", "job.updated", data)
