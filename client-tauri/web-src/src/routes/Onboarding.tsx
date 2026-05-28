@@ -27,7 +27,7 @@ export function Onboarding() {
   const [serverOk, setServerOk] = useState<boolean | null>(null);
   const [nickname, setNickname] = useState("");
   const [syncRoot, setSyncRoot] = useState("D:\\工作需求");
-  const [driveMode, setDriveMode] = useState<"off" | "download" | "two_way">("download");
+  const [driveMode, setDriveMode] = useState<"off" | "download">("download");
   const [busy, setBusy] = useState(false);
 
   // Pre-fill fields from any pre-existing config so the user doesn't have to retype.
@@ -37,7 +37,9 @@ export function Onboarding() {
       if (cfg?.server_port) setPort(String(cfg.server_port));
       if (cfg?.nickname) setNickname(cfg.nickname);
       if (cfg?.sync_root) setSyncRoot(cfg.sync_root);
-      if (cfg?.drive_sync_mode) setDriveMode(cfg.drive_sync_mode);
+      if (cfg?.drive_sync_mode === "off" || cfg?.drive_sync_mode === "download") {
+        setDriveMode(cfg.drive_sync_mode);
+      }
     }).catch(() => { /* ignore — fresh install */ });
   }, []);
 
@@ -157,7 +159,7 @@ export function Onboarding() {
               <div>
                 <span className="text-caption text-ink-muted">项目网盘同步</span>
                 <div className="flex gap-2 mt-1">
-                  {(["off", "download", "two_way"] as const).map((m) => (
+                  {(["off", "download"] as const).map((m) => (
                     <button
                       key={m}
                       onClick={() => setDriveMode(m)}
@@ -165,9 +167,12 @@ export function Onboarding() {
                         driveMode === m ? "bg-accent text-white border-accent" : "border-line text-ink-soft hover:border-accent/40"
                       }`}
                     >
-                      {m === "off" ? "关" : m === "download" ? "仅下载" : "双向同步"}
+                      {m === "off" ? "关" : "仅下载"}
                     </button>
                   ))}
+                </div>
+                <div className="mt-2 text-caption text-ink-faint">
+                  双向同步还在保护性内测；当前版本只开放安全的单向下载。
                 </div>
               </div>
               <div className="pt-3 flex justify-between">

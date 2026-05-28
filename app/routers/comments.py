@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from auth import current_user
 from db import get_db
-from models import ActivityLog, Comment, Requirement, User
+from models import ActivityLog, Comment, Project, Requirement, User
 from schemas import ActivityOut, CommentCreateIn, CommentOut
 from services.activity import log_activity
 from services.permissions import can_view_requirement_record
@@ -16,7 +16,16 @@ router = APIRouter(prefix="/api", tags=["comments"])
 
 
 def _require_req(db: Session, req_id: str) -> Requirement:
-    r = db.query(Requirement).filter(Requirement.id == req_id).first()
+    r = (
+        db.query(Requirement)
+        .join(Project, Project.id == Requirement.project_id)
+        .filter(
+            Requirement.id == req_id,
+            Project.archived == False,  # noqa: E712
+            Project.deleted_at.is_(None),
+        )
+        .first()
+    )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
     return r

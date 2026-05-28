@@ -111,7 +111,7 @@ impl Default for Config {
 
 impl Config {
     pub fn recompute_url(&mut self) {
-        if self.server_url.is_empty() {
+        if self.server_url.is_empty() && !self.server_ip.trim().is_empty() {
             self.server_url = format!("{}://{}:{}", self.server_scheme, self.server_ip, self.server_port);
         }
     }

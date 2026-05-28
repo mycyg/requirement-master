@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from auth import current_user
 from db import SessionLocal, get_db
-from models import Attachment, ChatMessage, Requirement, User
+from models import Attachment, ChatMessage, Project, Requirement, User
 from services.activity import log_activity
 from services.llm_agent import AgentEvent, step
 from services.permissions import can_view_requirement_record
@@ -61,7 +61,16 @@ def _sse(event: str, data) -> bytes:
 
 
 def _require_req(db: Session, req_id: str) -> Requirement:
-    r = db.query(Requirement).filter(Requirement.id == req_id).first()
+    r = (
+        db.query(Requirement)
+        .join(Project, Project.id == Requirement.project_id)
+        .filter(
+            Requirement.id == req_id,
+            Project.archived == False,  # noqa: E712
+            Project.deleted_at.is_(None),
+        )
+        .first()
+    )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
     return r
@@ -161,7 +170,16 @@ async def chat_step(
                     db2.add(msg)
                     if kind == "summary":
                         payload_d = parsed.get("payload", {}) or {}
-                        req2 = db2.query(Requirement).filter(Requirement.id == req_id).first()
+                        req2 = (
+                            db2.query(Requirement)
+                            .join(Project, Project.id == Requirement.project_id)
+                            .filter(
+                                Requirement.id == req_id,
+                                Project.archived == False,  # noqa: E712
+                                Project.deleted_at.is_(None),
+                            )
+                            .first()
+                        )
                         # Only transition into summary_ready if the requirement
                         # is still in an in-progress clarify state. If the user
                         # cancelled or admin-deleted the requirement during the

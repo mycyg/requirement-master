@@ -3,6 +3,39 @@
 审查日期：2026-05-26  
 范围：`web/` 前端、`app/` FastAPI 后端、上传/交付/AI 自动处理核心链路。
 
+## 2026-05-29 UI / 客户端 / 数据流复核
+
+本轮从两条线复核：
+
+- UI 交互：Web、客户端 Web 壳、真实 Tauri exe 窗口、移动端、桌面、超宽屏截图。
+- 数据流：项目生命周期向需求、澄清、评论、活动、交付、日程、网盘、知识库、通知和客户端同步的下游传播。
+
+已修复：
+
+- 归档或软删除项目后，子需求的澄清对话、评论和活动入口会直接返回 404，避免项目被封存后仍能继续补充需求或写入协作流。
+- 澄清流后台生成 summary 时再次确认父项目仍处于 active 状态，避免 LLM 长任务结束后把已归档项目里的需求重新推进状态。
+- Tauri fresh config 不再把空 IP 计算成 `http://:8080`，避免后台 SSE / reminder 在首次配置前反复访问无效 URL。
+- 客户端 Onboarding 移除“双向同步”可选项；当前 Rust 同步层只开放 `off / download`，UI 不再展示后端会拒绝的模式。
+- Tauri 默认打包目标从 `msi + nsis + 跨平台包` 收敛为 Windows 可通过的 NSIS，`npm run tauri:build` 可直接产出安装包。
+
+验证结果：
+
+- `python -m compileall app client scripts asr_service tts_service` 通过。
+- `python scripts/smoke_workflow.py` 通过，并新增“项目归档后封住子需求 chat/comments/activity/answer”的回归覆盖。
+- `npm run build` 通过。
+- `npm run e2e:web` 通过：25 个用例中 23 passed / 2 skipped；覆盖 Web 桌面、移动端和超宽屏。
+- `cargo check --manifest-path client-tauri/src-tauri/Cargo.toml` 通过。
+- `npm run tauri:build --workspace=client-tauri` 通过，输出 `client-tauri/src-tauri/target/release/bundle/nsis/需求管理大师_0.2.0_x64-setup.exe`。
+- 客户端专项 E2E 通过：`client-routes.spec.ts` 与 `client-spaces.spec.ts` 共 2 passed，并刷新客户端截图。
+- 真实 Tauri exe 已启动并截图：`screenshots/aurora/client/native-tauri-window-clean.png`。
+
+数据流合理性结论：
+
+- 主干层级“项目 -> 需求 -> 接单方 -> 工作区 -> 交付/验收”现在是闭环的；项目归档/删除会向下游读写入口传播。
+- 派活端与接活端的职责分界基本合理：Web 保持派活/查看/验收，本地端承担接单、工作区编辑、同步和交付。
+- 当前仍刻意不开放双向同步，数据安全优先；UI 已与实现保持一致。
+- 知识库继续采用可 grep 的项目语料，不引入 embedding；这与当前内网小团队、可追溯证据优先的定位一致。
+
 ## 本轮已修复
 
 - 摘要生成后不再直接进入 `ready`，改为 `summary_ready`，必须由提交人确认投递或选择 AI 处理。

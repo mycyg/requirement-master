@@ -74,11 +74,28 @@ def main() -> None:
             r = alice.post("/api/projects", json={"name": "State Smoke", "slug": "state-smoke"})
             expect(201, r.status_code, r.text)
             state_project_id = r.json()["id"]
+            r = alice.post(
+                f"/api/projects/{state_project_id}/requirements",
+                json={"raw_description": "Archived project should seal child flows", "priority": "normal", "due_at": due},
+            )
+            expect(201, r.status_code, r.text)
+            state_req_id = r.json()["id"]
+            r = alice.post(f"/api/requirements/{state_req_id}/comments", json={"body": "before archive"})
+            expect(200, r.status_code, r.text)
             r = bob.post(f"/api/projects/{state_project_id}/archive")
             expect(403, r.status_code, r.text)
             r = alice.post(f"/api/projects/{state_project_id}/archive")
             expect(200, r.status_code, r.text)
             assert r.json()["archived"] is True and r.json()["deleted_at"] is None, r.text
+            for path in (
+                f"/api/requirements/{state_req_id}/chat/messages",
+                f"/api/requirements/{state_req_id}/comments",
+                f"/api/requirements/{state_req_id}/activity",
+            ):
+                r = alice.get(path)
+                expect(404, r.status_code, r.text)
+            r = alice.post(f"/api/requirements/{state_req_id}/chat/answer", json={"text": "after archive"})
+            expect(404, r.status_code, r.text)
             r = alice.get("/api/projects")
             expect(200, r.status_code, r.text)
             assert state_project_id not in {p["id"] for p in r.json()}, r.text
