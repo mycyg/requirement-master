@@ -17,7 +17,7 @@ export function TitleBar({ sseConnected }: { sseConnected: boolean }) {
   return (
     <div
       data-tauri-drag-region
-      className="h-9 w-full flex items-center justify-between px-2 select-none border-b border-line/60"
+      className="relative z-30 h-9 w-full flex items-center justify-between px-2 select-none border-b border-line/60"
     >
       {/* Left: Space switcher pill. Tauri's drag region honors button events, so the click registers. */}
       <div className="flex items-center gap-2">
