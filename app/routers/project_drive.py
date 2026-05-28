@@ -236,22 +236,40 @@ def _reindex_project_in_background(project_id: str) -> None:
     """Owns its own DB session (request session already closed by the time
     BackgroundTasks runs). Coalesces with concurrent schedules via
     `_reindex_state` so a burst of writes triggers at most 2 reindexes
-    (one immediate, one trailing if more dirties arrived mid-run)."""
-    while True:
-        db = SessionLocal()
-        try:
-            rebuild_knowledge_index(db, project_id=project_id)
-        except Exception:
-            logger.exception("background project reindex failed for %s", project_id)
-        finally:
-            db.close()
+    (one immediate, one trailing if more dirties arrived mid-run).
+
+    The worker itself owns the `running` flag — schedule_project_reindex
+    only sets `dirty`. This way a request that crashes between scheduling
+    and response (BackgroundTasks gets cancelled) doesn't leak a sticky
+    `running=True` that blocks all future schedules.
+    """
+    # Acquire run-slot. If another worker is already in flight we mark
+    # ourselves dirty and exit; the in-flight worker will re-loop.
+    with _reindex_lock:
+        state = _reindex_state.setdefault(project_id, {"running": False, "dirty": False})
+        if state["running"]:
+            state["dirty"] = True
+            return
+        state["running"] = True
+    try:
+        while True:
+            db = SessionLocal()
+            try:
+                rebuild_knowledge_index(db, project_id=project_id)
+            except Exception:
+                logger.exception("background project reindex failed for %s", project_id)
+            finally:
+                db.close()
+            with _reindex_lock:
+                state = _reindex_state.get(project_id)
+                if state is None or not state.get("dirty"):
+                    return
+                state["dirty"] = False  # consume and re-loop
+    finally:
         with _reindex_lock:
             state = _reindex_state.get(project_id)
-            if state is None or not state.get("dirty"):
-                if state is not None:
-                    state["running"] = False
-                return
-            state["dirty"] = False  # consume the dirty flag and re-loop
+            if state is not None:
+                state["running"] = False
 
 
 def schedule_project_reindex(background: BackgroundTasks, project_id: str) -> None:
@@ -262,12 +280,6 @@ def schedule_project_reindex(background: BackgroundTasks, project_id: str) -> No
 
     Bulk-safe: 50 calls in a row from one request (e.g. paste-copy 50
     items) translate to at most 2 reindex runs via `_reindex_state`."""
-    with _reindex_lock:
-        state = _reindex_state.setdefault(project_id, {"running": False, "dirty": False})
-        if state["running"]:
-            state["dirty"] = True
-            return
-        state["running"] = True
     background.add_task(_reindex_project_in_background, project_id)
 
 
@@ -822,6 +834,15 @@ def finalize_drive_upload(
     return _item_out(db, item)
 
 
+# Mime types we trust to inline-render without becoming an XSS pivot. Notably
+# excludes svg/html/xml: those CAN carry <script> AND the browser will execute
+# it in the API origin's security context (same origin as the SPA), giving the
+# uploader full takeover of the viewer's session.
+_INLINE_SAFE_MIME_PREFIXES = ("image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp",
+                              "image/x-icon", "image/vnd.microsoft.icon", "audio/", "video/",
+                              "application/pdf", "text/plain")
+
+
 @router.get("/drive/files/{item_id}/download")
 def download_drive_file(
     item_id: str,
@@ -838,9 +859,23 @@ def download_drive_file(
     path = Path(version.storage_path)
     if not path.exists():
         raise HTTPException(status_code=410, detail="file missing on disk")
-    if inline:
-        return FileResponse(path, media_type=version.mime or "application/octet-stream")
-    return FileResponse(path, filename=item.name, media_type=version.mime or "application/octet-stream")
+    raw_mime = (version.mime or "application/octet-stream").lower()
+    # Always send filename so Starlette emits Content-Disposition. Without
+    # an explicit Disposition, an SVG/HTML upload would render in-origin
+    # and execute its <script> with the viewer's auth cookies. nosniff
+    # blocks the browser from "helpfully" reinterpreting a quoted-mime
+    # text/plain as text/html.
+    disposition = "inline" if inline else "attachment"
+    safe_mime = raw_mime if (
+        inline and any(raw_mime.startswith(p) for p in _INLINE_SAFE_MIME_PREFIXES)
+    ) else (raw_mime if not inline else "application/octet-stream")
+    return FileResponse(
+        path,
+        filename=item.name,
+        media_type=safe_mime,
+        content_disposition_type=disposition,
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.post("/drive/bulk-download")

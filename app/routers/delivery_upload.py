@@ -194,14 +194,6 @@ async def finalize(
     actual_names = {p.name for p in chunks}
     if actual_names != expected_names:
         raise HTTPException(status_code=400, detail="chunk set is incomplete or invalid")
-    for idx, c in enumerate(chunks):
-        expected_size = _expected_chunk_size(meta, idx)
-        if c.stat().st_size != expected_size:
-            raise HTTPException(
-                status_code=400,
-                detail=f"chunk {idx} size mismatch: got {c.stat().st_size}, expected {expected_size}",
-            )
-
     out_dir = settings.data_dir / "deliveries" / req_id
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = out_dir / f".{upload_id}.zip.tmp"
@@ -209,8 +201,15 @@ async def finalize(
     # 1 GB merges synchronously freeze every other request handler. The
     # handler is `async def` so the chunk-loop blocks the event loop —
     # health checks time out, SSE streams stall, other uploads stall.
-    # Push the bytes work to a worker thread.
-    def _merge_chunks_sync() -> tuple[int, str]:
+    # Push the bytes work to a worker thread; also fold in the per-chunk
+    # `.stat().st_size` validation (1000× os calls on a 1GB upload) so
+    # we don't bounce in and out of the loop.
+    def _validate_and_merge_sync() -> tuple[int, str]:
+        for idx, c in enumerate(chunks):
+            expected_size = _expected_chunk_size(meta, idx)
+            actual_size = c.stat().st_size
+            if actual_size != expected_size:
+                raise ValueError(f"chunk {idx} size mismatch: got {actual_size}, expected {expected_size}")
         h = hashlib.sha256()
         total = 0
         with open(tmp_path, "wb") as out:
@@ -223,19 +222,18 @@ async def finalize(
                         h.update(buf)
                         total += len(buf)
         return total, h.hexdigest()
-    total, digest_hex = await asyncio.to_thread(_merge_chunks_sync)
+    try:
+        total, digest_hex = await asyncio.to_thread(_validate_and_merge_sync)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if total != meta["total_size"]:
         tmp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=f"size mismatch: got {total}, expected {meta['total_size']}")
-    # Reconstruct a hashlib-compatible object for downstream `.hexdigest()`
-    # callers (kept minimal — we just need the hex string).
-    class _Digest:
-        def __init__(self, hexstr: str) -> None: self._hex = hexstr
-        def hexdigest(self) -> str: return self._hex
-    h = _Digest(digest_hex)
 
     try:
-        file_count = len(inspect_zip_entries(tmp_path))
+        # Central-dir scan on a 1 GB zip can take a few hundred ms — keep
+        # it off the event loop.
+        file_count = len(await asyncio.to_thread(inspect_zip_entries, tmp_path))
     except Exception as e:
         tmp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=f"invalid delivery zip: {e}")
@@ -297,7 +295,7 @@ async def finalize(
     d = Delivery(
         requirement_id=req_id, round=round_num,
         package_path=str(out_path), package_size=total,
-        package_sha256=h.hexdigest(), file_count=file_count,
+        package_sha256=digest_hex, file_count=file_count,
         delivery_doc_md="（AI 正在撰写交付文档…）",
         submitted_by_nickname=user.nickname,
     )
@@ -325,7 +323,9 @@ async def finalize(
         _rollback_status()
         raise
 
-    shutil.rmtree(pdir, ignore_errors=True)
+    # rmtree of a partial dir holding ~1000 chunks can be ~100ms+ on slow
+    # disks — offload so we don't block the event loop on hot-path success.
+    await asyncio.to_thread(shutil.rmtree, pdir, True)
 
     await flush_status_notifications(pending)
     await bus.publish(f"req:{req_id}", "requirement.updated", {"status": "delivery_doc_pending"})

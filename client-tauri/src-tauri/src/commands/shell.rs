@@ -115,6 +115,5 @@ pub fn open_folder(state: State<'_, ConfigState>, path: String) -> Result<()> {
     {
         std::process::Command::new("xdg-open").arg(arg).spawn().ok();
     }
-    let _ = Path::new("");  // suppress unused-import warning when only one cfg branch compiles
     Ok(())
 }

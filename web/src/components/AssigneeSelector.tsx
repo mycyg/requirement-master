@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search, Star, UserPlus, Users, X } from "lucide-react";
+import { parseServerDate } from "@yqgl/shared";
 import { api } from "@/lib/api";
 import type { UserOption } from "@/lib/types";
 
@@ -23,8 +24,11 @@ function statusLabel(user?: UserOption): string {
   const availability = availabilityLabel(user);
   if (user.is_online) return `在线 · ${availability}`;
   if (!user.last_seen_at) return "未上线";
-  const seenAt = new Date(user.last_seen_at).getTime();
-  if (Number.isNaN(seenAt)) return "离线";
+  // Server emits naive UTC; raw `new Date(...)` reads as local time and
+  // misjudges the freshness window by the user's offset (8h in CN).
+  const seen = parseServerDate(user.last_seen_at);
+  if (!seen) return "离线";
+  const seenAt = seen.getTime();
   const diff = Math.max(0, Date.now() - seenAt);
   if (diff < 60_000) return "刚刚在线";
   if (diff < 60 * 60_000) return `${Math.max(1, Math.round(diff / 60_000))} 分钟前`;

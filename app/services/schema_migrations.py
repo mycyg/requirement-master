@@ -627,3 +627,35 @@ def ensure_runtime_schema(engine: Engine) -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_requirement_acceptance_items_requirement_id ON requirement_acceptance_items (requirement_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_requirement_acceptance_items_status ON requirement_acceptance_items (status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_requirement_acceptance_items_source_plan_id ON requirement_acceptance_items (source_plan_id)"))
+
+        # Idempotent orphan cleanup. Pre-`foreign_keys=ON` deployments may
+        # have rows whose cross-reference points at a long-deleted
+        # Requirement / Meeting; SQLite didn't enforce, so the orphans
+        # accumulated. Now that PRAGMA foreign_keys=ON is set per
+        # connection (db.py), any UPDATE on those rows would fail. Null
+        # them out at boot so the FK check passes on future writes.
+        conn.execute(text("""
+            UPDATE project_drive_comments SET draft_requirement_id = NULL
+            WHERE draft_requirement_id IS NOT NULL
+              AND draft_requirement_id NOT IN (SELECT id FROM requirements)
+        """))
+        conn.execute(text("""
+            UPDATE meeting_insights SET target_requirement_id = NULL
+            WHERE target_requirement_id IS NOT NULL
+              AND target_requirement_id NOT IN (SELECT id FROM requirements)
+        """))
+        conn.execute(text("""
+            UPDATE meeting_insights SET created_requirement_id = NULL
+            WHERE created_requirement_id IS NOT NULL
+              AND created_requirement_id NOT IN (SELECT id FROM requirements)
+        """))
+        conn.execute(text("""
+            UPDATE requirements SET source_requirement_id = NULL
+            WHERE source_requirement_id IS NOT NULL
+              AND source_requirement_id NOT IN (SELECT id FROM requirements)
+        """))
+        conn.execute(text("""
+            UPDATE requirements SET source_meeting_id = NULL
+            WHERE source_meeting_id IS NOT NULL
+              AND source_meeting_id NOT IN (SELECT id FROM meeting_records)
+        """))

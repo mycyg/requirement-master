@@ -4,25 +4,15 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy.orm import Session
 
 from auth import current_user
-from db import SessionLocal, get_db
+from db import get_db
 from models import Project, User
 from schemas import ProjectCreateIn, ProjectOut
-from services.knowledge import rebuild_knowledge_index
+# Single source of truth for the background reindex helper. Was duplicated
+# across two routers; consolidated so a future change (debounce policy,
+# logging, etc.) lands once.
+from routers.project_drive import schedule_project_reindex
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
-
-
-def _reindex_project_in_background(project_id: str) -> None:
-    """Mirrors the helper in project_drive.py — owns its own DB session
-    because BackgroundTasks runs after the request session is closed."""
-    import logging
-    db = SessionLocal()
-    try:
-        rebuild_knowledge_index(db, project_id=project_id)
-    except Exception:
-        logging.getLogger(__name__).exception("background project reindex failed for %s", project_id)
-    finally:
-        db.close()
 
 
 def _to_out(p: Project) -> ProjectOut:
@@ -146,7 +136,7 @@ def archive_project(
     db.refresh(p)
     # Reindex in background so archived project's rows drop from knowledge
     # search within seconds rather than waiting for the periodic 5-min cycle.
-    background.add_task(_reindex_project_in_background, project_id)
+    schedule_project_reindex(background, project_id)
     return _to_out(p)
 
 
@@ -165,7 +155,7 @@ def restore_project(
     db.commit()
     db.refresh(p)
     # Reindex to restore the project's rows back into knowledge search.
-    background.add_task(_reindex_project_in_background, project_id)
+    schedule_project_reindex(background, project_id)
     return _to_out(p)
 
 
@@ -183,5 +173,5 @@ def soft_delete_project(
         p.deleted_by_nickname = user.nickname
     db.commit()
     db.refresh(p)
-    background.add_task(_reindex_project_in_background, project_id)
+    schedule_project_reindex(background, project_id)
     return _to_out(p)

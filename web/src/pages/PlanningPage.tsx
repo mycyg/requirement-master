@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, CalendarClock, Filter, UserRound } from "lucide-react";
+import { parseServerDate } from "@yqgl/shared";
 import { api } from "@/lib/api";
 import type { Project, UserWorkload } from "@/lib/types";
 
@@ -121,7 +122,7 @@ export function PlanningPage() {
                         <div className="font-medium text-stone-950"><span className="mr-2 font-mono text-xs text-stone-400">{req.code}</span>{req.title || "未命名需求"}</div>
                         <div className="mt-1 flex flex-wrap gap-2 text-xs text-stone-500">
                           <span>{req.status}</span>
-                          {req.due_at && <span><CalendarClock className="mr-1 inline h-3 w-3" />{new Date(req.due_at).toLocaleString("zh-CN", { hour12: false })}</span>}
+                          {req.due_at && <span><CalendarClock className="mr-1 inline h-3 w-3" />{parseServerDate(req.due_at)?.toLocaleString("zh-CN", { hour12: false })}</span>}
                           {req.blocked_reason && <span className="text-red-700"><AlertTriangle className="mr-1 inline h-3 w-3" />阻塞</span>}
                         </div>
                       </div>

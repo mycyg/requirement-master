@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bell, CheckCheck, ExternalLink, Inbox } from "lucide-react";
+import { parseServerDate } from "@yqgl/shared";
 import { api } from "@/lib/api";
 import type { Notification as AppNotification } from "@/lib/types";
 
@@ -92,7 +93,7 @@ export function NotificationsPage() {
                   <span className={`pill ${row.severity === "high" || row.severity === "urgent" ? "border-red-200 bg-red-50 text-red-700" : ""}`}>
                     {row.severity}
                   </span>
-                  <span className="text-xs text-stone-400">{new Date(row.created_at).toLocaleString("zh-CN", { hour12: false })}</span>
+                  <span className="text-xs text-stone-400">{parseServerDate(row.created_at)?.toLocaleString("zh-CN", { hour12: false })}</span>
                 </div>
                 <h2 className="mt-2 break-words text-sm font-semibold text-stone-950">{row.title}</h2>
                 {row.body && <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-stone-600">{row.body}</p>}
