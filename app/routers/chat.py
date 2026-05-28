@@ -20,7 +20,15 @@ from services.push_bus import bus
 from services.schedule import sync_requirement_due_event
 
 router = APIRouter(prefix="/api", tags=["chat"])
-_chat_locks: dict[str, asyncio.Lock] = {}
+# Set of req_ids currently streaming a clarify turn. Replaces the previous
+# `dict[str, asyncio.Lock]` (which had two race conditions: `lock.locked()`
+# is not atomic with `await lock.acquire()` in asyncio, and popping the
+# lock from the dict in `finally` opened a window where new requests could
+# create a fresh lock and run concurrently). A plain set is bulletproof
+# under asyncio's single-threaded model — `in` + `add` happen in the same
+# scheduling tick without any await between them, so no other coroutine
+# can sneak in.
+_chat_running: set[str] = set()
 
 
 # ---------- input models ----------
@@ -40,7 +48,16 @@ class AnswerIn(BaseModel):
 
 def _sse(event: str, data) -> bytes:
     payload = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
-    return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
+    # SSE spec: every line of the payload needs its own `data:` prefix.
+    # Use `splitlines()` (not `split("\n")`) so a CRLF or bare `\r` from
+    # LLM output doesn't leave a trailing `\r` on each data line — the SSE
+    # parser treats bare `\r` as its own line terminator and would split
+    # the event mid-payload. Without this, embedded `\n` / `\r\n` in
+    # LLM reasoning text breaks framing and the Clarify page sticks on
+    # "AI 助理正在思考…" because `parsed` arrives as malformed JSON.
+    lines = payload.splitlines() if payload else [""]
+    data_block = "\n".join(f"data: {line}" for line in lines)
+    return f"event: {event}\n{data_block}\n\n".encode("utf-8")
 
 
 def _require_req(db: Session, req_id: str) -> Requirement:
@@ -50,12 +67,16 @@ def _require_req(db: Session, req_id: str) -> Requirement:
     return r
 
 
-def _lock_for(req_id: str) -> asyncio.Lock:
-    lock = _chat_locks.get(req_id)
-    if lock is None:
-        lock = asyncio.Lock()
-        _chat_locks[req_id] = lock
-    return lock
+def _claim_chat_slot(req_id: str) -> bool:
+    """Atomic try-add. Returns True if this caller now owns the slot."""
+    if req_id in _chat_running:
+        return False
+    _chat_running.add(req_id)
+    return True
+
+
+def _release_chat_slot(req_id: str) -> None:
+    _chat_running.discard(req_id)
 
 
 # ---------- chat: SSE stream ----------
@@ -73,12 +94,10 @@ async def chat_step(
     - `error`      data: error string
     - `done`       data: {"chat_message_id": "..."}
     """
-    lock = _lock_for(req_id)
-    if lock.locked():
-        raise HTTPException(status_code=409, detail="clarification is already running for this requirement")
-    await lock.acquire()
-
-    # Capture context with a synchronous session before entering the stream
+    # Capture context with a synchronous session before entering the stream.
+    # Claim the chat slot AFTER permission + status checks so a wrong-role
+    # or wrong-state caller can't briefly hold the slot to deny clarify to
+    # the real submitter between his retries.
     db_sync: Session = SessionLocal()
     try:
         req = _require_req(db_sync, req_id)
@@ -86,6 +105,8 @@ async def chat_step(
             raise HTTPException(status_code=403, detail="only the requester can clarify this requirement")
         if req.status not in {"draft", "clarifying"}:
             raise HTTPException(status_code=400, detail=f"requirement not in clarifying state (status={req.status})")
+        if not _claim_chat_slot(req_id):
+            raise HTTPException(status_code=409, detail="clarification is already running for this requirement")
         attachments = list(req.attachments)
         history = list(
             db_sync.query(ChatMessage).filter(ChatMessage.requirement_id == req_id).order_by(ChatMessage.created_at).all()
@@ -97,7 +118,7 @@ async def chat_step(
         actor = user.nickname
         force = payload.force_summarize
     except Exception:
-        lock.release()
+        _release_chat_slot(req_id)
         raise
     finally:
         db_sync.close()
@@ -141,7 +162,12 @@ async def chat_step(
                     if kind == "summary":
                         payload_d = parsed.get("payload", {}) or {}
                         req2 = db2.query(Requirement).filter(Requirement.id == req_id).first()
-                        if req2:
+                        # Only transition into summary_ready if the requirement
+                        # is still in an in-progress clarify state. If the user
+                        # cancelled or admin-deleted the requirement during the
+                        # LLM stream (which can take 30+ seconds), don't
+                        # clobber that terminal status back to summary_ready.
+                        if req2 and req2.status in {"draft", "clarifying"}:
                             req2.title = payload_d.get("title") or req2.title
                             req2.summary_md = payload_d.get("summary_md") or req2.summary_md
                             req2.status = "summary_ready"
@@ -161,9 +187,7 @@ async def chat_step(
 
             yield _sse("done", {"chat_message_id": chat_msg_id})
         finally:
-            if lock.locked():
-                lock.release()
-            _chat_locks.pop(req_id, None)
+            _release_chat_slot(req_id)
 
     return StreamingResponse(
         gen(),
@@ -184,6 +208,11 @@ def chat_answer(
     req = _require_req(db, req_id)
     if req.submitter_user_id != user.id:
         raise HTTPException(status_code=403, detail="only the requester can answer clarification questions")
+    # Refuse to append chat messages to a terminal-status requirement —
+    # otherwise users can pollute a cancelled / delivered / accepted chat
+    # thread (which gets reindexed into the knowledge base).
+    if req.status not in {"draft", "clarifying"}:
+        raise HTTPException(status_code=400, detail=f"cannot answer in status {req.status}")
     if not any([payload.selected_option_key, payload.other_text, payload.text]):
         raise HTTPException(status_code=400, detail="empty answer")
 

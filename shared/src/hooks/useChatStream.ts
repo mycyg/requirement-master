@@ -85,14 +85,19 @@ export function useChatStream(req_id: string, customFetch?: ChatFetch) {
         buf += decoder.decode(value, { stream: true });
         let nl;
         while ((nl = buf.indexOf("\n")) !== -1) {
-          const line = buf.slice(0, nl);
+          // Strip trailing \r — server may emit \r\n; without this the CR
+          // ends up inside event names / data values, breaking matches.
+          const line = buf.slice(0, nl).replace(/\r$/, "");
           buf = buf.slice(nl + 1);
           if (line === "") {
             flush();
           } else if (line.startsWith("event:")) {
             event = line.slice(6).trim();
           } else if (line.startsWith("data:")) {
-            data = (data ? data + "\n" : "") + line.slice(5).trim();
+            // Per SSE spec: strip ONE leading space, preserve the rest
+            // (so JSON-escaped data like `data: " hello"` stays intact).
+            const value = line.slice(5).replace(/^ /, "");
+            data = (data ? data + "\n" : "") + value;
           }
         }
       }

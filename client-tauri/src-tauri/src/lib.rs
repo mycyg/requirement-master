@@ -13,8 +13,6 @@ mod tray;
 mod upload;
 mod window;
 
-use std::sync::Arc;
-
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -58,15 +56,18 @@ pub fn run() {
                 tracing::warn!("tray install failed: {e}");
             }
 
-            // Background workers
+            // Background workers — share the SAME ConfigState as commands
+            // (cheap Arc-bump clone). Previously this built a separate
+            // ConfigState from a snapshot, so writes via `set_config` /
+            // `register_device` were invisible to SSE/reminders until app
+            // restart — auth headers stayed empty, notifications silently
+            // dropped, drive sync pause toggle did nothing.
             let state: tauri::State<config::ConfigState> = handle.state();
-            let state_arc: Arc<config::ConfigState> = Arc::new(config::ConfigState(
-                parking_lot::Mutex::new(state.read()),
-            ));
-            let _sse_stop = sse::spawn(handle.clone(), state_arc.clone());
+            let shared = config::ConfigState::clone(state.inner());
+            let _sse_stop = sse::spawn(handle.clone(), shared.clone());
             // Note: keep handle alive for the lifetime of the app.
             Box::leak(Box::new(_sse_stop));
-            reminders::spawn(handle.clone(), state_arc.clone());
+            reminders::spawn(handle.clone(), shared);
 
             // Deep-link plugin → emit navigate
             let h = handle.clone();

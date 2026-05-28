@@ -59,3 +59,5 @@ export { CommandMenu, useCommandMenu } from "./CommandMenu";
 export type { CommandItem, CommandMenuProps } from "./CommandMenu";
 export { RouteTransition } from "./RouteTransition";
 export type { RouteTransitionProps } from "./RouteTransition";
+export { WelcomeTour, defaultWelcomeSlides } from "./WelcomeTour";
+export type { WelcomeTourProps, WelcomeSlide } from "./WelcomeTour";

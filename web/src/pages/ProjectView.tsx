@@ -16,19 +16,38 @@ export function ProjectView() {
   const [action, setAction] = useState<{ project: Project; type: ProjectAction } | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   const refresh = async () => {
     if (!id) return;
-    const [nextProject, nextReqs] = await Promise.all([
-      api.getProject(id),
-      api.listRequirements({ project_id: id }),
-    ]);
-    setProject(nextProject);
-    setReqs(nextReqs);
+    try {
+      const [nextProject, nextReqs] = await Promise.all([
+        api.getProject(id),
+        api.listRequirements({ project_id: id }),
+      ]);
+      setProject(nextProject);
+      setReqs(nextReqs);
+      setLoadErr(null);
+    } catch (e: any) {
+      // Without this, a 404 (project doesn't exist / was deleted) left
+      // project null forever and the user saw "加载中…" with no recovery.
+      setLoadErr(String(e));
+    }
   };
 
-  useEffect(() => { refresh(); }, [id]);
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [id]);
 
+  if (loadErr) return (
+    <main className="narrow-container">
+      <div className="paper-surface mt-6 p-5 text-sm text-red-700">
+        加载项目失败：{loadErr}
+        <div className="mt-3 flex gap-2">
+          <button className="button-secondary" onClick={refresh}>重试</button>
+          <button className="button-secondary" onClick={() => nav("/")}>回项目列表</button>
+        </div>
+      </div>
+    </main>
+  );
   if (!project) return <main className="narrow-container text-stone-500">加载中…</main>;
 
   const runProjectAction = async () => {

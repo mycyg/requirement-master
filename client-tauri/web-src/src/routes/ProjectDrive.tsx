@@ -62,9 +62,13 @@ export function ProjectDrive() {
   useEffect(() => {
     if (!projectId) { setItems(null); return; }
     setErr(null);
+    // Guard against fast project-switch races — if the user clicks A then
+    // immediately B, the slower A response would overwrite B's items.
+    let alive = true;
     invoke<DriveList>("list_drive_root", { projectId })
-      .then((d) => setItems(d.items ?? []))
-      .catch((e) => { setErr(String(e)); setItems([]); });
+      .then((d) => { if (alive) setItems(d.items ?? []); })
+      .catch((e) => { if (alive) { setErr(String(e)); setItems([]); } });
+    return () => { alive = false; };
   }, [projectId]);
 
   // upload progress

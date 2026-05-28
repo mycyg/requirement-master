@@ -11,6 +11,12 @@ logger = logging.getLogger("yqgl.partial_uploads")
 PARTIAL_UPLOAD_DIRS = (
     Path("uploads") / "_partial",
     Path("deliveries") / "_partial",
+    # Drive + meeting routes also use chunked uploads with their own
+    # `_partial` staging; without these entries an aborted multi-GB
+    # design asset / meeting recording leaked forever (the disk only
+    # got swept on process restart, which on prod could be weeks apart).
+    Path("project_drive") / "_partial",
+    Path("meetings") / "_partial",
 )
 
 

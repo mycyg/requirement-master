@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import update as sql_update
 from sqlalchemy.orm import Session
 
 from auth import current_user
@@ -15,6 +16,7 @@ from db import get_db
 from models import Delivery, Requirement, RevisionRequest, User
 from services.activity import log_activity
 from services.delivery_doc import inspect_zip_entries
+from services.lifecycle import flush_status_notifications, queue_status_notifications
 from services.permissions import can_view_requirement_assets
 from services.push_bus import bus
 from services.workspaces import ensure_workspaces_for_assignments, sync_workspace_to_status
@@ -140,14 +142,34 @@ async def accept_delivery(req_id: str, db: Session = Depends(get_db), user: User
         raise HTTPException(status_code=400, detail=f"cannot accept from status {r.status}")
     if r.submitter_user_id != user.id:
         raise HTTPException(status_code=403, detail="only the requester can accept this delivery")
-    r.status = "accepted"
-    r.accepted_at = datetime.utcnow()
-    r.done_at = r.accepted_at
+    # Atomic CAS — submitter double-clicking "通过" would otherwise produce
+    # two `requirement.updated` events and two "通过验收" notifications to
+    # assignees. Worse, a concurrent request_revision would race accept
+    # and could land us in an inconsistent state (revision row + accepted
+    # status). Restrict the transition to the exact prior status.
+    now = datetime.utcnow()
+    cas = db.execute(
+        sql_update(Requirement)
+        .where(Requirement.id == req_id, Requirement.status == "delivered")
+        .values(status="accepted", accepted_at=now, done_at=now)
+    )
+    if cas.rowcount == 0:
+        db.rollback()
+        r2 = db.query(Requirement).filter(Requirement.id == req_id).first()
+        current = r2.status if r2 else "deleted"
+        raise HTTPException(status_code=409, detail=f"accept race: requirement is now {current}")
+    db.refresh(r)
     ensure_workspaces_for_assignments(db, r)
     sync_workspace_to_status(db, r, user)
     log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="accepted", detail={})
+    # Queue assignees' inbox notification ("{code} 通过验收 🎉") in the same
+    # transaction as the status change, then flush AFTER commit. Without
+    # this, sync.py's claim handler is the only place that uses lifecycle;
+    # accept/revision were silently skipping the assignee notification.
+    pending = queue_status_notifications(db, r, "accepted", user)
     db.commit()
 
+    await flush_status_notifications(pending)
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status})
     await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status})
     return {"ok": True, "status": r.status}
@@ -175,12 +197,26 @@ async def request_revision(
     if not latest:
         raise HTTPException(status_code=400, detail="no delivery to revise")
 
+    # Atomic CAS — symmetric with accept_delivery above. Prevents the
+    # double-revision-row + double-notification storm if submitter
+    # double-clicks; also prevents racing with accept (which we now
+    # CAS too — first one wins).
+    cas = db.execute(
+        sql_update(Requirement)
+        .where(Requirement.id == req_id, Requirement.status == "delivered")
+        .values(status="revision_requested")
+    )
+    if cas.rowcount == 0:
+        db.rollback()
+        r2 = db.query(Requirement).filter(Requirement.id == req_id).first()
+        current = r2.status if r2 else "deleted"
+        raise HTTPException(status_code=409, detail=f"revision race: requirement is now {current}")
+    db.refresh(r)
     rr = RevisionRequest(
         requirement_id=req_id, delivery_id=latest.id,
         requested_by_nickname=user.nickname, reason_md=payload.reason_md.strip(),
     )
     db.add(rr)
-    r.status = "revision_requested"
     ensure_workspaces_for_assignments(db, r)
     sync_workspace_to_status(db, r, user)
     log_activity(
@@ -188,8 +224,10 @@ async def request_revision(
         action="revision_requested",
         detail={"reason_preview": payload.reason_md[:120], "round": latest.round},
     )
+    pending = queue_status_notifications(db, r, "revision_requested", user)
     db.commit()
 
+    await flush_status_notifications(pending)
     await bus.publish("all", "revision.requested", {
         "requirement_id": r.id, "round": latest.round,
         "reason_preview": payload.reason_md[:160],

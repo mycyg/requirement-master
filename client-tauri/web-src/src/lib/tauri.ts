@@ -2,7 +2,7 @@
  * Thin invoke/event helpers — fall back to no-ops when not running inside Tauri
  * (so Vite dev outside the desktop shell stays usable).
  */
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -35,16 +35,22 @@ export async function listen<T = unknown>(
 }
 
 export function useEvent<T = unknown>(event: string, handler: (payload: T) => void) {
+  // Hold the latest handler in a ref so the listener always invokes the
+  // current closure, not the one captured on first mount. Without this,
+  // callers like TaskDetail that close over `id` / `refresh` would keep
+  // dispatching to a stale handler after navigating between requirements
+  // (deps `[event]` never change, so the effect never re-runs).
+  const handlerRef = useRef(handler);
+  useEffect(() => { handlerRef.current = handler; });
+
   useEffect(() => {
     let alive = true;
     let dispose: (() => void) | null = null;
-    listen<T>(event, (p) => { if (alive) handler(p); }).then((d) => { dispose = d; });
+    listen<T>(event, (p) => { if (alive) handlerRef.current(p); }).then((d) => { dispose = d; });
     return () => {
       alive = false;
       if (dispose) dispose();
     };
-    // handler intentionally not in deps — caller passes stable closure or wraps.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event]);
 }
 
@@ -100,4 +106,20 @@ export async function clientFetch(input: string, init: RequestInit = {}): Promis
 /** Reset the cached cfg; call after re-login / device-register / settings change. */
 export function resetClientTokenCache() {
   _cfgCache = null;
+}
+
+/**
+ * Fetch + JSON-decode with status check. Mirrors shared/api/client.ts's
+ * `json()` so route components that hit FastAPI directly can't accidentally
+ * call `setItems(error_body)` on a 4xx/5xx — that's what kills the React
+ * tree (see ProjectPulse / Calendar / Inbox regressions). Always prefer
+ * this over `clientFetch(...).then(r => r.json())`.
+ */
+export async function clientJson<T>(input: string, init?: RequestInit): Promise<T> {
+  const r = await clientFetch(input, init);
+  if (!r.ok) {
+    const body = await r.text().catch(() => "");
+    throw new Error(`${r.status} ${r.statusText}${body ? `: ${body.slice(0, 200)}` : ""}`);
+  }
+  return (await r.json()) as T;
 }

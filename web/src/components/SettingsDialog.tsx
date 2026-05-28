@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Settings, UserRound, Volume2, X } from "lucide-react";
+import { HelpCircle, Settings, UserRound, Volume2, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { useSettings } from "@/hooks/useSettings";
 
@@ -11,7 +11,16 @@ const VOICE_LABEL: Record<string, string> = {
   xiaoguang: "小光 · xiaoguang",
 };
 
-export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function SettingsDialog({
+  open,
+  onClose,
+  onShowWelcome,
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** Re-open the first-run welcome tour. Settings closes itself first. */
+  onShowWelcome?: () => void;
+}) {
   const { settings, update } = useSettings();
   const [voices, setVoices] = useState<string[]>([]);
   const [voicesErr, setVoicesErr] = useState<string | null>(null);
@@ -127,6 +136,23 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
               onChange={(e) => update({ ttsAutoplay: e.target.checked })}
             />
           </label>
+
+          {onShowWelcome && (
+            <button
+              type="button"
+              onClick={onShowWelcome}
+              className="paper-panel flex w-full items-center justify-between gap-4 p-4 text-left transition hover:bg-stone-50"
+            >
+              <div>
+                <div className="flex items-center gap-2 font-semibold text-stone-900">
+                  <HelpCircle className="h-4 w-4 text-stone-500" aria-hidden="true" />
+                  再看一遍新手引导
+                </div>
+                <p className="mt-1 text-xs text-stone-500">忘了某个概念怎么用？随时回头看一遍。</p>
+              </div>
+              <span className="text-xs text-stone-400">打开 →</span>
+            </button>
+          )}
 
           <div className="paper-panel p-4">
             <div className="flex items-center gap-2 font-semibold text-stone-900">

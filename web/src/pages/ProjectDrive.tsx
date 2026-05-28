@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ArchiveRestore, CheckSquare, ChevronRight, Clipboard, Copy, Download, Eye, File, FileCode2,
@@ -92,18 +92,30 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
   );
   const flatTree = useMemo(() => flattenTree(tree), [tree]);
 
+  // Monotonic counter so a late-arriving stale `reload()` (e.g. user
+  // typed in search, fired reload, then typed more before the first
+  // resolved) can't overwrite a newer one's state.
+  const reloadTokenRef = useRef(0);
   const reload = useCallback(async () => {
     if (!projectId) return;
-    const [projects, nextDrive, nextTree] = await Promise.all([
-      api.listProjects(),
-      api.listDrive(projectId, { parent_id: parentId, search, trash }),
-      api.driveTree(projectId),
-    ]);
-    setProject(projects.find((p) => p.id === projectId) ?? null);
-    setDrive(nextDrive);
-    setTree(nextTree);
-    setSelected([]);
-    setComments(await api.listDriveComments(projectId, trash ? null : parentId));
+    const myToken = ++reloadTokenRef.current;
+    try {
+      const [projects, nextDrive, nextTree] = await Promise.all([
+        api.listProjects(),
+        api.listDrive(projectId, { parent_id: parentId, search, trash }),
+        api.driveTree(projectId),
+      ]);
+      if (myToken !== reloadTokenRef.current) return;  // superseded
+      setProject(projects.find((p) => p.id === projectId) ?? null);
+      setDrive(nextDrive);
+      setTree(nextTree);
+      setSelected([]);
+      const nextComments = await api.listDriveComments(projectId, trash ? null : parentId);
+      if (myToken !== reloadTokenRef.current) return;
+      setComments(nextComments);
+    } catch (e: any) {
+      if (myToken === reloadTokenRef.current) setErr(String(e));
+    }
   }, [projectId, parentId, search, trash]);
 
   const submitComment = async () => {
@@ -230,7 +242,12 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
       const a = document.createElement("a");
       a.href = url;
       a.download = "project-drive.zip";
+      // Firefox requires the anchor to be in the DOM for click() to
+      // trigger a download. Chrome works either way; previous code
+      // skipped the appendChild and silently no-op'd on Firefox.
+      document.body.appendChild(a);
       a.click();
+      a.remove();
       URL.revokeObjectURL(url);
     } catch (e: any) {
       setErr(String(e));
@@ -327,7 +344,18 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault(); undo();
       } else if (e.key === "Delete") {
-        e.preventDefault(); trash ? restoreSelected() : deleteSelected();
+        e.preventDefault();
+        if (trash) {
+          restoreSelected();
+        } else if (selected.length === 0) {
+          // nothing to delete
+        } else {
+          // Confirm before destructive action — `Delete` is too easy to
+          // hit by accident, and although files go to Trash first,
+          // hitting it on a folder full of files is jarring.
+          const ok = window.confirm(`确定把选中的 ${selected.length} 项放到回收站？`);
+          if (ok) deleteSelected();
+        }
       } else if (e.key === "F2" && selected.length === 1) {
         e.preventDefault();
         const item = drive?.items.find((x) => x.id === selected[0]);

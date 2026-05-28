@@ -1,6 +1,21 @@
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
-import { ToastHost, toast, useSpace } from "@yqgl/shared";
+import {
+  ToastHost,
+  WelcomeTour,
+  defaultWelcomeSlides,
+  toast,
+  useFirstRun,
+  useSpace,
+} from "@yqgl/shared";
+import {
+  ArrowLeftRight,
+  Bell as BellIcon,
+  Bot,
+  Command as CommandIcon,
+  FolderKanban,
+  Sparkles,
+} from "lucide-react";
 import { TitleBar } from "@/components/TitleBar";
 import { Sidebar } from "@/components/Sidebar";
 import { Hub } from "@/routes/Hub";
@@ -16,7 +31,7 @@ import { MyWorkload } from "@/routes/MyWorkload";
 import { Knowledge } from "@/routes/Knowledge";
 import { ProjectPulse } from "@/routes/ProjectPulse";
 import { Calendar } from "@/routes/Calendar";
-import { invoke, useEvent, isTauri, clientFetch, resetClientTokenCache } from "@/lib/tauri";
+import { invoke, useEvent, isTauri, clientJson, resetClientTokenCache } from "@/lib/tauri";
 
 /**
  * Fire a Windows / OS-level toast through the Tauri notification plugin.
@@ -36,11 +51,12 @@ function refreshUnreadBadge(): void {
   _badgeTimer = setTimeout(async () => {
     _badgeTimer = null;
     try {
-      const rows = await clientFetch("/api/notifications?status=unread").then((r) => r.json());
+      const rows = await clientJson<unknown[]>("/api/notifications?status=unread");
       const count = Array.isArray(rows) ? rows.length : 0;
       await invoke("update_tray_unread", { count });
     } catch {
-      /* ignore — badge is best-effort */
+      /* ignore — badge is best-effort. Don't reset to 0 on transient
+         errors (nginx 502, brief network drop) or the badge silently lies. */
     }
   }, 250);
 }
@@ -80,6 +96,11 @@ export function App() {
   const { setSpace } = useSpace();
   const [cfg, setCfg] = useState<Cfg | null>(null);
   const [sseConnected, setSseConnected] = useState(false);
+  // Welcome tour state — auto-fires the first time a fully-onboarded
+  // user reaches the main shell. `markTourSeen` persists to localStorage
+  // so subsequent launches skip it. Triggered manually from a future
+  // Settings entry too (see Settings.tsx).
+  const { seen: tourSeen, markSeen: markTourSeen } = useFirstRun();
 
   // Ctrl+1 / Ctrl+2 (Cmd on mac, though we ship windows-only) jumps between
   // the 接活 and 派活 spaces. We listen at the document level so it works
@@ -210,10 +231,28 @@ export function App() {
   }
 
   const needsOnboarding = !cfg.nickname || !cfg.cookie_token || !cfg.client_token;
+  // Only auto-open the tour after onboarding is complete — interrupting
+  // the 4-step setup wizard with a tour would be incoherent.
+  const tourOpen = !needsOnboarding && !tourSeen;
+
+  const tourSlides = defaultWelcomeSlides("client", {
+    Sparkles: <Sparkles className="h-7 w-7" aria-hidden="true" />,
+    SwitchHorizontal: <ArrowLeftRight className="h-7 w-7" aria-hidden="true" />,
+    Bot: <Bot className="h-7 w-7" aria-hidden="true" />,
+    Bell: <BellIcon className="h-7 w-7" aria-hidden="true" />,
+    Folder: <FolderKanban className="h-7 w-7" aria-hidden="true" />,
+    Command: <CommandIcon className="h-7 w-7" aria-hidden="true" />,
+  });
 
   return (
     <div className="flex flex-col h-screen">
       <TitleBar sseConnected={sseConnected} />
+      <WelcomeTour
+        open={tourOpen}
+        onClose={markTourSeen}
+        onFinish={markTourSeen}
+        slides={tourSlides}
+      />
       {needsOnboarding ? (
         <Routes>
           <Route path="/onboarding" element={<Onboarding />} />

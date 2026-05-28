@@ -1,18 +1,22 @@
 import { useState } from "react";
 import { BrowserRouter, Link, NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import {
+  ArrowLeftRight,
   Bell,
+  Bot,
   CalendarDays,
   ChevronDown,
   Command,
   FolderKanban,
   Gauge,
   HeartPulse,
+  HelpCircle,
   LayoutDashboard,
   Monitor,
   Moon,
   Search,
   Settings,
+  Sparkles,
   Sun,
   UserRound,
   Users,
@@ -43,13 +47,24 @@ import {
   ToastHost,
   CommandMenu,
   useCommandMenu,
+  useFirstRun,
   useTheme,
+  WelcomeTour,
+  defaultWelcomeSlides,
   type CommandItem,
 } from "@yqgl/shared";
 
 export function App() {
   const { me, identify, loading } = useIdentity();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // First-run welcome tour state. `seen` is hydrated from localStorage so
+  // returning users never see the tour flash. `reset` is exposed via the
+  // command palette + Settings so users can re-open it.
+  const { seen: tourSeen, markSeen: markTourSeen, reset: resetTour } = useFirstRun();
+  const [tourOpenManual, setTourOpenManual] = useState(false);
+  // Auto-show right after a successful identify (i.e. once we have `me`
+  // and the user has never seen it). Manual re-opens are separate.
+  const tourOpen = (!!me && !tourSeen) || tourOpenManual;
 
   if (loading) {
     return (
@@ -63,19 +78,50 @@ export function App() {
     return <NicknameDialog onSubmit={async (n) => { await identify(n); }} />;
   }
 
+  const slides = defaultWelcomeSlides("web", {
+    Sparkles: <Sparkles className="h-7 w-7" aria-hidden="true" />,
+    SwitchHorizontal: <ArrowLeftRight className="h-7 w-7" aria-hidden="true" />,
+    Bot: <Bot className="h-7 w-7" aria-hidden="true" />,
+    Bell: <Bell className="h-7 w-7" aria-hidden="true" />,
+    Folder: <FolderKanban className="h-7 w-7" aria-hidden="true" />,
+    Command: <Command className="h-7 w-7" aria-hidden="true" />,
+  });
+
   return (
     <>
       <BrowserRouter>
-        <Shell nickname={me.nickname} onOpenSettings={() => setSettingsOpen(true)} />
+        <Shell
+          nickname={me.nickname}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenWelcome={() => { resetTour(); setTourOpenManual(true); }}
+        />
       </BrowserRouter>
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onShowWelcome={() => { setSettingsOpen(false); resetTour(); setTourOpenManual(true); }}
+      />
+      <WelcomeTour
+        open={tourOpen}
+        onClose={() => { markTourSeen(); setTourOpenManual(false); }}
+        onFinish={markTourSeen}
+        slides={slides}
+      />
       <ToastHost />
     </>
   );
 }
 
 /** Shell = top nav + routes + global ⌘K command menu. Needs to live under <BrowserRouter>. */
-function Shell({ nickname, onOpenSettings }: { nickname: string; onOpenSettings: () => void }) {
+function Shell({
+  nickname,
+  onOpenSettings,
+  onOpenWelcome,
+}: {
+  nickname: string;
+  onOpenSettings: () => void;
+  onOpenWelcome: () => void;
+}) {
   const nav = useNavigate();
   const { open, setOpen, close } = useCommandMenu();
 
@@ -88,6 +134,7 @@ function Shell({ nickname, onOpenSettings }: { nickname: string; onOpenSettings:
     { id: "calendar", label: "我的日程", group: "导航", searchText: "日程 日历 calendar", onSelect: () => nav("/calendar") },
     { id: "notif", label: "通知中心", group: "导航", searchText: "通知 inbox", onSelect: () => nav("/notifications") },
     { id: "settings", label: "设置", group: "操作", searchText: "设置 settings", onSelect: onOpenSettings },
+    { id: "welcome", label: "再看一遍新手引导", group: "操作", searchText: "引导 教程 帮助 welcome tour help", onSelect: onOpenWelcome },
   ];
 
   return (
@@ -97,6 +144,7 @@ function Shell({ nickname, onOpenSettings }: { nickname: string; onOpenSettings:
         nickname={nickname}
         onOpenSettings={onOpenSettings}
         onOpenCommand={() => setOpen(true)}
+        onOpenWelcome={onOpenWelcome}
       />
       <Routes>
         <Route path="/" element={<Home />} />
@@ -131,10 +179,12 @@ function TopNav({
   nickname,
   onOpenSettings,
   onOpenCommand,
+  onOpenWelcome,
 }: {
   nickname: string;
   onOpenSettings: () => void;
   onOpenCommand: () => void;
+  onOpenWelcome: () => void;
 }) {
   return (
     <header className="sticky top-0 z-40 border-b border-line glass-quiet">
@@ -169,6 +219,14 @@ function TopNav({
             <UserRound className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             <span className="truncate">{nickname}</span>
           </span>
+          <button
+            className="button-ghost min-h-9 w-9 px-0"
+            title="新手引导"
+            aria-label="新手引导"
+            onClick={onOpenWelcome}
+          >
+            <HelpCircle className="h-4 w-4" aria-hidden="true" />
+          </button>
           <button
             className="button-ghost min-h-9 w-9 px-0"
             title="设置"

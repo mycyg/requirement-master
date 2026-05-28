@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, Progress, EmptyState, Badge } from "@yqgl/shared";
-import { clientFetch } from "@/lib/tauri";
+import { clientJson } from "@/lib/tauri";
 
 type Workload = {
   user_id: string;
@@ -19,18 +19,37 @@ type Workload = {
 export function MyWorkload() {
   const nav = useNavigate();
   const [mine, setMine] = useState<Workload | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
-      clientFetch("/api/planning/workload").then((r) => r.json()),
-      clientFetch("/api/auth/me").then((r) => r.json()),
-    ]).then(([list, me]: [Workload[], any]) => {
-      const own = list.find((w) => w.user_id === me?.id) ?? null;
-      setMine(own);
-    }).catch(() => setMine(null));
+      clientJson<Workload[]>("/api/planning/workload"),
+      clientJson<{ id: string } | null>("/api/auth/me"),
+    ]).then(([list, me]) => {
+      const arr = Array.isArray(list) ? list : [];
+      setMine(arr.find((w) => w.user_id === me?.id) ?? null);
+    }).catch((e) => setErr(String(e)))
+      .finally(() => setLoaded(true));
   }, []);
 
-  if (!mine) return <div className="flex-1 p-6">加载中…</div>;
+  if (!loaded) return <div className="flex-1 p-6">加载中…</div>;
+  if (err) {
+    return (
+      <div className="flex-1 p-6">
+        <h1 className="text-h2 text-ink mb-1">我的负载</h1>
+        <div className="glass p-4 mt-4 text-error">{err}</div>
+      </div>
+    );
+  }
+  if (!mine) {
+    return (
+      <div className="flex-1 p-6">
+        <h1 className="text-h2 text-ink mb-1">我的负载</h1>
+        <div className="text-ink-muted mt-4">你目前还没有承接需求。</div>
+      </div>
+    );
+  }
 
   const loadTone =
     mine.load_percent >= 100 ? "error" :

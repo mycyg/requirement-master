@@ -71,7 +71,12 @@ def _requirement_visible(db: Session, req_id: str | None, user: User) -> bool:
 
 
 def _source_docs(db: Session, project_id: str | None = None) -> Iterable[SourceDoc]:
-    project_q = db.query(Project).filter(Project.archived == False)  # noqa: E712
+    # Exclude soft-deleted projects from the index — without this, a
+    # search would still surface lines from a project the admin tombstoned.
+    project_q = db.query(Project).filter(
+        Project.archived == False,  # noqa: E712
+        Project.deleted_at.is_(None),
+    )
     if project_id:
         project_q = project_q.filter(Project.id == project_id)
     for p in project_q.all():
@@ -109,7 +114,18 @@ def _source_docs(db: Session, project_id: str | None = None) -> Iterable[SourceD
             ),
         )
 
-    chat_q = db.query(ChatMessage).join(Requirement, Requirement.id == ChatMessage.requirement_id)
+    # Skip chats authored by users in requirements whose submitter is
+    # soft-deleted — searching the knowledge base shouldn't surface
+    # tombstoned users' clarify conversations to other users.
+    # (ChatMessage has no user_id; only the submitter chats with the AI,
+    # so the requirement's submitter IS the chat author.)
+    from models import User
+    chat_q = (
+        db.query(ChatMessage)
+        .join(Requirement, Requirement.id == ChatMessage.requirement_id)
+        .outerjoin(User, User.id == Requirement.submitter_user_id)
+        .filter(User.deleted_at.is_(None))
+    )
     if project_id:
         chat_q = chat_q.filter(Requirement.project_id == project_id)
     for m in chat_q.limit(5000).all():
@@ -347,7 +363,15 @@ def search_knowledge(
     q = query.strip()
     if not q:
         return []
-    rebuild_knowledge_index(db, project_id=project_id)
+    # Do NOT rebuild the index on every search — that was a self-DoS
+    # vector. Each search would walk every requirement, chat, comment,
+    # activity, workspace_update, meeting, drive_file, delivery on disk.
+    # With concurrent users searching, this hammered the disk and slowed
+    # every search to seconds. The index is maintained on data mutation
+    # paths (see services that call rebuild_knowledge_index after their
+    # writes) and by `POST /api/knowledge/reindex` for admin recovery.
+    # If the corpus is missing for a few seconds after a fresh write,
+    # the next search will simply miss those rows — acceptable.
     doc_q = db.query(KnowledgeDocument)
     if project_id:
         doc_q = doc_q.filter(KnowledgeDocument.project_id == project_id)

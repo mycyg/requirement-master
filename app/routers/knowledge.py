@@ -58,8 +58,13 @@ def grep_knowledge(
 def reindex_knowledge(
     project_id: str | None = None,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ) -> dict:
+    # Admin-only — this is an expensive O(all-data) operation. Any user
+    # being able to trigger it was a denial-of-service vector.
+    from services.permissions import is_admin
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="admin only")
     if project_id and not db.query(Project.id).filter(Project.id == project_id).first():
         raise HTTPException(status_code=404, detail="project not found")
     return {"ok": True, "count": rebuild_knowledge_index(db, project_id=project_id)}

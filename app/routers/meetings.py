@@ -60,7 +60,11 @@ def _expected_chunk_size(meta: dict[str, Any], idx: int) -> int:
 
 
 def _require_project(db: Session, project_id: str) -> Project:
-    project = db.query(Project).filter(Project.id == project_id, Project.archived == False).first()  # noqa: E712
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.archived == False,  # noqa: E712
+        Project.deleted_at.is_(None),
+    ).first()
     if not project:
         raise HTTPException(status_code=404, detail="project not found")
     return project
@@ -272,8 +276,16 @@ def finalize_meeting_upload(
     return _meeting_out(db, meeting)
 
 
-def _process_meeting_background(meeting_id: str, job_id: str) -> None:
-    asyncio.run(_process_meeting(meeting_id, job_id))
+async def _process_meeting_background(meeting_id: str, job_id: str) -> None:
+    # Must be `async def` (NOT sync wrapping `asyncio.run`). The previous
+    # sync version was scheduled by FastAPI into a worker thread, and
+    # `asyncio.run` inside it built a SECOND event loop. Any `await
+    # bus.publish(...)` from `_process_meeting` then tried to put events
+    # into asyncio.Queue / asyncio.Lock objects that belonged to the MAIN
+    # loop → cross-loop RuntimeError, silently swallowed. UI never saw
+    # `meeting.ready` etc. Async background tasks run on the request's
+    # original loop, so bus operations target the right queues.
+    await _process_meeting(meeting_id, job_id)
 
 
 async def _process_meeting(meeting_id: str, job_id: str) -> None:
@@ -332,12 +344,16 @@ async def _process_meeting(meeting_id: str, job_id: str) -> None:
 
 
 async def _transcribe_or_decode(meeting: MeetingRecord) -> str:
+    """Send the meeting audio to ASR. Streams from disk so a 1 GB recording
+    doesn't get fully buffered into RAM (which would OOM the worker)."""
     path = Path(meeting.audio_path)
-    data = path.read_bytes()
-    files = {"audio": (meeting.audio_filename, data, meeting.audio_mime or "audio/webm")}
     try:
+        # httpx supports passing an open file handle in `files`; it streams
+        # the multipart body without buffering the whole file.
         async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.post(f"{settings.asr_base_url}/transcribe", files=files)
+            with open(path, "rb") as fh:
+                files = {"audio": (meeting.audio_filename, fh, meeting.audio_mime or "audio/webm")}
+                resp = await client.post(f"{settings.asr_base_url}/transcribe", files=files)
         if resp.status_code == 200:
             payload = resp.json()
             text = str(payload.get("text") or "").strip()
@@ -345,9 +361,16 @@ async def _transcribe_or_decode(meeting: MeetingRecord) -> str:
                 return text
     except Exception:
         pass
-    decoded = data.decode("utf-8", errors="ignore").strip()
-    if decoded:
-        return decoded
+    # Plain-text fallback — read up to 1 MB only; if the file is actually
+    # binary audio we don't try to decode the whole thing.
+    try:
+        with open(path, "rb") as fh:
+            sample = fh.read(1024 * 1024)
+        decoded = sample.decode("utf-8", errors="ignore").strip()
+        if decoded:
+            return decoded
+    except Exception:
+        pass
     return "ASR 服务暂时不可用，且录音无法直接解码。请人工补充会议转写文本后重新确认纪要。"
 
 
@@ -391,32 +414,66 @@ async def confirm_meeting_insight(
         raise HTTPException(status_code=403, detail="only the meeting uploader can confirm this insight")
     if insight.status != "pending":
         return _insight_out(insight)
+    # Atomic CAS — double-click on "confirm" would otherwise pass the
+    # `!= "pending"` check twice, both bump project.next_seq, both
+    # insert duplicate Requirement rows (one 500s on uq constraint, but
+    # the user-visible effect is unpredictable).
+    from sqlalchemy import update as sql_update
+    cas = db.execute(
+        sql_update(MeetingInsight)
+        .where(MeetingInsight.id == insight_id, MeetingInsight.status == "pending")
+        .values(status="confirmed", confirmed_by_user_id=user.id, confirmed_at=datetime.utcnow())
+    )
+    if cas.rowcount == 0:
+        db.rollback()
+        # Someone else won the race — return the latest state.
+        db.refresh(insight)
+        return _insight_out(insight)
+    db.refresh(insight)
     if insight.kind in {"new_requirement", "requirement_change"}:
-        project = _require_project(db, meeting.project_id)
-        project.next_seq += 1
-        code = f"{project.slug.upper()}-{project.next_seq:03d}"
-        req = Requirement(
-            code=code,
-            project_id=project.id,
-            submitter_user_id=user.id,
-            title=insight.title,
-            raw_description=(
-                f"来源会议：{meeting.title}\n"
-                f"会议 ID：{meeting.id}\n\n"
-                f"{insight.description}\n\n"
-                "请进入需求评估和澄清流程，确认这是否应该成为明确需求。"
-            ),
-            priority="normal",
-            status="draft",
-            source_meeting_id=meeting.id,
-            source_requirement_id=insight.target_requirement_id,
-        )
-        db.add(req)
-        db.flush()
-        insight.created_requirement_id = req.id
-    insight.status = "confirmed"
-    insight.confirmed_by_user_id = user.id
-    insight.confirmed_at = datetime.utcnow()
+        # Retry on next_seq race with another insight-confirm / requirement-
+        # create / drive-comment running in parallel. Without this, concurrent
+        # confirms can both compute the same `SLUG-NNN` and one 500s on the
+        # `code` UNIQUE constraint — user clicks "确认" and sees a generic
+        # error, never knowing the request actually completed for someone else.
+        from sqlalchemy.exc import IntegrityError
+        last_err: Exception | None = None
+        for _ in range(5):
+            project = _require_project(db, meeting.project_id)
+            project.next_seq += 1
+            code = f"{project.slug.upper()}-{project.next_seq:03d}"
+            req = Requirement(
+                code=code,
+                project_id=project.id,
+                submitter_user_id=user.id,
+                title=insight.title,
+                raw_description=(
+                    f"来源会议：{meeting.title}\n"
+                    f"会议 ID：{meeting.id}\n\n"
+                    f"{insight.description}\n\n"
+                    "请进入需求评估和澄清流程，确认这是否应该成为明确需求。"
+                ),
+                priority="normal",
+                status="draft",
+                source_meeting_id=meeting.id,
+                source_requirement_id=insight.target_requirement_id,
+            )
+            db.add(req)
+            try:
+                db.flush()
+                insight.created_requirement_id = req.id
+                break
+            except IntegrityError as e:
+                db.rollback()
+                last_err = e
+                # Re-load insight after rollback since rollback wipes its state.
+                insight = db.query(MeetingInsight).filter(MeetingInsight.id == insight_id).first()
+                if not insight:
+                    raise HTTPException(status_code=404, detail="meeting insight not found")
+        else:
+            raise HTTPException(status_code=500, detail=f"could not allocate requirement code: {last_err}")
+    # status/confirmed_by/confirmed_at were already set atomically by the
+    # CAS above; just commit any insight.created_requirement_id update.
     db.commit()
     db.refresh(insight)
     await bus.publish("all", "meeting.insight_confirmed", {

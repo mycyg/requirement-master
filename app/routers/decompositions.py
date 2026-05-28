@@ -167,6 +167,19 @@ async def confirm_decomposition(
         raise HTTPException(status_code=403, detail="only the target assignee can confirm this worker decomposition")
     if plan.stage == "worker" and local_user is None:
         raise HTTPException(status_code=403, detail="local client required")
+    # Atomic CAS — without this, two tabs both pass the `!= "draft"`
+    # check, both run apply_confirmed_plan, inserting duplicate acceptance
+    # items and duplicate workspace items.
+    from sqlalchemy import update as sql_update
+    cas = db.execute(
+        sql_update(RequirementTaskPlan)
+        .where(RequirementTaskPlan.id == plan_id, RequirementTaskPlan.status == "draft")
+        .values(status="confirmed")
+    )
+    if cas.rowcount == 0:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="another tab already confirmed/dismissed this plan")
+    db.refresh(plan)
     acceptance_rows, workspace_rows = apply_confirmed_plan(db, plan, user)
     log_activity(
         db,
@@ -200,7 +213,19 @@ async def dismiss_decomposition(
         raise HTTPException(status_code=403, detail="only the target assignee can dismiss this worker decomposition")
     if plan.stage == "worker" and local_user is None:
         raise HTTPException(status_code=403, detail="local client required")
-    plan.status = "dismissed"
+    # Only transition from draft — without this, a curl call can dismiss
+    # an already-confirmed plan and leave its derived acceptance/workspace
+    # items orphaned.
+    from sqlalchemy import update as sql_update
+    cas = db.execute(
+        sql_update(RequirementTaskPlan)
+        .where(RequirementTaskPlan.id == plan_id, RequirementTaskPlan.status == "draft")
+        .values(status="dismissed")
+    )
+    if cas.rowcount == 0:
+        db.rollback()
+        return task_plan_out(_load_plan(db, plan.id))
+    db.refresh(plan)
     log_activity(
         db,
         requirement_id=req.id,
@@ -267,7 +292,11 @@ async def _process_decomposition(plan_id: str, job_id: str, user_id: str) -> Non
     except Exception as exc:
         plan = db.query(RequirementTaskPlan).filter(RequirementTaskPlan.id == plan_id).first()
         job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
-        if plan:
+        # Only flip to dismissed if still in draft — if user already
+        # confirmed (and apply_confirmed_plan ran), don't resurrect a
+        # confirmed plan as dismissed (would orphan acceptance + workspace
+        # items that were already inserted).
+        if plan and plan.status == "draft":
             plan.status = "dismissed"
         if job:
             update_job(db, job, status="failed", progress_percent=100, message="任务拆解失败", error=f"{type(exc).__name__}: {exc}")

@@ -13,7 +13,6 @@
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -51,7 +50,7 @@ where
 /// that need extra fields like `{parent_id, conflict}` for project-drive uploads.
 pub async fn upload_file<F, G, H>(
     app: &AppHandle,
-    state: &Arc<ConfigState>,
+    state: &ConfigState,
     req_id: &str,
     file_path: &Path,
     filename: &str,
@@ -95,19 +94,24 @@ where
         .to_string();
 
     // chunks
+    // Use read_exact (not read) — `read` can return fewer bytes than requested
+    // even mid-file (Windows file handles, network filesystems, signals).
+    // With `total_chunks` fixed up front, a short read on a non-final chunk
+    // would silently send a smaller body and truncate the file server-side.
     let mut f = File::open(file_path)?;
     let mut sent: u64 = 0;
     for idx in 0..total_chunks {
-        let mut buf = vec![0u8; CHUNK_SIZE];
-        let n = f.read(&mut buf)?;
-        buf.truncate(n);
+        let remaining = size.saturating_sub(sent);
+        let this_chunk = std::cmp::min(CHUNK_SIZE as u64, remaining) as usize;
+        let mut buf = vec![0u8; this_chunk];
+        f.read_exact(&mut buf)?;
         let url = (urls.chunk)(idx, &upload_id);
         http::with_auth(client.put(&url), state)
             .header("Content-Type", "application/octet-stream")
             .body(buf)
             .send().await?
             .error_for_status()?;
-        sent += n as u64;
+        sent += this_chunk as u64;
         emit(app, event_name, req_id, "chunk", sent, size);
     }
 

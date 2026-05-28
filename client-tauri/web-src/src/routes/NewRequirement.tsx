@@ -102,6 +102,10 @@ export function NewRequirement() {
   };
 
   const goNext = async () => {
+    // Re-entrancy guard — `loading={busy}` on the button only disables
+    // after the next render; a double-click within ~16ms slips through
+    // and creates duplicate draft requirements.
+    if (busy) return;
     const v = validateStep();
     if (v) { setErr(v); return; }
     setErr(null);

@@ -59,42 +59,79 @@ export function Dashboard() {
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, TICK_MS);
-    return () => clearInterval(t);
+    let t: ReturnType<typeof setInterval> | null = null;
+    const startInterval = () => {
+      if (t == null) t = setInterval(refresh, TICK_MS);
+    };
+    const stopInterval = () => {
+      if (t != null) { clearInterval(t); t = null; }
+    };
+    // Pause polling when the tab is hidden — browsers throttle the
+    // interval anyway, but this also stops the 7-endpoint fan-out fetch
+    // (one per status group) from hammering the server while nobody's
+    // looking. Refresh once immediately on tab return so users don't see
+    // stale state on switch-back.
+    const onVis = () => {
+      if (document.hidden) { stopInterval(); }
+      else { refresh(); startInterval(); }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    if (!document.hidden) startInterval();
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      stopInterval();
+    };
   }, []);
 
   useEffect(() => {
     const ctrl = new AbortController();
+    let activeReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     (async () => {
-      try {
-        const r = await fetch("/api/push/stream", { credentials: "include", signal: ctrl.signal });
-        if (!r.ok || !r.body) { setConnected(false); return; }
-        setConnected(true);
-        const reader = r.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-        let buf = "";
-        let event = "";
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          let nl;
-          while ((nl = buf.indexOf("\n")) !== -1) {
-            const line = buf.slice(0, nl);
-            buf = buf.slice(nl + 1);
-            if (line.startsWith("event:")) event = line.slice(6).trim();
-            else if (line === "" && event) {
-              if (event !== "heartbeat") refresh();
-              event = "";
+      // Reconnect loop with exponential backoff. Without this, a single
+      // SSE disconnect (proxy timeout / server restart) left the dashboard
+      // showing 已断开 forever — only the 6s polling refresh kept data
+      // flowing, but `connected` never recovered.
+      let backoff = 1000;
+      while (!ctrl.signal.aborted) {
+        try {
+          const r = await fetch("/api/push/stream", { credentials: "include", signal: ctrl.signal });
+          if (!r.ok || !r.body) { setConnected(false); throw new Error(`stream ${r.status}`); }
+          setConnected(true);
+          backoff = 1000;
+          activeReader = r.body.getReader();
+          const decoder = new TextDecoder("utf-8");
+          let buf = "";
+          let event = "";
+          while (true) {
+            const { value, done } = await activeReader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let nl;
+            while ((nl = buf.indexOf("\n")) !== -1) {
+              const line = buf.slice(0, nl).replace(/\r$/, "");
+              buf = buf.slice(nl + 1);
+              if (line.startsWith("event:")) event = line.slice(6).trim();
+              else if (line === "" && event) {
+                if (event !== "heartbeat") refresh();
+                event = "";
+              }
             }
           }
+        } catch {
+          if (ctrl.signal.aborted) return;
         }
-        if (!ctrl.signal.aborted) setConnected(false);
-      } catch {
-        if (!ctrl.signal.aborted) setConnected(false);
+        setConnected(false);
+        if (ctrl.signal.aborted) return;
+        await new Promise((res) => setTimeout(res, backoff));
+        backoff = Math.min(backoff * 2, 30_000);
       }
     })();
-    return () => ctrl.abort();
+    return () => {
+      ctrl.abort();
+      // Release body lock immediately so the next mount can re-open
+      // without GC waiting on the stale reader.
+      if (activeReader) { try { activeReader.cancel(); } catch { /* ignore */ } }
+    };
   }, []);
 
   return (

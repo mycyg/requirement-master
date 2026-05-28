@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import update as sql_update
 from sqlalchemy.orm import Session
 
 from auth import current_user
@@ -64,7 +65,22 @@ async def trigger_auto(
     if r.status not in {"summary_ready", "ready"}:
         raise HTTPException(status_code=400, detail=f"cannot auto-process from status {r.status}")
 
-    r.status = "ai_processing"
+    # Atomic CAS — without this, two concurrent /auto-process clicks
+    # would both pass the status check, both spawn `_run_and_finalize`,
+    # both write to the same workdir, and produce duplicate Delivery
+    # rows + duplicate notifications. The LLM tokens for the second run
+    # are wasted.
+    cas = db.execute(
+        sql_update(Requirement)
+        .where(Requirement.id == req_id, Requirement.status.in_({"summary_ready", "ready"}))
+        .values(status="ai_processing")
+    )
+    if cas.rowcount == 0:
+        db.rollback()
+        r2 = db.query(Requirement).filter(Requirement.id == req_id).first()
+        current = r2.status if r2 else "deleted"
+        raise HTTPException(status_code=409, detail=f"auto-process race: requirement is now {current}")
+    db.refresh(r)
     job = create_job(db, kind="auto_agent", user=user, message="AI 自动处理已排队")
     log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="ai_started", detail={})
     db.commit()
@@ -203,8 +219,12 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
             await bus.publish(f"req:{req_id}", "requirement.updated", {"status": "delivered"})
             await bus.publish("all", "requirement.updated", {"requirement_id": req_id, "status": "delivered"})
         else:
-            # Failure → revert to ready, leave breadcrumbs
-            r.status = "ready"
+            # Failure → revert to ready, leave breadcrumbs. BUT only if the
+            # requirement is still in `ai_processing` — the user could have
+            # cancelled mid-AI (cancelled is terminal); blindly writing
+            # `ready` would resurrect a cancelled requirement.
+            if r.status == "ai_processing":
+                r.status = "ready"
             log_activity(
                 db, requirement_id=req_id, actor_nickname=actor,
                 action="ai_failed",
@@ -242,7 +262,9 @@ async def _mark_auto_failed(req_id: str, actor: str, title: str, reason: str, jo
         r = db.query(Requirement).filter(Requirement.id == req_id).first()
         if not r:
             return
-        r.status = "ready"
+        # Same cancel-aware guard as the inline failure path above.
+        if r.status == "ai_processing":
+            r.status = "ready"
         log_activity(
             db, requirement_id=req_id, actor_nickname=actor,
             action="ai_failed", detail={"reason": reason},

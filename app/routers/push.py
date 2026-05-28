@@ -21,7 +21,13 @@ router = APIRouter(prefix="/api/push", tags=["push"])
 
 def _sse(event: str, data) -> bytes:
     payload = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
-    return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
+    # Per SSE spec — each payload line needs its own `data:` prefix or any
+    # embedded `\n` breaks event framing. Use `splitlines()` (not split)
+    # so CRLF / bare \r don't leave trailing \r that the parser treats as
+    # a record terminator. See chat.py for the symptom.
+    lines = payload.splitlines() if payload else [""]
+    data_block = "\n".join(f"data: {line}" for line in lines)
+    return f"event: {event}\n{data_block}\n\n".encode("utf-8")
 
 
 async def _gen(request: Request, topic: str, user: StreamUser):

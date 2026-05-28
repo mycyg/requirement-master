@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, exists, or_
+from sqlalchemy import and_, exists, or_, update as sql_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -37,9 +37,12 @@ router = APIRouter(prefix="/api", tags=["requirements"])
 
 
 def _assignee_out(a: RequirementAssignment) -> RequirementAssigneeOut:
+    # Same masking — tombstoned assignee should display as "已删除用户"
+    # rather than the raw `_deleted_<id8>_originalname` tombstone string.
+    nick = "已删除用户" if a.user and a.user.deleted_at is not None else (a.user.nickname if a.user else "unknown")
     return RequirementAssigneeOut(
         user_id=a.user_id,
-        nickname=a.user.nickname,
+        nickname=nick,
         role=a.role,
         assigned_at=a.created_at,
     )
@@ -69,6 +72,17 @@ def _to_out(r: Requirement, *, submitter_nickname: str, project_slug: str) -> Re
     )
 
 
+def _display_nickname(u: User | None) -> str:
+    """Mask the raw tombstoned nickname (`_deleted_<id8>_originalname`)
+    so the original nickname never bleeds back into the UI after admin
+    soft-deletes a user."""
+    if not u:
+        return "unknown"
+    if u.deleted_at is not None:
+        return "已删除用户"
+    return u.nickname
+
+
 def _enrich(db: Session, r: Requirement) -> RequirementOut:
     if "assignments" not in r.__dict__:
         r = (
@@ -83,7 +97,7 @@ def _enrich(db: Session, r: Requirement) -> RequirementOut:
     submitter = db.query(User).filter(User.id == r.submitter_user_id).first()
     return _to_out(
         r,
-        submitter_nickname=submitter.nickname if submitter else "unknown",
+        submitter_nickname=_display_nickname(submitter),
         project_slug=project.slug if project else "unknown",
     )
 
@@ -229,6 +243,13 @@ async def update_status(
     )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
+    # Refuse mutations on requirements whose project has been soft-deleted.
+    # Otherwise lifecycle notifications fire with `target_url=/r/{id}` that
+    # then 404 because the project drawer is closed. Admin can still
+    # restore the project first, then mutate.
+    proj = db.query(Project).filter(Project.id == r.project_id).first()
+    if proj and proj.deleted_at is not None and not is_admin(user):
+        raise HTTPException(status_code=400, detail="project has been deleted; ask an admin to restore it first")
 
     old = r.status
     new = payload.status
@@ -267,8 +288,23 @@ async def update_status(
     if worker_transition and local_user is None:
         raise HTTPException(status_code=403, detail="local client required")
 
-    r.status = new
+    # Atomic compare-and-swap on status — without this, two concurrent
+    # PATCH /status calls both pass the allowed-transitions check and
+    # both blind-write the destination, so lifecycle notifications +
+    # audit log claim BOTH transitions happened. The same race pattern
+    # we fixed in /claim (sync.py).
     now = datetime.utcnow()
+    cas = db.execute(
+        sql_update(Requirement)
+        .where(Requirement.id == req_id, Requirement.status == old)
+        .values(status=new)
+    )
+    if cas.rowcount == 0:
+        db.rollback()
+        r2 = db.query(Requirement).filter(Requirement.id == req_id).first()
+        current = r2.status if r2 else "deleted"
+        raise HTTPException(status_code=409, detail=f"status race: requirement is now {current}")
+    db.refresh(r)
     if new == "claimed":
         if not r.claimed_at:
             r.claimed_at = now

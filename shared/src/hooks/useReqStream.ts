@@ -15,6 +15,7 @@ export function useReqStream(reqId: string | undefined) {
     if (!reqId) return;
     const ctrl = new AbortController();
     let alive = true;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
     (async () => {
       try {
@@ -23,13 +24,14 @@ export function useReqStream(reqId: string | undefined) {
           signal: ctrl.signal,
         });
         if (!r.ok || !r.body) return;
-        const reader = r.body.getReader();
+        reader = r.body.getReader();
         const decoder = new TextDecoder("utf-8");
         let buf = "";
         let event = "";
         let dataLines: string[] = [];
 
         const flush = () => {
+          if (!alive) return;  // don't setState after unmount
           if (!event) return;
           const raw = dataLines.join("\n");
           let data: any = raw;
@@ -48,11 +50,14 @@ export function useReqStream(reqId: string | undefined) {
           buf += decoder.decode(value, { stream: true });
           let nl;
           while ((nl = buf.indexOf("\n")) !== -1) {
-            const line = buf.slice(0, nl);
+            // Strip trailing \r so a server emitting \r\n line endings
+            // doesn't leave the CR inside our event name / data values
+            // (the SSE spec treats bare \r as its own terminator too).
+            const line = buf.slice(0, nl).replace(/\r$/, "");
             buf = buf.slice(nl + 1);
             if (line === "") flush();
             else if (line.startsWith("event:")) event = line.slice(6).trim();
-            else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+            else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
           }
         }
       } catch (e) {
@@ -60,7 +65,14 @@ export function useReqStream(reqId: string | undefined) {
       }
     })();
 
-    return () => { alive = false; ctrl.abort(); };
+    return () => {
+      alive = false;
+      // Cancel the reader so the underlying body lock releases immediately;
+      // without this the GC eventually cleans it up but the response can
+      // stay "in-flight" from the browser's POV for seconds.
+      if (reader) { try { reader.cancel(); } catch { /* ignore */ } }
+      ctrl.abort();
+    };
   }, [reqId]);
 
   return { events, latestStatus };

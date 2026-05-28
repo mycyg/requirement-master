@@ -88,6 +88,9 @@ export function CalendarPage() {
   };
 
   const remove = async (event: ScheduleEvent) => {
+    // Confirm before destructive delete — single trash click was too easy
+    // to fire by accident on a touch-pad.
+    if (!window.confirm(`确定删除事件「${event.title}」？`)) return;
     setBusy(true); setErr(null);
     try {
       await api.deleteCalendarEvent(event.id);

@@ -56,8 +56,18 @@ def create_project(
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
-def get_project(project_id: str, db: Session = Depends(get_db), _: User = Depends(current_user)) -> ProjectOut:
-    p = db.query(Project).filter(Project.id == project_id).first()
+def get_project(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ProjectOut:
+    # Non-admins shouldn't be able to GET soft-deleted projects' metadata
+    # by guessing IDs — leaks the existence of deleted projects.
+    from services.permissions import is_admin
+    q = db.query(Project).filter(Project.id == project_id)
+    if not is_admin(user):
+        q = q.filter(Project.deleted_at.is_(None))
+    p = q.first()
     if not p:
         raise HTTPException(status_code=404, detail="project not found")
     return _to_out(p)

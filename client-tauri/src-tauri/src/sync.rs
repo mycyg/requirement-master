@@ -2,9 +2,9 @@
 //! Mirrors `client/yqgl_tray.py:480-707` but uses reqwest + tokio + sha2.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use anyhow::anyhow;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
@@ -65,7 +65,7 @@ pub struct SyncProgress {
 
 pub async fn sync_requirement(
     app: AppHandle,
-    state: Arc<ConfigState>,
+    state: ConfigState,
     req_id: String,
 ) -> Result<()> {
     let client = http::client(&state);
@@ -131,10 +131,14 @@ pub async fn sync_requirement(
         } else {
             http::url(&state, &f.download_url)
         };
+        // Stream the body chunk-by-chunk — `resp.bytes().await?` buffers
+        // the entire file in memory and would OOM on multi-GB attachments.
         let resp = http::with_auth(client.get(&dl_url), &state).send().await?.error_for_status()?;
-        let bytes = resp.bytes().await?;
+        let mut stream = resp.bytes_stream();
         let mut file = fs::File::create(&target).await?;
-        file.write_all(&bytes).await?;
+        while let Some(chunk) = stream.next().await {
+            file.write_all(&chunk?).await?;
+        }
         file.flush().await?;
     }
 
@@ -170,7 +174,7 @@ fn emit_progress(app: &AppHandle, req_id: &str, phase: &str, percent: u8, msg: &
 /// is in plan §6.5; this initial implementation does single-direction download).
 pub async fn sync_drive_download(
     app: AppHandle,
-    state: Arc<ConfigState>,
+    state: ConfigState,
     project_id: String,
 ) -> Result<()> {
     let client = http::client(&state);
@@ -209,9 +213,13 @@ pub async fn sync_drive_download(
         } else {
             http::url(&state, url_field)
         };
-        let bytes = http::with_auth(client.get(&dl), &state).send().await?.error_for_status()?.bytes().await?;
+        // Stream chunks instead of buffering — see sync_requirement for context.
+        let resp = http::with_auth(client.get(&dl), &state).send().await?.error_for_status()?;
+        let mut stream = resp.bytes_stream();
         let mut f = fs::File::create(&abs).await?;
-        f.write_all(&bytes).await?;
+        while let Some(chunk) = stream.next().await {
+            f.write_all(&chunk?).await?;
+        }
         f.flush().await?;
         let pct = (90 * (idx + 1) / total) as u8;
         let _ = app.emit("drive-sync-progress", serde_json::json!({

@@ -37,8 +37,10 @@ export function Combobox<T = string>({
 }: ComboboxProps<T>) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [activeIdx, setActiveIdx] = useState(0);
   const root = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const activeOptionRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -55,13 +57,45 @@ export function Combobox<T = string>({
     };
   }, [open]);
 
+  // Reset active row when query / open state changes.
+  useEffect(() => { setActiveIdx(0); }, [query, open]);
+
+  // Scroll the active option into view as the user arrows through.
+  useEffect(() => {
+    activeOptionRef.current?.scrollIntoView({ block: "nearest" });
+  }, [activeIdx]);
+
   const selected = options.find((o) => o.value === value) ?? null;
   const q = query.trim().toLowerCase();
   const filtered = q
-    ? options.filter((o) =>
-        (o.searchText ?? String(typeof o.label === "string" ? o.label : "")).toLowerCase().includes(q),
-      )
+    ? options.filter((o) => {
+        const searchable = o.searchText ?? (typeof o.label === "string" ? o.label : String(o.value));
+        return searchable.toLowerCase().includes(q);
+      })
     : options;
+
+  const commitOption = (o: ComboboxOption<T>) => {
+    onChange(o.value);
+    setOpen(false);
+    setQuery("");
+  };
+
+  const onInputKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.min(filtered.length - 1, i + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.max(0, i - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const o = filtered[activeIdx];
+      if (o) commitOption(o);
+    } else if (e.key === "Tab") {
+      // Close on Tab so focus moves to next interactive element naturally.
+      setOpen(false);
+    }
+  };
 
   return (
     <div ref={root} className={cn("relative inline-flex w-full", className)}>
@@ -87,6 +121,7 @@ export function Combobox<T = string>({
           ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={onInputKey}
           placeholder="搜索…"
           className="absolute inset-x-0 -bottom-12 h-10 px-3 rounded-sm bg-surface-strong border border-line outline-none"
         />
@@ -99,6 +134,7 @@ export function Combobox<T = string>({
               ref={inputRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={onInputKey}
               placeholder="搜索…"
               className="w-full h-9 px-3 mb-1 rounded-xs bg-transparent border border-line outline-none placeholder:text-ink-faint focus:border-accent"
             />
@@ -119,23 +155,23 @@ export function Combobox<T = string>({
             <div className="px-3 py-4 text-caption text-ink-faint text-center">{emptyText}</div>
           )}
           {filtered.map((o, i) => {
-            const active = o.value === value;
+            const selectedNow = o.value === value;
+            const focused = i === activeIdx;
             return (
               <button
-                key={i}
-                onClick={() => {
-                  onChange(o.value);
-                  setOpen(false);
-                  setQuery("");
-                }}
+                key={String(o.value)}
+                ref={focused ? activeOptionRef : null}
+                onClick={() => commitOption(o)}
+                onMouseEnter={() => setActiveIdx(i)}
                 className={cn(
                   "w-full text-left px-3 h-8 rounded-xs text-body-sm flex items-center gap-2 transition",
-                  active ? "bg-accent-soft text-ink" : "text-ink-soft hover:bg-accent-soft hover:text-ink",
+                  focused ? "bg-accent-soft text-ink" :
+                    selectedNow ? "bg-accent-soft/50 text-ink" : "text-ink-soft hover:bg-accent-soft hover:text-ink",
                 )}
               >
                 <span className="flex-1 min-w-0 truncate">{o.label}</span>
                 {o.description && <span className="text-caption text-ink-faint shrink-0">{o.description}</span>}
-                {active && (
+                {selectedNow && (
                   <svg className="h-3.5 w-3.5 text-accent shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>

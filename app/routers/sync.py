@@ -10,6 +10,7 @@ import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import update as sql_update
 from sqlalchemy.orm import Session
 
 from auth import current_user, require_local_client
@@ -42,8 +43,22 @@ async def submit(req_id: str, db: Session = Depends(get_db), user: User = Depend
     if not r.due_at:
         raise HTTPException(status_code=400, detail="DDL is required before dispatch")
 
-    r.status = "ready"
-    r.sync_state = "pending"
+    # Atomic CAS — without this, a submitter double-clicking "投递"
+    # would emit two `requirement.ready` SSE events, causing every
+    # tray client to fire two "new requirement" toasts AND set off a
+    # claim race storm. Idempotent destination (ready→ready) is fine
+    # for the requirement row but bad for downstream side-effects.
+    cas = db.execute(
+        sql_update(Requirement)
+        .where(Requirement.id == req_id, Requirement.status.in_({"summary_ready", "ready"}))
+        .values(status="ready", sync_state="pending")
+    )
+    if cas.rowcount == 0:
+        db.rollback()
+        r2 = db.query(Requirement).filter(Requirement.id == req_id).first()
+        current = r2.status if r2 else "deleted"
+        raise HTTPException(status_code=409, detail=f"submit race: requirement is now {current}")
+    db.refresh(r)
     sync_requirement_due_event(db, r, user)
     log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="submitted", detail={})
     db.commit()
@@ -87,6 +102,7 @@ async def sync_ack(req_id: str, db: Session = Depends(get_db), user: User = Depe
 
 @router.post("/requirements/{req_id}/claim")
 async def claim(req_id: str, db: Session = Depends(get_db), user: User = Depends(require_local_client)) -> dict:
+    # Fast permission + existence pre-check (read-only).
     r = (
         db.query(Requirement)
         .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
@@ -95,13 +111,33 @@ async def claim(req_id: str, db: Session = Depends(get_db), user: User = Depends
     )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
-    if r.status not in {"ready"}:
+    if r.status != "ready":
         raise HTTPException(status_code=400, detail=f"cannot claim from status {r.status}")
     if not can_claim_requirement(r, user):
         raise HTTPException(status_code=403, detail="only assigned users can claim this requirement")
-    r.status = "claimed"
-    if not r.claimed_at:
-        r.claimed_at = datetime.utcnow()
+
+    # Atomic compare-and-swap: only the request that flips ready → claimed
+    # "wins". Two concurrent claims previously both passed the in-memory
+    # status check, then both blind-wrote status=claimed and the loser
+    # silently overwrote claimed_by with their own nickname while leaving
+    # the winner's assignment row in place — ambiguous lead.
+    now = datetime.utcnow()
+    result = db.execute(
+        sql_update(Requirement)
+        .where(Requirement.id == req_id, Requirement.status == "ready")
+        .values(status="claimed", claimed_at=now)
+    )
+    if result.rowcount == 0:
+        # Lost the race or status changed underneath us.
+        db.rollback()
+        # Re-read to give the caller a useful error.
+        r2 = db.query(Requirement).filter(Requirement.id == req_id).first()
+        current = r2.status if r2 else "deleted"
+        raise HTTPException(status_code=409, detail=f"claim race: requirement is now {current}")
+    # Refresh the ORM object so subsequent assignment/notification work
+    # uses the post-CAS state.
+    db.refresh(r)
+
     if not r.assignments:
         ensure_public_claim_assignment(db, r, user)
     else:

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, RefreshCw } from "lucide-react";
-import { Button, EmptyState, Skeleton, toast } from "@yqgl/shared";
+import { Inbox, Plus, RefreshCw } from "lucide-react";
+import { Button, EmptyState, Skeleton, useSpace } from "@yqgl/shared";
 import type { Requirement } from "@yqgl/shared";
 import { invoke } from "@/lib/tauri";
 import { TaskCard } from "@/components/TaskCard";
@@ -27,6 +27,7 @@ const TABS: { id: DTab; label: string; statuses: string[] }[] = [
 
 export function HubDispatch() {
   const nav = useNavigate();
+  const { setSpace } = useSpace();
   const [params, setParams] = useSearchParams();
   const dtab = (params.get("dtab") as DTab) || "review";
 
@@ -116,11 +117,30 @@ export function HubDispatch() {
         </div>
       ) : items.length === 0 ? (
         <EmptyState
+          icon={<Inbox className="h-8 w-8" />}
           title={emptyTitle(dtab)}
           description={emptyDesc(dtab)}
-          action={dtab === "drafts" ? (
-            <Button variant="accent" size="sm" onClick={() => nav("/r/new")}>新建一条</Button>
-          ) : undefined}
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {dtab === "drafts" || dtab === "ready" || dtab === "clarifying" ? (
+                <Button variant="accent" size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={() => nav("/r/new")}>
+                  新建一条
+                </Button>
+              ) : null}
+              {dtab === "working" || dtab === "review" || dtab === "accepted" ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => { setSpace("work"); nav("/?tab=public"); }}
+                >
+                  切到接活看公共池
+                </Button>
+              ) : null}
+              <Button variant="ghost" size="sm" leftIcon={<RefreshCw className="h-4 w-4" />} onClick={refresh}>
+                刷新
+              </Button>
+            </div>
+          }
         />
       ) : (
         <div className="space-y-3">

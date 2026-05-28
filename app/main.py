@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -34,8 +36,115 @@ from routers import sync as sync_router
 from routers import users as users_router
 from routers import voice as voice_router
 from routers import workspaces as workspaces_router
+from db import SessionLocal
 from services.partial_uploads import cleanup_stale_partials
 from services.schema_migrations import ensure_runtime_schema
+
+_logger = logging.getLogger(__name__)
+
+
+async def _periodic_knowledge_reindex() -> None:
+    """Background task: rebuild the knowledge corpus every 5 minutes.
+
+    Previously the index was rebuilt on every /api/knowledge/search call
+    (services/knowledge.py:350), which under any concurrent load became a
+    self-DoS — every search walked every requirement / chat / comment etc.
+    Moving the rebuild here means searches are fast and the index lags by
+    at most 5 minutes. Admins can force-rebuild via POST /api/knowledge/reindex.
+    """
+    # Allow the app to fully boot before the first big scan.
+    await asyncio.sleep(60)
+    while True:
+        try:
+            from services.knowledge import rebuild_knowledge_index
+            db = SessionLocal()
+            try:
+                rebuild_knowledge_index(db)
+            finally:
+                db.close()
+        except Exception:
+            _logger.exception("periodic knowledge reindex failed (will retry)")
+        await asyncio.sleep(300)
+
+
+async def _periodic_partial_cleanup() -> None:
+    """Garbage-collect abandoned chunked uploads every 6 hours.
+
+    Previously only ran once at boot — a server with multi-week uptime
+    accumulated stale uploads (especially big drive / meeting files
+    where users frequently cancel). Each abandoned upload can be GB-sized.
+    """
+    await asyncio.sleep(600)  # first sweep 10 minutes after boot
+    while True:
+        try:
+            cleanup_stale_partials(settings.data_dir)
+        except Exception:
+            _logger.exception("periodic partial-upload cleanup failed")
+        await asyncio.sleep(6 * 60 * 60)
+
+
+async def _resume_stuck_jobs() -> None:
+    """One-shot startup sweep: fail any background jobs that were left
+    `running` by a previous process crash. Without this, requirements
+    stuck in `ai_processing` / `delivery_doc_pending` (from auto.py /
+    delivery_upload), meetings in `processing` (from meetings.py), and
+    knowledge ASK runs in `running` (from knowledge.py) all stay stuck
+    forever — no in-process worker owns them anymore.
+    """
+    from datetime import datetime, timedelta
+    from models import BackgroundJob, KnowledgeAskRun, MeetingRecord, Requirement
+    db = SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(minutes=15)
+        stale_jobs = (
+            db.query(BackgroundJob)
+            .filter(BackgroundJob.status == "running", BackgroundJob.updated_at < cutoff)
+            .all()
+        )
+        for j in stale_jobs:
+            j.status = "failed"
+            j.message = "process restarted while running"
+            # If this job was driving a requirement transition, unfreeze
+            # the requirement so the user can retry.
+            if j.result_ref:
+                req = db.query(Requirement).filter(Requirement.id == j.result_ref).first()
+                if req and req.status in {"ai_processing", "delivery_doc_pending"}:
+                    # ai_processing came from /auto-process; revert to ready
+                    # (user can re-trigger). delivery_doc_pending came from
+                    # delivery_upload finalize; revert to delivered (skip the
+                    # AI doc — manual review still works).
+                    req.status = "ready" if req.status == "ai_processing" else "delivered"
+
+        # Meetings whose analyze-task was killed mid-stream.
+        stale_meetings = (
+            db.query(MeetingRecord)
+            .filter(MeetingRecord.status == "processing", MeetingRecord.updated_at < cutoff)
+            .all()
+        )
+        for m in stale_meetings:
+            m.status = "failed"
+
+        # Knowledge ASK runs that were polling LLM when process died.
+        stale_asks = (
+            db.query(KnowledgeAskRun)
+            .filter(KnowledgeAskRun.status == "running", KnowledgeAskRun.updated_at < cutoff)
+            .all()
+        )
+        for a in stale_asks:
+            a.status = "failed"
+            a.answer_md = (a.answer_md or "") + "\n\n（服务在生成回答时重启了，可以重新提问）"
+
+        total = len(stale_jobs) + len(stale_meetings) + len(stale_asks)
+        if total:
+            db.commit()
+            _logger.info(
+                "resumed %d stuck record(s): %d jobs, %d meetings, %d asks",
+                total, len(stale_jobs), len(stale_meetings), len(stale_asks),
+            )
+    except Exception:
+        _logger.exception("startup stuck-job sweep failed")
+    finally:
+        db.close()
 
 
 def _validate_runtime_config() -> None:
@@ -65,7 +174,20 @@ async def lifespan(_: FastAPI):
     Base.metadata.create_all(engine)
     ensure_runtime_schema(engine)
     cleanup_stale_partials(settings.data_dir)
-    yield
+    # Recover from any crash that left background jobs stuck in `running`.
+    await _resume_stuck_jobs()
+    # Periodic background tasks.
+    reindex_task = asyncio.create_task(_periodic_knowledge_reindex())
+    cleanup_task = asyncio.create_task(_periodic_partial_cleanup())
+    try:
+        yield
+    finally:
+        for t in (reindex_task, cleanup_task):
+            t.cancel()
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 app = FastAPI(title="需求管理大师", version="0.1.0", lifespan=lifespan)
@@ -166,7 +288,16 @@ if WEB_ROOT.is_dir():
     @app.get("/")
     @app.get("/{full_path:path}")
     async def spa_fallback(request: Request, full_path: str = ""):
-        if full_path.startswith("api/") or full_path.startswith("assets/"):
+        # Don't swallow unknown API / asset / download / client paths into
+        # the SPA — a missing /downloads/foo.exe should 404, not return
+        # index.html (which the browser then tries to execute, presenting
+        # a nonsense error to the user).
+        if (
+            full_path.startswith("api/")
+            or full_path.startswith("assets/")
+            or full_path.startswith("downloads/")
+            or full_path.startswith("client/")
+        ):
             raise HTTPException(status_code=404)
         idx = WEB_ROOT / "index.html"
         if idx.exists():

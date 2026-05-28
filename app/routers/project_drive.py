@@ -60,7 +60,14 @@ OFFICE_EXTS = {".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"}
 
 
 def _require_project(db: Session, project_id: str) -> Project:
-    project = db.query(Project).filter(Project.id == project_id, Project.archived == False).first()  # noqa: E712
+    # Soft-deleted projects should not accept reads or writes — otherwise
+    # admins can "delete" a project and the drive keeps mutating because
+    # the file APIs ignored the tombstone.
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.archived == False,  # noqa: E712
+        Project.deleted_at.is_(None),
+    ).first()
     if not project:
         raise HTTPException(status_code=404, detail="project not found")
     return project
@@ -288,10 +295,18 @@ def _ensure_no_cycle(db: Session, item: ProjectDriveItem, target_parent_id: str 
     if item.id == target_parent_id:
         raise HTTPException(status_code=400, detail="cannot move a folder into itself")
     cursor = _require_folder(db, item.project_id, target_parent_id)
-    while cursor:
+    # Include soft-deleted ancestors so a target whose chain runs through
+    # a tombstoned folder can't form a cycle that becomes real after
+    # restore. Also cap depth at 100 — if data is corrupt and parent_id
+    # forms a cycle (no DB constraint prevents it for legacy rows), we
+    # bail rather than loop forever.
+    for _ in range(100):
+        if cursor is None:
+            return
         if cursor.id == item.id:
             raise HTTPException(status_code=400, detail="cannot move a folder into its descendant")
-        cursor = _require_item(db, cursor.parent_id) if cursor.parent_id else None
+        cursor = _require_item(db, cursor.parent_id, include_deleted=True) if cursor.parent_id else None
+    raise HTTPException(status_code=400, detail="folder chain too deep (>100); refusing to move")
 
 
 def _breadcrumbs(db: Session, project_id: str, parent_id: str | None) -> list[DriveBreadcrumbOut]:
@@ -328,7 +343,33 @@ def _soft_delete_items(db: Session, items: list[ProjectDriveItem], actor: User) 
         item.updated_at = now
 
 
-def _copy_item(db: Session, source: ProjectDriveItem, target_parent_id: str | None, actor: User) -> ProjectDriveItem:
+_COPY_MAX_DESCENDANTS = 2000
+_COPY_MAX_DEPTH = 32
+
+
+def _copy_item(
+    db: Session,
+    source: ProjectDriveItem,
+    target_parent_id: str | None,
+    actor: User,
+    *,
+    _depth: int = 0,
+    _counter: list[int] | None = None,
+) -> ProjectDriveItem:
+    """Recursively copy a drive item. Caps depth + descendant count to
+    prevent a user from triggering an O(N) blocking sync I/O storm on
+    the request thread by copying a deeply-nested or large folder.
+    """
+    if _depth >= _COPY_MAX_DEPTH:
+        raise HTTPException(status_code=400, detail=f"folder nesting exceeds {_COPY_MAX_DEPTH}; copy refused")
+    if _counter is None:
+        _counter = [0]
+    _counter[0] += 1
+    if _counter[0] > _COPY_MAX_DESCENDANTS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"copy exceeds {_COPY_MAX_DESCENDANTS} descendants; split into smaller batches",
+        )
     _require_folder(db, source.project_id, target_parent_id)
     copied = ProjectDriveItem(
         project_id=source.project_id,
@@ -368,7 +409,7 @@ def _copy_item(db: Session, source: ProjectDriveItem, target_parent_id: str | No
             copied.current_version_id = version.id
     else:
         for child in _children(db, source.id):
-            _copy_item(db, child, copied.id, actor)
+            _copy_item(db, child, copied.id, actor, _depth=_depth + 1, _counter=_counter)
     return copied
 
 
@@ -728,9 +769,20 @@ def bulk_download_drive(
     payload: DriveBulkIn,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ):
     items = [_require_item(db, item_id) for item_id in payload.item_ids]
+    # Verify the caller actually has access to each item's project. Without
+    # this, any authenticated user could craft an item-id list spanning
+    # arbitrary projects and zip-download files from projects they were
+    # never added to. _require_project (with deleted_at filter) raises 404
+    # for projects the caller can't see.
+    seen_projects: set[str] = set()
+    for it in items:
+        if it.project_id in seen_projects:
+            continue
+        _require_project(db, it.project_id)
+        seen_projects.add(it.project_id)
     tmp = tempfile.NamedTemporaryFile(prefix="project-drive-", suffix=".zip", delete=False)
     tmp_path = Path(tmp.name)
     tmp.close()
@@ -862,16 +914,26 @@ def paste_drive_items(
         _publish_drive_changed(project_id, [i.id for i in copied])
         return DriveOperationOut(operation_id=op.id, items=[_item_out(db, i) for i in copied])
 
-    old_parents: dict[str, str | None] = {}
+    # Record BOTH old parent AND old name so undo can restore the
+    # _unique_name suffix we may have appended. Previously undo only
+    # restored parent_id, leaving the user's "report.pdf" stuck as
+    # "report.pdf (2)" forever.
+    old_state: dict[str, dict[str, str | None]] = {}
     for item in items:
         if item.kind == "folder":
             _ensure_no_cycle(db, item, payload.target_parent_id)
+        old_state[item.id] = {"parent_id": item.parent_id, "name": item.name}
         item.name = _unique_name(db, project_id, payload.target_parent_id, item.name, exclude_id=item.id)
-        old_parents[item.id] = item.parent_id
         item.parent_id = payload.target_parent_id
         item.updated_by_user_id = user.id
         item.updated_at = datetime.utcnow()
-    op = _record_op(db, project_id, user, "paste_cut", {"old_parents": old_parents})
+    # Keep `old_parents` key for backward compat with already-recorded
+    # operations in the DB; new ops also carry `old_state` with the
+    # name.
+    op = _record_op(db, project_id, user, "paste_cut", {
+        "old_parents": {k: v["parent_id"] for k, v in old_state.items()},
+        "old_state": old_state,
+    })
     db.commit()
     _publish_drive_changed(project_id, [i.id for i in items])
     return DriveOperationOut(operation_id=op.id, items=[_item_out(db, i) for i in items])
@@ -989,9 +1051,17 @@ def undo_drive_operation(project_id: str, db: Session = Depends(get_db), user: U
             item.parent_id = payload["old_parent_id"]
         item.updated_by_user_id = user.id
     elif op.op_type == "paste_cut":
+        # Newer ops carry `old_state` (parent_id + name) so we can restore
+        # any rename that `_unique_name` applied during the cut. Older ops
+        # (pre-fix) only have `old_parents` — best-effort restore of
+        # parent only.
+        old_state = payload.get("old_state") or {}
         for item_id, old_parent_id in payload.get("old_parents", {}).items():
             item = _require_item(db, item_id, include_deleted=True)
             item.parent_id = old_parent_id
+            saved = old_state.get(item_id) or {}
+            if isinstance(saved, dict) and saved.get("name"):
+                item.name = saved["name"]
             item.updated_by_user_id = user.id
     else:
         raise HTTPException(status_code=400, detail=f"operation cannot be undone: {op.op_type}")

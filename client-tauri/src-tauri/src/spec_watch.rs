@@ -10,7 +10,6 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 use notify::{RecursiveMode, Watcher};
@@ -31,14 +30,14 @@ type DebouncerHandle = Debouncer<notify::RecommendedWatcher, FileIdMap>;
 static WATCHERS: Lazy<Mutex<HashMap<String, DebouncerHandle>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-pub fn spec_folder(state: &Arc<ConfigState>, project_slug: &str, code: &str) -> PathBuf {
+pub fn spec_folder(state: &ConfigState, project_slug: &str, code: &str) -> PathBuf {
     let sync_root = state.read().sync_root.clone();
     PathBuf::from(sync_root).join(project_slug).join(code).join("spec")
 }
 
 pub async fn start(
     app: AppHandle,
-    state: Arc<ConfigState>,
+    state: ConfigState,
     req_id: String,
 ) -> Result<PathBuf> {
     // Look up project_slug + code so we know what folder to watch.
@@ -121,7 +120,7 @@ pub fn stop(req_id: &str) {
 ///   3. Otherwise upload via the shared chunk uploader.
 async fn process_changes(
     app: &AppHandle,
-    state: &Arc<ConfigState>,
+    state: &ConfigState,
     req_id: &str,
     paths: Vec<PathBuf>,
 ) -> Result<()> {

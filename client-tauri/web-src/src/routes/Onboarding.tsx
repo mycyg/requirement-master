@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CheckCircle2, Check, FolderOpen, ServerCog, Sparkles, UserRound, XCircle } from "lucide-react";
 import { Button, Card, Input, Stepper, toast } from "@yqgl/shared";
-import { invoke } from "@/lib/tauri";
+import { invoke, resetClientTokenCache } from "@/lib/tauri";
 
 const STEPS = [
   { key: "server", label: "服务地址" },
@@ -14,7 +14,10 @@ const STEPS = [
 export function Onboarding() {
   const nav = useNavigate();
   const [step, setStep] = useState(0);
-  const [ip, setIp] = useState("192.168.0.224");
+  // Leave IP blank — the prod LAN address changes; a stale hardcoded
+  // default sent users to a dead server. The Input's placeholder gives
+  // an example; the get_config useEffect below pre-fills if available.
+  const [ip, setIp] = useState("");
   const [port, setPort] = useState("8080");
   const [serverOk, setServerOk] = useState<boolean | null>(null);
   const [nickname, setNickname] = useState("");
@@ -37,6 +40,10 @@ export function Onboarding() {
     setBusy(true);
     try {
       await invoke("set_config", { patch: { server_ip: ip, server_port: Number(port) } });
+      // Invalidate clientFetch's cached baseUrl so any subsequent
+      // direct-API call (and the test_server below uses the live config
+      // via the Rust side, but future steps don't) sees the new server.
+      resetClientTokenCache();
       const r = await invoke<{ ok: boolean; status: number }>("test_server");
       setServerOk(r.ok);
       if (r.ok) toast({ title: `已连接 ${ip}:${port}`, tone: "success" });
@@ -53,6 +60,10 @@ export function Onboarding() {
       const id = await invoke<{ id: string; nickname: string }>("identify", { nickname: nickname.trim() });
       await invoke("set_config", { patch: { nickname: id.nickname } });
       await invoke("register_device", { deviceName: window.navigator.platform });
+      // register_device writes a fresh client_token via Rust set_config;
+      // invalidate the cache so subsequent clientFetch calls pick it up
+      // instead of using a stale (empty) cached token.
+      resetClientTokenCache();
       toast({ title: `欢迎，${id.nickname}`, tone: "success" });
       setStep(2);
     } catch (e: any) {
@@ -70,7 +81,13 @@ export function Onboarding() {
         drive_sync_enabled: driveMode !== "off",
       }});
       setStep(3);
-    } finally { setBusy(false); }
+    } catch (e: any) {
+      // Previous code silently advanced to "全部就绪" even if set_config
+      // failed — user landed on Hub with broken config and every IPC 401'd.
+      toast({ title: "保存失败", description: String(e), tone: "error" });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -91,10 +108,10 @@ export function Onboarding() {
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-ink"><ServerCog className="h-4 w-4" /> 服务地址</div>
               <div className="grid grid-cols-[1fr_140px] gap-2">
-                <Input prefixSlot="IP" value={ip} onChange={(e) => setIp(e.target.value)} />
+                <Input prefixSlot="IP" placeholder="例 192.168.5.53" value={ip} onChange={(e) => setIp(e.target.value)} />
                 <Input prefixSlot=":" value={port} onChange={(e) => setPort(e.target.value)} />
               </div>
-              <Button onClick={testServer} loading={busy} variant="secondary">测试连接</Button>
+              <Button onClick={testServer} loading={busy} variant="secondary" disabled={!ip.trim() || !port.trim()}>测试连接</Button>
               {serverOk === true && (
                 <div className="text-success text-body-sm inline-flex items-center gap-1.5">
                   <Check className="h-4 w-4" /> 服务器可达

@@ -220,6 +220,29 @@ async def finalize(
         os.unlink(out_path)
         raise HTTPException(status_code=400, detail=f"invalid delivery zip: {e}")
 
+    # Atomic CAS — without this, a submitter who cancelled the requirement
+    # mid-upload would have the cancelled status blindly overwritten by
+    # delivery_doc_pending. Also prevents two concurrent finalizes from
+    # both passing the status check and racing on Delivery insert.
+    from sqlalchemy import update as sql_update
+    cas = db.execute(
+        sql_update(Requirement)
+        .where(
+            Requirement.id == req_id,
+            Requirement.status.in_({"claimed", "doing", "revision_requested"}),
+        )
+        .values(status="delivery_doc_pending", delivered_at=datetime.utcnow())
+    )
+    if cas.rowcount == 0:
+        # Lost the race or status changed. Cleanup the just-written zip
+        # to avoid orphan files.
+        try: os.unlink(out_path)
+        except Exception: pass
+        db.rollback()
+        r2 = db.query(Requirement).filter(Requirement.id == req_id).first()
+        current = r2.status if r2 else "deleted"
+        raise HTTPException(status_code=409, detail=f"deliver race: requirement is now {current}")
+    db.refresh(r)
     d = Delivery(
         requirement_id=req_id, round=round_num,
         package_path=str(out_path), package_size=total,
@@ -228,8 +251,6 @@ async def finalize(
         submitted_by_nickname=user.nickname,
     )
     db.add(d)
-    r.status = "delivery_doc_pending"
-    r.delivered_at = datetime.utcnow()
     ensure_workspaces_for_assignments(db, r)
     sync_workspace_to_status(db, r, user)
     log_activity(

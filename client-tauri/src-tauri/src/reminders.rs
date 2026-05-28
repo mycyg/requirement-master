@@ -1,7 +1,6 @@
 //! 60s tick poll /api/reminders/due + /api/notifications?status=unread
 //! Forwards anything with severity high/urgent to a toast.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
@@ -10,7 +9,7 @@ use tauri_plugin_notification::NotificationExt;
 use crate::config::ConfigState;
 use crate::http;
 
-pub fn spawn(app: AppHandle, state: Arc<ConfigState>) {
+pub fn spawn(app: AppHandle, state: ConfigState) {
     tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(60));
         loop {
@@ -25,7 +24,7 @@ pub fn spawn(app: AppHandle, state: Arc<ConfigState>) {
     });
 }
 
-async fn poll_reminders(app: &AppHandle, state: &Arc<ConfigState>) -> anyhow::Result<()> {
+async fn poll_reminders(app: &AppHandle, state: &ConfigState) -> anyhow::Result<()> {
     let url = http::url(state, "/api/reminders/due");
     let client = http::client(state);
     let resp = http::with_auth(client.get(&url), state).send().await?;
@@ -57,7 +56,7 @@ async fn poll_reminders(app: &AppHandle, state: &Arc<ConfigState>) -> anyhow::Re
     Ok(())
 }
 
-async fn poll_notifications(app: &AppHandle, state: &Arc<ConfigState>) -> anyhow::Result<()> {
+async fn poll_notifications(app: &AppHandle, state: &ConfigState) -> anyhow::Result<()> {
     let url = http::url(state, "/api/notifications?status=unread");
     let client = http::client(state);
     let resp = http::with_auth(client.get(&url), state).send().await?;

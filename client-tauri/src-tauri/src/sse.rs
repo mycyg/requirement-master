@@ -9,7 +9,6 @@
 //! notifications. Splitting now means a curl on `/stream` (anyone) only
 //! sees the org-wide non-PII feed.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -26,7 +25,7 @@ pub struct PushEvent {
     pub data: serde_json::Value,
 }
 
-pub fn spawn(app: AppHandle, state: Arc<ConfigState>) -> oneshot::Sender<()> {
+pub fn spawn(app: AppHandle, state: ConfigState) -> oneshot::Sender<()> {
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
 
     // We want a single stop signal to cancel both streams. Wrap stop_rx in
@@ -63,7 +62,7 @@ pub fn spawn(app: AppHandle, state: Arc<ConfigState>) -> oneshot::Sender<()> {
 /// Connects to `path` and forwards SSE events as Tauri push-event emits.
 /// `emit_connection_status` controls whether sse-status events fire (only
 /// the global stream does, so we don't double-flash the title bar dot).
-async fn run_stream(app: &AppHandle, state: &Arc<ConfigState>, path: &str, emit_connection_status: bool) {
+async fn run_stream(app: &AppHandle, state: &ConfigState, path: &str, emit_connection_status: bool) {
     let mut backoff_ms: u64 = 1000;
     loop {
         let url = http::url(state, path);
@@ -86,7 +85,13 @@ async fn run_stream(app: &AppHandle, state: &Arc<ConfigState>, path: &str, emit_
                 }
                 backoff_ms = 1000;
                 let mut stream = r.bytes_stream();
-                let mut buf = String::new();
+                // Buffer raw bytes (not String) — a multi-byte UTF-8 char
+                // that straddles two HTTP chunks would have its tail bytes
+                // dropped if we tried `str::from_utf8` per chunk. Since
+                // `\n` (0x0A) is < 0x80 it never appears inside a multi-
+                // byte sequence, so we can safely split on the newline byte
+                // and decode each complete line as UTF-8.
+                let mut byte_buf: Vec<u8> = Vec::new();
                 let mut event_name = String::new();
                 let mut data_buf = String::new();
 
@@ -98,14 +103,18 @@ async fn run_stream(app: &AppHandle, state: &Arc<ConfigState>, path: &str, emit_
                             break;
                         }
                     };
-                    if let Ok(piece) = std::str::from_utf8(&bytes) {
-                        buf.push_str(piece);
-                    }
-                    while let Some(nl) = buf.find('\n') {
-                        let line = buf[..nl].to_string();
-                        buf.drain(..=nl);
-                        let line = line.trim_end_matches('\r');
-                        if line.is_empty() {
+                    byte_buf.extend_from_slice(&bytes);
+                    while let Some(pos) = byte_buf.iter().position(|&b| b == b'\n') {
+                        let line_bytes: Vec<u8> = byte_buf.drain(..=pos).collect();
+                        let line_slice = &line_bytes[..line_bytes.len() - 1]; // drop \n
+                        let line_str = match std::str::from_utf8(line_slice) {
+                            Ok(s) => s.trim_end_matches('\r'),
+                            Err(e) => {
+                                tracing::warn!("sse {path} invalid utf-8 in line: {e}");
+                                continue;
+                            }
+                        };
+                        if line_str.is_empty() {
                             if !event_name.is_empty() {
                                 let value: serde_json::Value = serde_json::from_str(&data_buf)
                                     .unwrap_or_else(|_| serde_json::Value::String(data_buf.clone()));
@@ -116,13 +125,15 @@ async fn run_stream(app: &AppHandle, state: &Arc<ConfigState>, path: &str, emit_
                             }
                             event_name.clear();
                             data_buf.clear();
-                        } else if let Some(rest) = line.strip_prefix("event:") {
+                        } else if let Some(rest) = line_str.strip_prefix("event:") {
                             event_name = rest.trim().to_string();
-                        } else if let Some(rest) = line.strip_prefix("data:") {
+                        } else if let Some(rest) = line_str.strip_prefix("data:") {
                             if !data_buf.is_empty() {
                                 data_buf.push('\n');
                             }
-                            data_buf.push_str(rest.trim());
+                            // Per SSE spec: strip a single leading space, keep the rest as-is.
+                            let value = rest.strip_prefix(' ').unwrap_or(rest);
+                            data_buf.push_str(value);
                         }
                     }
                 }

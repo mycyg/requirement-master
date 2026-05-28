@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bell } from "lucide-react";
+import { Bell, BellOff, Inbox as InboxIcon } from "lucide-react";
 import { Button, Card, EmptyState, Badge } from "@yqgl/shared";
-import { clientFetch, useEvent } from "@/lib/tauri";
+import { clientFetch, clientJson, useEvent } from "@/lib/tauri";
 
 type Notif = {
   id: string;
@@ -23,10 +23,10 @@ export function Inbox() {
 
   const refresh = async () => {
     try {
-      const list = await clientFetch(`/api/notifications?status=${view}`).then((r) => r.json()) as Notif[];
-      setItems(list);
+      const list = await clientJson<Notif[]>(`/api/notifications?status=${view}`);
+      setItems(Array.isArray(list) ? list : []);
     } catch {
-      // ignore — empty inbox is fine
+      setItems([]);
     }
   };
 
@@ -41,13 +41,27 @@ export function Inbox() {
   });
 
   const markRead = async (id: string) => {
-    await clientFetch(`/api/notifications/${id}/read`, { method: "POST" });
-    refresh();
+    try {
+      const r = await clientFetch(`/api/notifications/${id}/read`, { method: "POST" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    } catch (e: any) {
+      // Previously failures were silent → user kept clicking "已读" and
+      // the unread badge wouldn't budge.
+      console.warn("markRead failed", e);
+    } finally {
+      refresh();
+    }
   };
 
   const readAll = async () => {
-    await clientFetch(`/api/notifications/read-all`, { method: "POST" });
-    refresh();
+    try {
+      const r = await clientFetch(`/api/notifications/read-all`, { method: "POST" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    } catch (e: any) {
+      console.warn("readAll failed", e);
+    } finally {
+      refresh();
+    }
   };
 
   return (
@@ -77,7 +91,22 @@ export function Inbox() {
       </header>
 
       {items.length === 0 ? (
-        <EmptyState title={view === "unread" ? "没有未读通知" : "暂无通知"} />
+        <EmptyState
+          icon={view === "unread" ? <BellOff className="h-8 w-8" /> : <InboxIcon className="h-8 w-8" />}
+          title={view === "unread" ? "没有未读通知" : "通知箱是空的"}
+          description={
+            view === "unread"
+              ? "新事件出现（被指派、待验收、AI 写完交付文档）时，会实时弹通知并在这里出现。"
+              : "你的全部通知都会在这里留存。"
+          }
+          action={
+            view === "unread" ? (
+              <Button variant="ghost" size="sm" onClick={() => setView("all")}>查看全部</Button>
+            ) : (
+              <Button variant="ghost" size="sm" onClick={() => setView("unread")}>只看未读</Button>
+            )
+          }
+        />
       ) : (
         <div className="space-y-2">
           {items.map((n) => (

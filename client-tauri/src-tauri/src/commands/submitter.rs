@@ -11,7 +11,6 @@
 //! doesn't immediately break compilation; the frontend handles shape.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use tauri::{AppHandle, State};
 
@@ -20,11 +19,18 @@ use crate::error::Result;
 use crate::http;
 use crate::upload::{upload_file, UploadUrls};
 
-/// Wrap the shared `State<ConfigState>` into a fresh `Arc<ConfigState>` so we
-/// can move it into closures + futures without lifetime gymnastics. Matches
-/// the pattern in [`crate::commands::delivery::start_delivery`].
-fn arc_state(state: &State<'_, ConfigState>) -> Arc<ConfigState> {
-    Arc::new(ConfigState(parking_lot::Mutex::new(state.read())))
+/// Clone the shared `ConfigState` for use in moved closures / futures.
+/// `ConfigState::clone` is cheap (Arc bump) and — critically — preserves
+/// the shared backing storage, so config writes from any task are
+/// immediately visible here. Earlier code wrapped the State in a fresh
+/// `Arc<ConfigState>` built from a snapshot, isolating writers from
+/// readers and silently breaking auth in long-running workers.
+///
+/// Use `ConfigState::clone(...)` explicitly because `(*state).clone()`
+/// resolves to `tauri::State::clone` (which returns the wrapper, not
+/// the inner T).
+fn owned_state(state: &State<'_, ConfigState>) -> ConfigState {
+    ConfigState::clone(state.inner())
 }
 
 // ---------- A. Reference data: projects, members ----------
@@ -309,7 +315,7 @@ pub async fn upload_drive_item(
     project_id: String,
     file_path: String,
 ) -> Result<serde_json::Value> {
-    let state_arc = arc_state(&state);
+    let state_arc = owned_state(&state);
     let path = PathBuf::from(&file_path);
     let filename = path.file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -395,7 +401,7 @@ pub async fn upload_attachment(
     req_id: String,
     file_path: String,
 ) -> Result<serde_json::Value> {
-    let state_arc = arc_state(&state);
+    let state_arc = owned_state(&state);
     let path = PathBuf::from(&file_path);
     let filename = path.file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -445,7 +451,7 @@ pub async fn start_spec_watcher(
     state: State<'_, ConfigState>,
     req_id: String,
 ) -> Result<String> {
-    let state_arc = arc_state(&state);
+    let state_arc = owned_state(&state);
     let folder = crate::spec_watch::start(app, state_arc, req_id).await?;
     Ok(folder.to_string_lossy().to_string())
 }

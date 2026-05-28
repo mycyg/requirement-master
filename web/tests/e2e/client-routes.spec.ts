@@ -34,14 +34,14 @@ test.use({ baseURL: CLIENT_BASE, viewport: { width: 1280, height: 800 } });
 
 test("客户端 9 个路由：light + dark 截图", async ({ page, request }) => {
   // Real backend identify so worker token exists.
-  const idRes = await request.post("http://192.168.0.224:8080/api/auth/identify", {
+  const idRes = await request.post("http://192.168.5.53:8080/api/auth/identify", {
     data: { nickname: "小光" },
   });
   expect(idRes.ok()).toBeTruthy();
   const cookies = idRes.headers()["set-cookie"];
   const cookiePart = cookies!.split(";")[0];
   const [name, value] = cookiePart.split("=");
-  const regRes = await request.post("http://192.168.0.224:8080/api/client-devices/register", {
+  const regRes = await request.post("http://192.168.5.53:8080/api/client-devices/register", {
     data: { device_name: "client-spec", platform: "win32" },
     headers: { Cookie: `${name}=${value}` },
   });
@@ -52,8 +52,8 @@ test("客户端 9 个路由：light + dark 截图", async ({ page, request }) =>
     (window as any).__YQGL_MOCK_INVOKE__ = async (cmd: string) => {
       if (cmd === "get_config") {
         return {
-          server_ip: "192.168.0.224", server_port: 8080,
-          server_url: "http://192.168.0.224:8080",
+          server_ip: "192.168.5.53", server_port: 8080,
+          server_url: "http://192.168.5.53:8080",
           nickname: nick, cookie_token: "session", client_token: tok,
           sync_root: "D:\\工作需求", drive_sync_root: "D:\\工作需求\\项目网盘",
           drive_sync_enabled: false, drive_sync_mode: "download",

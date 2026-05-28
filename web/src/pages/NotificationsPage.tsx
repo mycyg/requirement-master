@@ -33,12 +33,24 @@ export function NotificationsPage() {
   useEffect(() => { load(); }, [status]);
 
   const markRead = async (id: string) => {
-    await api.readNotification(id);
-    await load();
+    try {
+      await api.readNotification(id);
+    } catch (e: any) {
+      // Without this, network/auth failures produced unhandled promise
+      // rejections — user clicked "已读", nothing changed, no feedback.
+      console.warn("markRead failed", e);
+    } finally {
+      await load();
+    }
   };
   const readAll = async () => {
-    await api.readAllNotifications();
-    await load();
+    try {
+      await api.readAllNotifications();
+    } catch (e: any) {
+      console.warn("readAll failed", e);
+    } finally {
+      await load();
+    }
   };
 
   const unreadCount = rows.filter((row) => !row.read_at).length;

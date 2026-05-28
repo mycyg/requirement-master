@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Activity,
@@ -77,6 +77,7 @@ export function RequirementDetail() {
   const nav = useNavigate();
   const [searchParams] = useSearchParams();
   const [req, setReq] = useState<Requirement | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [workspaces, setWorkspaces] = useState<RequirementWorkspace[]>([]);
   const [taskPlans, setTaskPlans] = useState<TaskPlan[]>([]);
@@ -94,21 +95,28 @@ export function RequirementDetail() {
 
   const refresh = async () => {
     if (!id) return;
-    const r = await api.getRequirement(id);
-    setReq(r);
-    const [nextAttachments, nextWorkspaces, nextPlans, nextAcceptance] = await Promise.all([
-      api.listAttachments(id),
-      api.listRequirementWorkspaces(id).catch(() => []),
-      api.listTaskPlans(id).catch(() => []),
-      api.listAcceptanceItems(id).catch(() => []),
-    ]);
-    setAttachments(nextAttachments);
-    setWorkspaces(nextWorkspaces);
-    setTaskPlans(nextPlans);
-    setAcceptanceItems(nextAcceptance);
+    try {
+      const r = await api.getRequirement(id);
+      setReq(r);
+      setLoadErr(null);
+      const [nextAttachments, nextWorkspaces, nextPlans, nextAcceptance] = await Promise.all([
+        api.listAttachments(id),
+        api.listRequirementWorkspaces(id).catch(() => []),
+        api.listTaskPlans(id).catch(() => []),
+        api.listAcceptanceItems(id).catch(() => []),
+      ]);
+      setAttachments(nextAttachments);
+      setWorkspaces(nextWorkspaces);
+      setTaskPlans(nextPlans);
+      setAcceptanceItems(nextAcceptance);
+    } catch (e: any) {
+      // Without this, a 404 / 401 left `req` null forever and the user
+      // stared at "加载中…" with no escape route.
+      setLoadErr(String(e));
+    }
   };
 
-  useEffect(() => { refresh(); }, [id]);
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [id]);
   useEffect(() => {
     api.me().then(setMe).catch(() => setMe(null));
   }, []);
@@ -124,6 +132,18 @@ export function RequirementDetail() {
     return () => window.clearTimeout(t);
   }, [currentStatus, id, nav]);
 
+  if (loadErr) {
+    return (
+      <main className="narrow-container">
+        <div className="paper-surface mt-6 p-5 text-sm text-red-700">
+          加载需求失败：{loadErr}
+          <div className="mt-3">
+            <button className="button-secondary" onClick={refresh}>重试</button>
+          </div>
+        </div>
+      </main>
+    );
+  }
   if (!id || !req || !currentStatus) return <main className="narrow-container text-stone-500">加载中…</main>;
 
   // If still clarifying, redirect to clarify page
@@ -685,13 +705,25 @@ function WorkspaceCard({
   const [updateText, setUpdateText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Track unsaved edits so an incoming SSE-triggered refresh doesn't
+  // clobber the user's in-flight typing. Previously every workspace prop
+  // change blindly reset all four fields → user typed, partner pushed an
+  // unrelated update via SSE, user's text vanished.
+  const [dirty, setDirty] = useState(false);
+  const lastSyncedKeyRef = useRef("");
 
   useEffect(() => {
+    // Sync local edit state only when the server-side workspace ACTUALLY
+    // changed (different updated_at), AND the user isn't actively editing.
+    const key = `${workspace.id}:${workspace.updated_at || ""}`;
+    if (key === lastSyncedKeyRef.current) return;
+    if (dirty) return;
+    lastSyncedKeyRef.current = key;
     setPhase(workspace.phase);
     setProgress(workspace.progress_percent);
     setNote(workspace.status_note || "");
     setBlocked(workspace.blocked_reason || "");
-  }, [workspace]);
+  }, [workspace, dirty]);
 
   const save = async () => {
     setBusy(true); setErr(null);
@@ -702,6 +734,9 @@ function WorkspaceCard({
         status_note: note || null,
         blocked_reason: blocked || null,
       });
+      // Edits are now persisted server-side; let the next refresh sync
+      // any concurrent changes from teammates without us losing context.
+      setDirty(false);
       await onChange();
     } catch (e: any) {
       setErr(String(e));
@@ -767,13 +802,13 @@ function WorkspaceCard({
 
       {canEdit ? (
         <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_120px]">
-          <input className="field" value={phase} onChange={(e) => setPhase(e.target.value)} placeholder="阶段" />
-          <input className="field" type="number" min={0} max={100} value={progress} onChange={(e) => setProgress(Number(e.target.value))} />
-          <textarea className="textarea-field min-h-20 sm:col-span-2" value={note} onChange={(e) => setNote(e.target.value)} placeholder="现在干到哪了？" />
-          <textarea className="textarea-field min-h-16 sm:col-span-2" value={blocked} onChange={(e) => setBlocked(e.target.value)} placeholder="有阻塞就写，没有就留空" />
-          <button className="button-primary sm:col-span-2" disabled={busy || !phase.trim()} onClick={save}>
+          <input className="field" value={phase} onChange={(e) => { setPhase(e.target.value); setDirty(true); }} placeholder="阶段" />
+          <input className="field" type="number" min={0} max={100} value={progress} onChange={(e) => { setProgress(Number(e.target.value)); setDirty(true); }} />
+          <textarea className="textarea-field min-h-20 sm:col-span-2" value={note} onChange={(e) => { setNote(e.target.value); setDirty(true); }} placeholder="现在干到哪了？" />
+          <textarea className="textarea-field min-h-16 sm:col-span-2" value={blocked} onChange={(e) => { setBlocked(e.target.value); setDirty(true); }} placeholder="有阻塞就写，没有就留空" />
+          <button className="button-primary sm:col-span-2" disabled={busy || !phase.trim() || !dirty} onClick={save}>
             <Save className="h-4 w-4" aria-hidden="true" />
-            {busy ? "保存中..." : "保存进度"}
+            {busy ? "保存中..." : dirty ? "保存进度" : "已保存"}
           </button>
         </div>
       ) : (

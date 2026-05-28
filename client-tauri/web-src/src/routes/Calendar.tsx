@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Card, EmptyState, Badge } from "@yqgl/shared";
-import { clientFetch } from "@/lib/tauri";
+import { CalendarOff, Plus } from "lucide-react";
+import { Button, Card, EmptyState, Badge } from "@yqgl/shared";
+import { clientJson } from "@/lib/tauri";
 
 type Event = {
   id: string;
@@ -37,9 +38,8 @@ export function Calendar() {
       end: end.toISOString(),
       mine: "true",
     });
-    clientFetch(`/api/calendar/events?${qs}`)
-      .then((r) => r.json())
-      .then(setEvents)
+    clientJson<Event[]>(`/api/calendar/events?${qs}`)
+      .then((rows) => setEvents(Array.isArray(rows) ? rows : []))
       .catch(() => setEvents([]));
   }, [anchor]);
 
@@ -100,7 +100,21 @@ export function Calendar() {
       <Card className="mt-5">
         <h2 className="text-h4 text-ink mb-3">本周事项一览</h2>
         {events.length === 0 ? (
-          <EmptyState title="这段时间没有日程。" />
+          <EmptyState
+            icon={<CalendarOff className="h-8 w-8" />}
+            title="本周没有日程"
+            description="需求的截止时间会自动出现在这里；也可以手动创建会议或自定义事项。"
+            action={
+              <Button
+                variant="secondary"
+                size="sm"
+                leftIcon={<Plus className="h-4 w-4" />}
+                onClick={() => nav("/r/new")}
+              >
+                起一条需求（自带截止）
+              </Button>
+            }
+          />
         ) : (
           <div className="space-y-2">
             {events.map((e) => (

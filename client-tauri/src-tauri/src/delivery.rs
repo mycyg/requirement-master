@@ -4,7 +4,6 @@
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use tauri::AppHandle;
 use zip::write::SimpleFileOptions;
@@ -19,7 +18,7 @@ const EXCLUDE: &[&str] = &[".git", "node_modules", ".venv", "__pycache__", ".ide
 
 pub async fn start_delivery(
     app: AppHandle,
-    state: Arc<ConfigState>,
+    state: ConfigState,
     req_id: String,
     folder: PathBuf,
 ) -> Result<()> {
@@ -54,7 +53,11 @@ pub async fn start_delivery(
         },
     };
 
-    let _ = upload_file(
+    // Always delete the temp zip — success OR upload failure. Previously
+    // the `?` on upload_file aborted before the `remove_file` line, leaking
+    // a potentially GB-sized file in the user's temp dir every failed
+    // delivery.
+    let upload_result = upload_file(
         &app,
         &state,
         &req_id,
@@ -64,10 +67,9 @@ pub async fn start_delivery(
         urls,
         "delivery-progress",
         None,
-    ).await?;
-
+    ).await;
     let _ = std::fs::remove_file(&zip_path);
-    Ok(())
+    upload_result.map(|_| ())
 }
 
 fn zip_dir(src: &Path, out: &Path) -> Result<usize> {
@@ -93,7 +95,18 @@ fn walk(
         let name = entry.file_name().to_string_lossy().to_string();
         if EXCLUDE.iter().any(|e| name == *e) { continue; }
         let path = entry.path();
-        let rel = path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
+        // `strip_prefix` returns Err for paths that don't start with
+        // `base` — happens on Windows when `read_dir` returns a junction
+        // / reparse point that resolves outside the worker folder. The
+        // previous `.unwrap()` panicked the command and the user got an
+        // opaque IPC error. Skip the entry instead.
+        let rel = match path.strip_prefix(base) {
+            Ok(r) => r.to_string_lossy().replace('\\', "/"),
+            Err(_) => {
+                tracing::warn!("delivery walk: skipping out-of-base entry {}", path.display());
+                continue;
+            }
+        };
         let ft = entry.file_type()?;
         if ft.is_dir() {
             zw.add_directory(&rel, *opts)?;

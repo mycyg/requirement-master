@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { acquireBodyScrollLock, releaseBodyScrollLock } from "./bodyScrollLock";
 import { cn } from "./cn";
 
 export interface DrawerProps {
@@ -25,12 +26,11 @@ export function Drawer({
 }: DrawerProps) {
   useEffect(() => {
     if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    acquireBodyScrollLock();
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => {
-      document.body.style.overflow = prev;
+      releaseBodyScrollLock();
       window.removeEventListener("keydown", onKey);
     };
   }, [open, onClose]);

@@ -236,7 +236,7 @@ export function ActionRailDispatch({ req, me, onChange }: Props) {
             <FileText className="h-4 w-4 text-ink-muted" />
             规格附件
           </h3>
-          <FileAttachRail reqId={req.id} />
+          <FileAttachRail reqId={req.id} reqStatus={req.status} />
         </Card>
       )}
 

@@ -33,11 +33,22 @@ pub async fn me(state: State<'_, ConfigState>) -> Result<Option<Identity>> {
     let client = http::client(&state);
     let url = http::url(&state, "/api/auth/me");
     let resp = client.get(&url).send().await?;
-    if !resp.status().is_success() {
+    // Distinguish "not logged in" (401) from "broken response" (anything else).
+    // Previously `resp.json().await.ok()` swallowed JSON-parse errors and
+    // returned None, indistinguishable from "logged out" — which forced
+    // App.tsx to re-onboard the user, which in turn revoked the existing
+    // server-side device record (one-way data loss).
+    if resp.status().as_u16() == 401 {
         return Ok(None);
     }
-    let id: Option<Identity> = resp.json().await.ok();
-    Ok(id)
+    if !resp.status().is_success() {
+        return Err(Error::Other(format!(
+            "/api/auth/me returned {}", resp.status()
+        )));
+    }
+    let id: Identity = resp.json().await
+        .map_err(|e| Error::Other(format!("/api/auth/me body parse failed: {e}")))?;
+    Ok(Some(id))
 }
 
 #[derive(Debug, Serialize, Deserialize)]

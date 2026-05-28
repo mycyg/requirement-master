@@ -3,6 +3,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use directories::ProjectDirs;
 use parking_lot::Mutex;
@@ -54,7 +55,10 @@ pub struct Config {
     pub theme: String, // "auto" | "light" | "dark"
 }
 
-fn default_server_ip() -> String { "192.168.0.224".into() }
+// Empty default — LAN IP varies per deployment; a stale hardcoded one
+// sent fresh installs to a dead server. Onboarding's "下一步" button is
+// disabled until the user enters & verifies a real IP.
+fn default_server_ip() -> String { String::new() }
 fn default_server_port() -> u16 { 8080 }
 fn default_scheme() -> String { "http".into() }
 fn default_sync_root() -> String { r"D:\工作需求".into() }
@@ -130,11 +134,27 @@ pub fn load() -> Result<Config> {
         return Ok(Config::default());
     }
     let raw = fs::read_to_string(&path)?;
-    let mut cfg: Config = serde_json::from_str(&raw).unwrap_or_default();
+    // On parse failure, preserve the broken file as `config.broken-{ts}.json`
+    // BEFORE falling back to defaults. Silent default-reset would log the
+    // user out and a fresh onboarding revokes the existing device record
+    // on the server — irreversible. Keeping the backup lets a human
+    // (or a future repair tool) recover the tokens.
+    let cfg = match serde_json::from_str::<Config>(&raw) {
+        Ok(mut c) => { c.recompute_url(); c }
+        Err(e) => {
+            tracing::warn!("config.json parse failed ({e}); preserving as .broken backup and using defaults");
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let backup = path.with_file_name(format!("config.broken-{ts}.json"));
+            let _ = fs::copy(&path, &backup);
+            Config::default()
+        }
+    };
     // NOTE: 192.168.5.x and 192.168.0.x are both valid IPs for the same server
     // (dual-NIC, same machine on two subnets). DO NOT auto-rewrite — let the
     // user pick whichever subnet they're on via Settings → 服务器.
-    cfg.recompute_url();
     Ok(cfg)
 }
 
@@ -143,21 +163,69 @@ pub fn save(cfg: &Config) -> Result<()> {
     fs::create_dir_all(&dir)?;
     let path = dir.join("config.json");
     let pretty = serde_json::to_string_pretty(cfg)?;
-    fs::write(path, pretty)?;
+    // Atomic write — write to .tmp then rename. A crash or power-loss
+    // mid-write would otherwise leave config.json half-truncated; the
+    // next `load()` falls back to `unwrap_or_default()` which silently
+    // logs the user out and re-onboarding revokes the server-side device
+    // token (one-way data loss).
+    let tmp = dir.join("config.json.tmp");
+    fs::write(&tmp, pretty)?;
+    fs::rename(&tmp, &path)?;
     Ok(())
 }
 
 /// Shared mutable handle held in tauri::State.
-pub struct ConfigState(pub Mutex<Config>);
+///
+/// Stores the inner Mutex behind an Arc + impls Clone so that workers
+/// (SSE, reminders, spec_watch, uploads) and per-command snapshots all
+/// share the SAME underlying Config. The previous design wrapped a
+/// per-clone `Mutex<Config>` — writes via `set_config` in one task
+/// were invisible to any other task holding a separate clone. That
+/// meant `register_device` writing `client_token` into the tauri-managed
+/// state did NOT propagate to the SSE / reminders loops, which kept
+/// auth-empty until the app was restarted.
+#[derive(Clone)]
+pub struct ConfigState {
+    inner: Arc<Mutex<Config>>,
+}
 
 impl ConfigState {
     pub fn from_disk() -> Self {
-        let cfg = load().unwrap_or_default();
-        ConfigState(Mutex::new(cfg))
+        // On a TRANSIENT IO failure (file locked by an antivirus
+        // scanner, brief perm error, etc.) the previous `unwrap_or_default()`
+        // silently dropped the user's tokens. Differentiate:
+        //  - "file doesn't exist" → defaults, fine
+        //  - "parse error" → defaults (load() already backs up the
+        //    broken file to .broken-{ts}.json)
+        //  - other (IO/lock/perms) → ALSO default but back the file up
+        //    AND log loudly so it's recoverable. Never silently nuke.
+        let cfg = match load() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(
+                    "config load failed ({e}); using defaults. \
+                     Your saved tokens are preserved if the original \
+                     config.json is still readable on disk."
+                );
+                // Best-effort backup of whatever is on disk so the user
+                // can recover by hand if needed.
+                if let Ok(path) = config_path() {
+                    if path.exists() {
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs()).unwrap_or(0);
+                        let backup = path.with_file_name(format!("config.recover-{ts}.json"));
+                        let _ = fs::copy(&path, &backup);
+                    }
+                }
+                Config::default()
+            }
+        };
+        ConfigState { inner: Arc::new(Mutex::new(cfg)) }
     }
-    pub fn read(&self) -> Config { self.0.lock().clone() }
+    pub fn read(&self) -> Config { self.inner.lock().clone() }
     pub fn write<F: FnOnce(&mut Config)>(&self, f: F) -> Result<Config> {
-        let mut guard = self.0.lock();
+        let mut guard = self.inner.lock();
         f(&mut guard);
         guard.recompute_url();
         save(&guard)?;

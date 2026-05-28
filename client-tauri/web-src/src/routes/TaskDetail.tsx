@@ -106,6 +106,8 @@ export function TaskDetail() {
       await invoke("patch_status", { reqId: id, status: "doing" });
       toast({ title: "已开始", tone: "info" });
       await refresh();
+    } catch (e: any) {
+      toast({ title: "状态切换失败", description: String(e), tone: "error" });
     } finally { setBusy(false); }
   };
 
@@ -354,27 +356,46 @@ function MyWorkspace({
   const [newItem, setNewItem] = useState("");
   const [newUpdate, setNewUpdate] = useState("");
 
+  // All workspace writes surface errors via toast — previously every
+  // failure (network drop, status conflict) was silently swallowed and
+  // the user's edit was lost without any feedback.
   const save = async (patch: Record<string, any>) => {
-    try { await invoke("patch_my_workspace", { reqId, patch }); } catch {}
+    try {
+      await invoke("patch_my_workspace", { reqId, patch });
+    } catch (e: any) {
+      toast({ title: "保存失败", description: String(e), tone: "error" });
+    }
   };
 
   const addItem = async () => {
     if (!newItem.trim()) return;
-    await invoke("add_workspace_item", { reqId, title: newItem.trim() });
-    setNewItem("");
-    onChange();
+    try {
+      await invoke("add_workspace_item", { reqId, title: newItem.trim() });
+      setNewItem("");
+      onChange();
+    } catch (e: any) {
+      toast({ title: "添加失败", description: String(e), tone: "error" });
+    }
   };
 
   const toggleItem = async (itemId: string, status: "todo" | "doing" | "done") => {
-    await invoke("patch_workspace_item", { itemId, patch: { status } });
-    onChange();
+    try {
+      await invoke("patch_workspace_item", { itemId, patch: { status } });
+      onChange();
+    } catch (e: any) {
+      toast({ title: "更新失败", description: String(e), tone: "error" });
+    }
   };
 
   const addUpdate = async () => {
     if (!newUpdate.trim()) return;
-    await invoke("add_workspace_update", { reqId, body: newUpdate.trim() });
-    setNewUpdate("");
-    onChange();
+    try {
+      await invoke("add_workspace_update", { reqId, body: newUpdate.trim() });
+      setNewUpdate("");
+      onChange();
+    } catch (e: any) {
+      toast({ title: "记笔记失败", description: String(e), tone: "error" });
+    }
   };
 
   return (

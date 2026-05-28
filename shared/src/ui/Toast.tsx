@@ -23,15 +23,21 @@ const TONES: Record<ToastTone, string> = {
   accent: "border-accent/40",
 };
 
-let pushImpl: ((t: Omit<ToastItem, "id"> & { id?: string }) => string) | null = null;
+// Stack of mounted ToastHost push fns. Using a stack (not a single slot)
+// so that two hosts mounted in sequence (e.g. shell + a feature route
+// that accidentally re-renders ToastHost) don't disable each other when
+// either one unmounts — we hand toasts to the most-recently-mounted one,
+// and fall back to the previous when it goes away.
+const pushStack: Array<(t: Omit<ToastItem, "id"> & { id?: string }) => string> = [];
 
 /** Push a toast from anywhere in the app. ToastHost must be mounted. */
 export function toast(item: Omit<ToastItem, "id"> & { id?: string }): string {
-  if (!pushImpl) {
+  const fn = pushStack[pushStack.length - 1];
+  if (!fn) {
     console.warn("ToastHost not mounted; toast skipped:", item.title);
     return "";
   }
-  return pushImpl(item);
+  return fn(item);
 }
 
 /** Mount once near the root. Renders the stack at bottom-right. */
@@ -63,9 +69,14 @@ export function ToastHost({ max = 4 }: { max?: number }) {
   }, [max, remove]);
 
   useEffect(() => {
-    pushImpl = push;
+    pushStack.push(push);
     return () => {
-      pushImpl = null;
+      const idx = pushStack.lastIndexOf(push);
+      if (idx >= 0) pushStack.splice(idx, 1);
+      // Also clear any pending timers — without this the timer callback
+      // would call setItems on an unmounted host (React warning).
+      for (const handle of timers.current.values()) window.clearTimeout(handle);
+      timers.current.clear();
     };
   }, [push]);
 

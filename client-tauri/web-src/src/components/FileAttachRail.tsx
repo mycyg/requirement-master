@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { File as FileIcon, FolderOpen, Loader2, Plus, RefreshCw, Watch } from "lucide-react";
 import { Badge, Button, Progress, Switch, toast } from "@yqgl/shared";
-import { invoke } from "@/lib/tauri";
+import { invoke, useEvent } from "@/lib/tauri";
 import { listen } from "@/lib/tauri";
+
+// Status values where the submitter can still legitimately add files via
+// the spec/ folder watcher. Outside this set (e.g. cancelled, accepted,
+// or any worker-claimed state) we auto-stop the watcher to avoid 403/
+// 400 storms when notify fires for the user's own local edits.
+const WATCHABLE_STATUSES = new Set(["draft", "clarifying", "summary_ready"]);
 
 type Attachment = {
   id: string;
@@ -26,12 +32,25 @@ type UploadProgress = {
  *   2) 文件夹监听（M6） — 把 {sync_root}/{project_slug}/{code}/spec/ 当 dropbox，
  *      新增/修改的文件自动上传（只增不删）。
  */
-export function FileAttachRail({ reqId }: { reqId: string }) {
+export function FileAttachRail({ reqId, reqStatus }: { reqId: string; reqStatus?: string | null }) {
   const [items, setItems] = useState<Attachment[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [watching, setWatching] = useState(false);
+
+  // Auto-stop the spec watcher when the requirement leaves a state in
+  // which submitter attachments are accepted. Otherwise the watcher keeps
+  // firing on the user's local file edits and every upload 400s with
+  // "cannot add attachment in status X" — wastes network + spams logs.
+  useEffect(() => {
+    if (!watching) return;
+    if (reqStatus && !WATCHABLE_STATUSES.has(reqStatus)) {
+      invoke("stop_spec_watcher", { reqId })
+        .then(() => setWatching(false))
+        .catch(() => { /* best-effort */ });
+    }
+  }, [reqStatus, watching, reqId]);
 
   const refresh = useCallback(async () => {
     setErr(null);

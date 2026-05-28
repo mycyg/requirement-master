@@ -1,19 +1,32 @@
 import { useEffect, useState } from "react";
-import { Button, Card, Input, Switch, toast, useTheme, type ThemeMode } from "@yqgl/shared";
-import { invoke } from "@/lib/tauri";
+import { HelpCircle } from "lucide-react";
+import { Button, Card, Input, Switch, toast, useFirstRun, useTheme, type ThemeMode } from "@yqgl/shared";
+import { invoke, resetClientTokenCache } from "@/lib/tauri";
 import { AdminPanel } from "@/components/AdminPanel";
 
 type Cfg = any;
 
 export function Settings() {
   const [cfg, setCfg] = useState<Cfg | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const { mode, setMode } = useTheme();
+  const { reset: resetTour } = useFirstRun();
 
   useEffect(() => {
-    invoke<Cfg>("get_config").then(setCfg).catch(() => {});
+    invoke<Cfg>("get_config")
+      .then(setCfg)
+      .catch((e) => setLoadErr(String(e)));
   }, []);
 
+  if (loadErr) {
+    return (
+      <div className="flex-1 p-6">
+        <h1 className="text-h2 text-ink mb-3">设置</h1>
+        <div className="glass p-4 text-error">设置加载失败：{loadErr}</div>
+      </div>
+    );
+  }
   if (!cfg) {
     return <div className="flex-1 p-6">加载中…</div>;
   }
@@ -23,6 +36,13 @@ export function Settings() {
     try {
       const next = await invoke<Cfg>("set_config", { patch });
       setCfg(next);
+      // If the user changed server endpoint, invalidate the cached base
+      // URL in clientFetch — otherwise every direct-API page keeps
+      // calling the OLD address until the app restarts.
+      if (patch.server_ip != null || patch.server_port != null || patch.server_url != null
+          || patch.server_scheme != null || patch.client_token != null) {
+        resetClientTokenCache();
+      }
       toast({ title: "已保存", tone: "success" });
     } catch (e: any) {
       toast({ title: "保存失败", description: String(e), tone: "error" });
@@ -129,7 +149,19 @@ export function Settings() {
           />
           <Input
             defaultValue={String(cfg.server_port)}
-            onBlur={(e) => Number(e.target.value) !== cfg.server_port && save({ server_port: Number(e.target.value), server_url: "" })}
+            onBlur={(e) => {
+              // Guard against NaN / out-of-range port — `Number("")` is 0,
+              // `Number("abc")` is NaN. Either would write a garbage value
+              // into config.json (serde NaN → null) and silently kill the
+              // app's backend connection.
+              const n = Number(e.target.value);
+              if (!Number.isFinite(n) || n < 1 || n > 65535) {
+                toast({ title: "端口必须是 1-65535 的整数", tone: "error" });
+                e.target.value = String(cfg.server_port);
+                return;
+              }
+              if (n !== cfg.server_port) save({ server_port: n, server_url: "" });
+            }}
             prefixSlot=":"
           />
         </div>
@@ -153,6 +185,26 @@ export function Settings() {
             测试连接
           </Button>
         </div>
+      </Card>
+
+      <Card>
+        <h2 className="text-h4 text-ink mb-3">帮助</h2>
+        <Button
+          variant="secondary"
+          leftIcon={<HelpCircle className="h-4 w-4" />}
+          onClick={() => {
+            resetTour();
+            // The App-level WelcomeTour is gated on `!tourSeen`, so
+            // clearing the flag causes it to re-open on the next render.
+            // Tell the user explicitly in case they're not on the Hub.
+            toast({ title: "已重新打开引导，回主页就能看到", tone: "info" });
+          }}
+        >
+          再看一遍新手引导
+        </Button>
+        <p className="mt-2 text-caption text-ink-faint">
+          忘了某个概念怎么用？随时回头看一眼。
+        </p>
       </Card>
 
       <Card>

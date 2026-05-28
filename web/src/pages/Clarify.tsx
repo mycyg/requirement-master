@@ -63,24 +63,32 @@ export function Clarify() {
   const [manageBusy, setManageBusy] = useState(false);
   const [manageErr, setManageErr] = useState<string | null>(null);
   const [loadedReqId, setLoadedReqId] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const autoStartedRef = useRef<string | null>(null);
   const stream = useChatStream(reqId || "");
 
   const refresh = async () => {
     if (!reqId) return;
     setLoadedReqId(null);
-    const [nextReq, nextAttachments, nextHistory] = await Promise.all([
-      api.getRequirement(reqId),
-      api.listAttachments(reqId),
-      api.listChatMessages(reqId),
-    ]);
-    setReq(nextReq);
-    setAttachments(nextAttachments);
-    setHistory(nextHistory);
-    setLoadedReqId(reqId);
+    setLoadErr(null);
+    try {
+      const [nextReq, nextAttachments, nextHistory] = await Promise.all([
+        api.getRequirement(reqId),
+        api.listAttachments(reqId),
+        api.listChatMessages(reqId),
+      ]);
+      setReq(nextReq);
+      setAttachments(nextAttachments);
+      setHistory(nextHistory);
+      setLoadedReqId(reqId);
+    } catch (e: any) {
+      // Without this, a 401 / 404 left loadedReqId null forever and the
+      // page stuck at "加载中…" with no escape.
+      setLoadErr(String(e));
+    }
   };
 
-  useEffect(() => { refresh(); }, [reqId]);
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [reqId]);
   useEffect(() => {
     api.me().then(setMe).catch(() => setMe(null));
   }, []);
@@ -102,6 +110,16 @@ export function Clarify() {
     }
   }, [req, loadedReqId, history.length, stream.running, stream.parsed]);
 
+  if (loadErr) return (
+    <main className="narrow-container">
+      <div className="paper-surface mt-6 p-5 text-sm text-red-700">
+        加载澄清页失败：{loadErr}
+        <div className="mt-3">
+          <button className="button-secondary" onClick={refresh}>重试</button>
+        </div>
+      </div>
+    </main>
+  );
   if (!reqId || !req) return <main className="narrow-container text-stone-500">加载中…</main>;
 
   const latestHistoryMsg = history[history.length - 1];

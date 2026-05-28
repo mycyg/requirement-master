@@ -128,8 +128,26 @@ export function Home() {
 
       <ul className="paper-surface mt-8 divide-y divide-stone-200/80 overflow-hidden">
         {projects.length === 0 && (
-          <li className="empty-state m-4">
-            {state === "active" ? "你还没有项目，建一个开始吧。" : state === "archived" ? "归档夹里是空的。" : "回收站是空的。"}
+          <li className="m-4 flex flex-col items-center gap-3 rounded-lg border border-dashed border-stone-300 bg-stone-50/40 px-6 py-10 text-center">
+            <div className="grid h-12 w-12 place-items-center rounded-full bg-stone-100 text-stone-400">
+              <FolderOpen className="h-6 w-6" aria-hidden="true" />
+            </div>
+            <p className="text-sm font-medium text-stone-700">
+              {state === "active" ? "还没有项目" : state === "archived" ? "归档夹里是空的" : "回收站是空的"}
+            </p>
+            <p className="max-w-prose text-xs text-stone-500">
+              {state === "active"
+                ? "项目是需求的容器。建一个项目（比如「2026 Q1 营销」），然后往里面提需求 — AI 会帮你打磨清楚，团队接走后会自动通知你验收。"
+                : state === "archived"
+                ? "归档的项目仍可恢复或永久删除；切到「正常」标签管理在用项目。"
+                : "切到「正常」或「已归档」标签管理项目；30 天后回收站会自动清理。"}
+            </p>
+            {state === "active" && !creating && (
+              <button className="button-primary mt-2" onClick={() => setCreating(true)}>
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                建一个开始
+              </button>
+            )}
           </li>
         )}
         {projects.map((p) => (

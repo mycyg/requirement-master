@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Inbox, Plus, RefreshCw, Sparkles } from "lucide-react";
 import { invoke } from "@/lib/tauri";
 import { TaskCard } from "@/components/TaskCard";
-import { Button, EmptyState, Skeleton, toast } from "@yqgl/shared";
+import { Button, EmptyState, Skeleton, toast, useSpace } from "@yqgl/shared";
 import type { Requirement } from "@yqgl/shared";
 
 type Tab = "public" | "mine" | "active" | "revision" | "delivered";
 
 export function Hub() {
   const [params, setParams] = useSearchParams();
+  const nav = useNavigate();
+  const { setSpace } = useSpace();
   const tab = (params.get("tab") as Tab) || "public";
 
   const [items, setItems] = useState<Requirement[] | null>(null);
@@ -97,13 +100,47 @@ export function Hub() {
         </div>
       ) : items.length === 0 ? (
         <EmptyState
-          title="这里没有工单"
+          icon={<Inbox className="h-8 w-8" />}
+          title={
+            tab === "public" ? "公共池暂时没有新单" :
+            tab === "mine" ? "没人指派活给你" :
+            tab === "active" ? "手上没有进行中的活" :
+            tab === "revision" ? "没有待返工的活" :
+            "近期没有交付记录"
+          }
           description={
-            tab === "public" ? "公开池里暂时没有等接的需求。" :
-            tab === "mine" ? "暂时没有指派给你的需求。" :
-            tab === "active" ? "你没有正在做的需求。可以去「找我的」或「在抓」看看。" :
-            tab === "revision" ? "目前没有待返工的需求。" :
-            "近期没有交付记录。"
+            tab === "public" ? "等队友把需求投递过来。或者去派活面板自己起一条。" :
+            tab === "mine" ? "可以去「在抓」看看公共池里有没有合适的活。" :
+            tab === "active" ? "去「找我的」或「在抓」看看，挑一条开做。" :
+            tab === "revision" ? "你目前没有需要返工的需求。" :
+            "完成的需求会出现在这里。"
+          }
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button variant="secondary" size="sm" leftIcon={<RefreshCw className="h-4 w-4" />} onClick={refresh}>
+                刷新
+              </Button>
+              {(tab === "mine" || tab === "active") && (
+                <Button variant="secondary" size="sm" onClick={() => setParams({ tab: "public" })}>
+                  去「在抓」逛逛
+                </Button>
+              )}
+              {tab === "public" && (
+                <Button
+                  variant="accent"
+                  size="sm"
+                  leftIcon={<Plus className="h-4 w-4" />}
+                  onClick={() => { setSpace("dispatch"); nav("/r/new"); }}
+                >
+                  我自己起一条
+                </Button>
+              )}
+              {tab === "delivered" && (
+                <Button variant="secondary" size="sm" leftIcon={<Sparkles className="h-4 w-4" />} onClick={() => setParams({ tab: "active" })}>
+                  看进行中的活
+                </Button>
+              )}
+            </div>
           }
         />
       ) : (

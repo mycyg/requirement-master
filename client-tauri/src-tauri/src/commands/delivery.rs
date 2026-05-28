@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use tauri::{AppHandle, State};
 
@@ -14,6 +13,7 @@ pub async fn start_delivery(
     req_id: String,
     folder: String,
 ) -> Result<()> {
-    let state_arc: Arc<ConfigState> = Arc::new(ConfigState(parking_lot::Mutex::new(state.read())));
-    delivery::start_delivery(app, state_arc, req_id, PathBuf::from(folder)).await
+    // Share the live ConfigState (cheap Arc-bump clone) so any token
+    // update mid-upload propagates instead of being snapshotted.
+    delivery::start_delivery(app, ConfigState::clone(state.inner()), req_id, PathBuf::from(folder)).await
 }

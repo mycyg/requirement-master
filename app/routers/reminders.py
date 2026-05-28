@@ -44,6 +44,10 @@ def due_reminders(
             Requirement.due_at.is_not(None),
             Requirement.status.in_(ACTIVE_STATUSES),
             Requirement.due_at <= horizon,
+            # Suppress reminders for requirements in soft-deleted projects —
+            # admin tombstoned them, no point pinging the user about a DDL
+            # they can no longer act on.
+            Project.deleted_at.is_(None),
             or_(
                 Requirement.submitter_user_id == user.id,
                 Requirement.claimed_by_user_id == user.id,

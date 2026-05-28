@@ -20,23 +20,40 @@ static CLIENT_CELL: Lazy<RwLock<Option<Arc<Client>>>> = Lazy::new(|| RwLock::new
 fn build() -> Client {
     ClientBuilder::new()
         .cookie_store(true)
-        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(120))
+        .user_agent(concat!("yqgl-client/", env!("CARGO_PKG_VERSION")))
+        .pool_max_idle_per_host(8)
         .build()
         .expect("reqwest client build")
 }
 
 /// Call once at startup (or after the user logs out) to rotate the underlying
 /// connection pool + cookie jar.
+#[allow(dead_code)]
 pub fn refresh(_state: &ConfigState) {
     *CLIENT_CELL.write() = Some(Arc::new(build()));
 }
 
 pub fn client(_state: &ConfigState) -> Arc<Client> {
+    // Fast path under read lock.
     if let Some(c) = CLIENT_CELL.read().clone() {
         return c;
     }
+    // Slow path: upgrade to write and re-check (double-checked init).
+    // Without the re-check, two concurrent callers could both observe
+    // None under separate read locks, both call build(), both write
+    // — and one ends up with an Arc<Client> that's not the canonical
+    // one stored in CLIENT_CELL, so any Set-Cookie it received is lost
+    // (cookies live on the jar inside the discarded Client). SSE +
+    // reminders both spawn in setup() before any UI command runs, so
+    // this race is reachable on every cold start.
+    let mut guard = CLIENT_CELL.write();
+    if let Some(c) = guard.as_ref() {
+        return c.clone();
+    }
     let c = Arc::new(build());
-    *CLIENT_CELL.write() = Some(c.clone());
+    *guard = Some(c.clone());
     c
 }
 
