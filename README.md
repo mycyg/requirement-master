@@ -1,133 +1,200 @@
-# 需求管理大师 · yqgl
+﻿# 需求管理大师
 
-> 内网团队用的 AI 原生工作中台。派活的人把想法扔进来，AI 负责追问和整理；接活的人在本地工作台接单、同步文件、更新进度、交付；项目过程里的会议、网盘、知识库、排期、健康度和通知都留痕。
+> 你老板的需求永远说不清？那为什么不让他说清呢？
+>
+> 产品经理一句“你看着改”，你当场大脑蓝屏？那就把他推进 AI 澄清流程。
+>
+> 接单人问“附件呢、DDL 呢、谁验收呢”，派活人说“我以为你懂”？很好，现在系统会替你问到他懂。
 
-![派活台](screenshots/aurora/submitter/03-dispatch-hub-default.dark.png)
+**需求管理大师** 是一个内网工作中台：Web 端负责派活、澄清、验收和看全局；Rust/Tauri 本地端负责接活、同步文件、系统通知、工作区进度和交付。
 
-[功能](#功能) · [双端职责](#双端职责) · [快速开始](#快速开始) · [开发与测试](#开发与测试) · [部署](#部署)
+一句话：把“群里口嗨”变成“可追踪、可交付、可验收”的项目流水线。
 
----
+![Rust 毛玻璃客户端](screenshots/readme/rust-client-glass.png)
 
-## 功能
+截图说明：README 只使用 `screenshots/readme/` 下的干净裁剪图，不放报错图，不放桌面隐私，不拿聊天窗口祭天。
 
-### 双端工作台
+## 这玩意儿解决啥
 
-- **Web 端**：派活、澄清、指定接单人、看排期/健康/知识库、验收和返工。
-- **本地端**：既能派活，也能接活；拥有本地文件、系统托盘、系统通知、项目同步和交付能力。
-- **同一个人可同时是派活人和接活人**，不引入复杂 RBAC；本地接活能力通过 client device token 校验。
+- 老板说“做个差不多的”：AI 先追问，追到能落地。
+- 产品说“先这样后那样”：需求有状态、有 DDL、有负责人，不再靠玄学记忆。
+- 接单人说“我不知道谁让我干的”：每个需求都有负责人、协作者、工作区和交付记录。
+- 文件在群里飞来飞去：项目网盘统一放，能预览，能回收，能进知识库。
+- 会议开完大家都很感动：录音/文本生成纪要，自动识别新增需求或需求变更。
+- 领导问“项目健康吗”：健康度、排期、通知、知识库一起给他看，别再手搓周报。
 
-### 需求流程
+## 双端分工
 
-1. 新建项目。
-2. 提一条新需求：描述、负责人/协作者、DDL、附件。
-3. AI 澄清并生成结构化摘要。
-4. 投递到公开池或指定接单方。
-5. 本地端接活、拆解任务、更新个人工作区、交付。
-6. 派活人验收或打回。
+| 端 | 干啥 | 能不能接活 |
+|---|---|---|
+| Web 派活台 | 提需求、AI 澄清、指定接单人、看项目、排期、健康、知识库、验收、返工 | 不能 |
+| Rust 毛玻璃本地端 | 派活 + 接活 + 本地文件 + 托盘常驻 + 系统通知 + 网盘同步 + 交付 | 能 |
+
+Web 端是“指挥室”，本地端是“干活桌”。
+
+浏览器里不让你偷偷接单交付，本地端会带 client device token，服务端会硬校验。想绕 UI？后端说：别闹。
+
+## 截图先看
+
+### 派活台：谁发的活，谁验收，谁背锅，一眼看见
+
+![派活台](screenshots/readme/dispatch-space.png)
+
+### 新建需求：先把话说明白，再让别人开干
+
+![新建需求](screenshots/readme/new-requirement.png)
+
+### 项目网盘：文件别再散落在聊天记录深处
+
+![项目网盘](screenshots/readme/project-drive.png)
+
+### 项目健康度：需求有没有炸，别等老板拍桌子才知道
+
+![项目健康度](screenshots/readme/project-health.png)
+
+## 核心功能
+
+### AI 澄清需求
+
+提示词全英文写，但用户可见输出会使用用户的语言。
+
+用户扔一段“想做个管理系统”，AI 会继续问：谁用、何时要、验收标准是什么、附件在哪、谁负责、DDL 是啥。
+
+问清楚之后生成摘要，提交人确认后才能投递。
+
+### 多接单人
+
+一个需求可以有：
+
+- 1 个负责人
+- 多个协作者
+- 每个接单人自己的个人工作区
+- 工作阶段、进度百分比、阻塞原因、清单和动态
+
+未指定接单人时进入公开池，本地端可以接；接到的人自动成为负责人。
+
+### DDL 与日程
+
+投递需求必须有 DDL。
+
+需求 DDL 会同步到日程表，本地端会做提醒：24 小时、2 小时、到期、逾期。
+
+再也别说“我以为下周五是下下周五”，系统听了都沉默。
 
 ### 项目网盘
 
-- 项目级文件夹、列表/卡片视图、拖拽上传、预览、下载、批量操作。
-- PDF、Markdown、文本、代码、HTML、Office 文档文本预览。
-- 软删除、回收站、撤回。
-- 文件夹留言板：留言先经 LLM 判断，普通留言入板，需求变更会生成草稿并走澄清流程。
-- 知识库会即时索引网盘解析文本，便于 grep 搜索。
+支持：
+
+- 文件夹、列表、卡片视图
+- 上传、下载、批量下载
+- PDF / Markdown / 文本 / 代码 / HTML / Office 文档预览
+- 软删除、回收站、撤回
+- 文件夹留言板
+- 留言经 LLM 判断：普通留言入板，需求变更生成需求草稿
 
 ### 会议纪要
 
-- 上传会议录音或文本。
-- 后台 ASR/LLM 任务有进度。
-- 自动生成纪要和新增/变更需求洞察。
-- 洞察需要人工确认，确认后生成需求草稿，不直接改原需求。
+会议录音或文本导入后：
 
-### 知识库与 grep Agent
+1. 后台任务显示进度。
+2. ASR 转写。
+3. LLM 生成会议纪要。
+4. LLM 判断是否有新增需求或需求变更。
+5. 人工确认后进入需求草稿和澄清流程。
 
-- 不使用 embedding，不接向量库。
-- 后端把需求、会议、留言、工作区、网盘解析文本、交付文档生成 Markdown 语料。
-- 搜索和问答只基于受控 grep 结果；没有证据时明确说没找到。
+会议 insight 不会直接修改原需求，防止会议上某位老哥激情发言直接污染生产状态。
 
-### 排期、通知与健康度
+### 知识库：不用 embedding，也能搜
 
-- 资源排期按接单人、DDL、估算工时、阻塞、空闲/忙碌状态计算负载。
-- 通知中心保留未读/已读；本地端对关键事项弹系统通知。
-- 项目健康度聚合逾期、阻塞、无人接单、返工率、变更数、吞吐和平均周期。
+本项目不走向量库路线。
 
-### 项目归档与删除
+后端把项目、需求、会议、留言、工作区、网盘解析文本、交付文档生成 Markdown 语料。
 
-- 项目可归档、恢复、软删除。
-- 归档/删除/恢复都需要二次确认项目名。
-- 删除不物理清理需求、网盘、会议和交付文件，先保护真人测试数据。
+搜索和 Agent 问答基于受控 grep，答案必须带证据。没搜到就说没搜到，不搞“我感觉应该是”。
 
----
+### 排期、通知、健康度
 
-## 双端职责
-
-| 入口 | 主要用途 | 能不能接活/交付 |
-|---|---|---|
-| Web `http://192.168.5.53:8080/` | 派活、管理、验收、查看全局态势 | 不能 |
-| 本地工作台 | 派活 + 接活 + 文件同步 + 系统通知 + 交付 | 能 |
-
-提需求页面是项目级路径：先进入某个项目，再点 **提一条新需求**；URL 形如 `/p/{project_id}/new`。
-
----
+- 排期看每个人任务数、估算工时、逾期、阻塞、负载。
+- 通知中心有未读、已读、跳转目标。
+- 本地端关键提醒弹系统通知。
+- 项目健康度看逾期、阻塞、无人接单、返工率、变更数、吞吐和平均周期。
 
 ## 快速开始
 
-### 团队成员
+### Web 端
 
-Web 端：
+内网地址：
 
-[http://192.168.5.53:8080/](http://192.168.5.53:8080/)
+```text
+http://192.168.5.53:8080/
+```
 
-Windows 本地端一行安装：
+提需求页面是项目级路径：先进项目，再点“新建需求”。URL 大概长这样：
+
+```text
+http://192.168.5.53:8080/p/<项目ID>/new
+```
+
+### Windows 本地端一行安装
 
 ```powershell
 powershell -ExecutionPolicy Bypass -c "iwr -UseBasicParsing http://192.168.5.53:8080/client/install.ps1 | iex"
 ```
 
-Linux/macOS 辅助脚本：
+安装后会生成：
+
+- 桌面快捷方式 `YQGL Workbench`
+- 开机启动项
+- 本地配置文件
+- 托盘常驻入口
+
+右下角看不到图标？先展开系统托盘隐藏区。很多时候不是它没活，是 Windows 把它藏起来上班摸鱼。
+
+### Linux / macOS 辅助脚本
 
 ```bash
 curl -fsSL http://192.168.5.53:8080/client/install.sh | bash
 ```
 
-安装后会生成启动脚本、桌面快捷方式 `YQGL Workbench` 和开机启动项。右下角看不到图标时，先展开系统托盘隐藏区，别急着骂电脑。
+Linux/macOS 脚本主要用于辅助安装和启动；完整毛玻璃桌面体验以 Windows Tauri 客户端为主。
 
-### 本地端设置
+## 本地端设置
 
-- 服务端地址默认 `http://192.168.5.53:8080`，可在设置里改。
-- 可设置项目保存位置、网盘同步目录、同步模式。
-- 接单状态支持空闲、忙碌、自定义。
-- DDL 提醒提前量可配置。
+客户端首次启动会走 4 步：
 
----
+1. 填服务端 IP，例如 `192.168.5.53`。
+2. 填昵称。
+3. 选择本地工作目录。
+4. 完成设备注册。
 
-## 开发与测试
+当前项目网盘同步只开放：
 
-### 开发启动
+- 关
+- 仅下载
+
+双向同步还在保护性内测。毕竟文件同步这东西，做得好叫效率工具，做歪了叫硬盘烟花。
+
+## 开发启动
 
 ```powershell
 # 后端
 python -m uvicorn main:app --app-dir app --reload --host 127.0.0.1 --port 8080
 
-# Web
+# Web 派活台
 npm run dev --workspace=web
 
-# 本地端前端
+# 本地端前端壳
 npm run dev --workspace=client-tauri -- --host 127.0.0.1 --port 5174
 ```
 
-Tauri Rust 壳需要本机安装 Rust/Cargo；当前仓库的纯前端部分可以单独 build 和 E2E。
+## 验证命令
 
-### 推荐验证命令
+后端与 Web：
 
 ```powershell
 python -m compileall app client scripts asr_service tts_service
 python scripts\smoke_workflow.py
 npm run build
-npm run build --workspace=client-tauri
-npx tsc --noEmit -p client-tauri\web-src\tsconfig.json
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke_client_install.ps1
 ```
 
 Web E2E：
@@ -138,7 +205,28 @@ $env:YQGL_E2E_WEB_PORT='16273'
 npm run e2e:web
 ```
 
-客户端 E2E 截图流：
+客户端 Web 壳：
+
+```powershell
+npm run build --workspace=client-tauri
+npx tsc --noEmit -p client-tauri\web-src\tsconfig.json
+```
+
+Rust/Tauri 原生客户端：
+
+```powershell
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+cargo check --manifest-path client-tauri\src-tauri\Cargo.toml
+npm run tauri:build --workspace=client-tauri
+```
+
+安装脚本 smoke：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke_client_install.ps1
+```
+
+客户端截图 E2E：
 
 ```powershell
 npm run dev --workspace=client-tauri -- --host 127.0.0.1 --port 5174
@@ -148,28 +236,18 @@ cd web
 npx playwright test tests/e2e/client-routes.spec.ts tests/e2e/client-spaces.spec.ts --reporter=list
 ```
 
-当前本机验证记录：
+最近一次本机验证记录：
 
 - `python -m compileall app client scripts asr_service tts_service` 通过。
 - `python scripts\smoke_workflow.py` 通过。
 - `npm run build` 通过。
-- `npm run build --workspace=client-tauri` 通过。
-- `npx tsc --noEmit -p client-tauri\web-src\tsconfig.json` 通过。
-- `npm run e2e:web`：23 passed，2 skipped，覆盖桌面、移动端和超宽屏截图巡检。
-- 客户端 E2E：2 passed。
-- PowerShell 管道安装 smoke 通过（本地模拟 `iwr ... | iex`，并验证桌面快捷方式/开机启动项）。
-- Git Bash 语法检查 `client/install-client.sh`、`client/launch.sh` 通过。
-- 本机没有 `cargo`，因此未运行 `cargo check`。
-
----
+- `npm run e2e:web` 通过：23 passed / 2 skipped。
+- 客户端专项 E2E 通过：2 passed。
+- `cargo check --manifest-path client-tauri\src-tauri\Cargo.toml` 通过。
+- `npm run tauri:build --workspace=client-tauri` 通过，产出 NSIS 安装包。
+- 真实 Tauri exe 已启动并截图。
 
 ## 部署
-
-目标服务器：
-
-```text
-http://192.168.5.53:8080
-```
 
 常用流程：
 
@@ -182,59 +260,27 @@ python scripts\verify_systemd.py
 curl http://192.168.5.53:8080/api/health
 ```
 
-首次部署或 `.env` 变化时：
-
-```powershell
-python scripts\deploy.py --env
-```
-
-后端依赖来自 `app/pyproject.toml`，不要再找 `requirements.txt`。ASR/TTS 是独立 systemd 服务，部署后应确认：
+远端服务应该是：
 
 - `yqgl-web` active + enabled
 - `yqgl-asr` active + enabled
 - `yqgl-tts` active + enabled
 
----
+ASR/TTS 如果没起来，前端会友好显示服务不可用，不会把浏览器 `Unexpected end of JSON input` 这种东西甩用户脸上。
 
 ## 仓库结构
 
 ```text
-app/                  FastAPI 后端、SQLAlchemy 模型、路由和服务
+app/                  FastAPI 后端、模型、路由、权限和业务服务
 web/                  浏览器派活/管理端
-client-tauri/         Tauri 本地工作台
-client/               跨平台辅助安装/启动脚本和旧托盘兼容脚本
-shared/               Web 与本地端共享 UI、hook、设计 token、类型
-scripts/              部署、远端验证、smoke、安装测试脚本
+client-tauri/         Rust/Tauri 毛玻璃本地工作台
+client/               一行安装、启动脚本、旧托盘兼容脚本
+shared/               双端共享 UI、类型、API client
+scripts/              部署、smoke、E2E、安装验证
 systemd/              yqgl-web / yqgl-asr / yqgl-tts 服务文件
-screenshots/          README 与视觉回归截图
+screenshots/readme/   README 专用干净截图
 ```
-
----
-
-## 截图
-
-### 接活 Space
-
-![接活 Hub](screenshots/aurora/client/01-hub.dark.png)
-
-### 派活 Space
-
-![派活 Hub](screenshots/aurora/submitter/03-dispatch-hub-default.light.png)
-
-### 新建需求
-
-![新建需求](screenshots/aurora/submitter/05-new-req-step0.dark.png)
-
-### 网盘
-
-![项目网盘](screenshots/aurora/08-drive.light.png)
-
-### 健康度
-
-![项目健康度](screenshots/aurora/05-health.light.png)
-
----
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT。拿去整，别拿报错截图当宣传图。
