@@ -71,7 +71,12 @@ def current_user(
     token = _verify(yqgl_id)
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not identified")
-    user = db.query(User).filter(User.cookie_token == token).first()
+    # Soft-deleted users must be treated as if they don't exist for auth
+    # purposes — otherwise admin's "DELETE user" is meaningless for any
+    # session that already had a valid cookie.
+    user = db.query(User).filter(
+        User.cookie_token == token, User.deleted_at.is_(None),
+    ).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not identified")
     touch_user(user.id)
@@ -85,7 +90,9 @@ def optional_current_user(
     token = _verify(yqgl_id)
     if not token:
         return None
-    user = db.query(User).filter(User.cookie_token == token).first()
+    user = db.query(User).filter(
+        User.cookie_token == token, User.deleted_at.is_(None),
+    ).first()
     if user:
         touch_user(user.id)
     return user
@@ -150,7 +157,9 @@ def require_stream_user(yqgl_id: str | None = Cookie(default=None)) -> StreamUse
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not identified")
     db = SessionLocal()
     try:
-        row = db.query(User.id, User.nickname).filter(User.cookie_token == token).first()
+        row = db.query(User.id, User.nickname).filter(
+            User.cookie_token == token, User.deleted_at.is_(None),
+        ).first()
         if not row:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not identified")
         touch_user(row.id)
@@ -160,11 +169,27 @@ def require_stream_user(yqgl_id: str | None = Cookie(default=None)) -> StreamUse
 
 
 def get_or_create_user(db: Session, nickname: str) -> tuple[User, bool]:
-    """Returns (user, created). Nickname collisions reuse existing."""
-    user = db.query(User).filter(User.nickname == nickname).first()
+    """Returns (user, created). Nickname collisions reuse the existing live
+    row. A soft-deleted user with the same nickname is treated as if it
+    doesn't exist — they cannot self-resurrect via identify. If their
+    nickname was tombstoned during delete (e.g. `_deleted_<id>_alice`), a
+    new person named "Alice" can identify cleanly. Hard policy: only an
+    admin's explicit un-delete (not implemented; manual DB intervention)
+    can bring a deleted account back."""
+    # The 'live' row, if any, with this nickname.
+    user = db.query(User).filter(
+        User.nickname == nickname, User.deleted_at.is_(None),
+    ).first()
     if user:
         return user, False
     user = User(nickname=nickname, cookie_token=_make_token())
     db.add(user)
     db.flush()
     return user, True
+
+
+def forget_user_cookie(db: Session, user: User) -> None:
+    """Rotate the user's cookie_token so all outstanding cookies become
+    invalid immediately. Used on soft-delete and on /logout."""
+    user.cookie_token = _make_token()
+    db.flush()

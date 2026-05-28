@@ -109,8 +109,12 @@ async def claim(req_id: str, db: Session = Depends(get_db), user: User = Depends
     ensure_workspaces_for_assignments(db, r)
     sync_workspace_to_status(db, r, user)
     log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="claimed", detail={})
+    # Queue submitter notification while still in the same transaction.
+    from services.lifecycle import queue_status_notifications, flush_status_notifications
+    pending = queue_status_notifications(db, r, "claimed", user)
     db.commit()
     db.refresh(r)
+    await flush_status_notifications(pending)
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status, "claimed_by": user.nickname})
     await bus.publish("all", "requirement.updated", {
         "requirement_id": r.id, "status": r.status, "claimed_by": user.nickname,

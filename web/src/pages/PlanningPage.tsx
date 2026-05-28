@@ -46,7 +46,7 @@ export function PlanningPage() {
     <main className="app-container">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="eyebrow">Resource Planning</p>
+          <p className="eyebrow">资源排期</p>
           <h1 className="mt-2 text-3xl font-semibold text-stone-950">排期 / 负载</h1>
           <p className="mt-2 max-w-2xl text-sm text-stone-500">按接单人、DDL、估算工时和接单状态看负载。忙碌状态按半天产能算，挺现实，也挺扎心。</p>
         </div>

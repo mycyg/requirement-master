@@ -38,8 +38,8 @@ export function ActivityTimeline({ reqId }: { reqId: string }) {
     api.listActivity(reqId).then(setItems);
   }, [reqId]);
 
-  if (!items) return <div className="text-stone-500">加载中...</div>;
-  if (items.length === 0) return <div className="empty-state">无活动记录</div>;
+  if (!items) return <div className="text-stone-500">加载中…</div>;
+  if (items.length === 0) return <div className="empty-state">还没有动态。</div>;
 
   return (
     <ol className="relative space-y-4 border-l border-stone-300 pl-6">

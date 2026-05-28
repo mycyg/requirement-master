@@ -25,9 +25,11 @@ from services.permissions import (
     can_claim_requirement,
     can_view_requirement_record,
     can_work_requirement,
+    is_admin,
 )
 from services.push_bus import bus
 from services.notifications import create_notification
+from services.lifecycle import queue_status_notifications, flush_status_notifications
 from services.schedule import sync_requirement_due_event
 from services.workspaces import ensure_workspaces_for_assignments, sync_workspace_to_status
 
@@ -46,6 +48,7 @@ def _assignee_out(a: RequirementAssignment) -> RequirementAssigneeOut:
 def _to_out(r: Requirement, *, submitter_nickname: str, project_slug: str) -> RequirementOut:
     return RequirementOut(
         id=r.id, code=r.code, project_id=r.project_id, project_slug=project_slug,
+        submitter_user_id=r.submitter_user_id,
         submitter_nickname=submitter_nickname,
         claimed_by_user_id=r.claimed_by_user_id,
         claimed_by_nickname=r.claimed_by_nickname,
@@ -294,8 +297,17 @@ async def update_status(
     )
     ensure_workspaces_for_assignments(db, r)
     sync_workspace_to_status(db, r, user)
+
+    # Notify the submitter on key milestones — claimed (someone picked it up),
+    # delivered (please verify), cancelled-by-someone-else (worker abandoned).
+    # Skipped when the submitter themselves is making the transition (they
+    # already know). Each notification gets a unique dedupe_key per (req, event)
+    # so a duplicate transition doesn't double-toast.
+    pending_notifications = queue_status_notifications(db, r, new, user)
+
     db.commit()
     db.refresh(r)
+    await flush_status_notifications(pending_notifications)
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status})
     await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status})
     return _enrich(db, r)
@@ -472,3 +484,100 @@ async def update_requirement_schedule(
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status, "due_at": r.due_at.isoformat() if r.due_at else None})
     await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status})
     return _enrich(db, r)
+
+
+# --- Tauri client adjuncts (skip AI clarification, admin delete) ---------------
+
+class _FinalizeSummaryIn(__import__("pydantic").BaseModel):
+    """If summary_md / title are omitted, we derive sensible defaults from
+    raw_description so the desktop client can ship a draft straight to
+    summary_ready without round-tripping the AI clarification flow."""
+    summary_md: str | None = None
+    title: str | None = None
+
+
+@router.post("/requirements/{req_id}/finalize-summary", response_model=RequirementOut)
+async def finalize_summary(
+    req_id: str,
+    payload: _FinalizeSummaryIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> RequirementOut:
+    """Admin-only emergency bypass that marks a draft as `summary_ready`
+    without going through the AI clarification chat. Normal flow MUST be
+    draft → AI chat (auto sets summary_ready) → submit → ready. This
+    bypass exists only for cases where the LLM is down or a hot-fix
+    requirement is too trivial to clarify."""
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="finalize-summary 是应急旁路，正常请走 AI 澄清")
+    r = (
+        db.query(Requirement)
+        .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
+        .filter(Requirement.id == req_id)
+        .first()
+    )
+    if not r:
+        raise HTTPException(status_code=404, detail="requirement not found")
+    if r.status not in {"draft", "clarifying", "summary_ready"}:
+        raise HTTPException(status_code=400, detail=f"cannot finalize from status {r.status}")
+
+    # Guard against silently clobbering a valid summary_ready record. If
+    # caller didn't override and we already have a summary, return unchanged.
+    if r.status == "summary_ready" and not payload.summary_md and not payload.title:
+        return _enrich(db, r)
+
+    summary_md = (payload.summary_md or "").strip() or (r.summary_md or "").strip() or (r.raw_description or "").strip()
+    if not summary_md:
+        raise HTTPException(status_code=400, detail="no description to summarise")
+
+    title = (payload.title or "").strip() or (r.title or "").strip()
+    if not title:
+        # First line, capped at 40 chars — good enough as a card label.
+        first_line = next((ln.strip() for ln in (r.raw_description or "").splitlines() if ln.strip()), "")
+        title = (first_line[:40] or "未命名需求")
+
+    r.summary_md = summary_md
+    r.title = title
+    r.status = "summary_ready"
+    log_activity(
+        db, requirement_id=r.id, actor_nickname=user.nickname,
+        action="summary_finalized", detail={"skipped_clarification": True},
+    )
+    db.commit()
+    db.refresh(r)
+    await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status})
+    await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status})
+    return _enrich(db, r)
+
+
+@router.delete("/requirements/{req_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_requirement(
+    req_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> None:
+    """Hard delete. Admin always allowed. Submitter allowed only while
+    the requirement is still private (draft / clarifying / summary_ready)
+    — once it's been dispatched, traces in workspaces / deliveries / audit
+    log have value to other people.
+
+    Archives related notifications first so users don't end up clicking
+    dead `/r/<deleted-id>` deep links from their inbox (the FK column is
+    `ondelete=SET NULL`, so without this they'd remain visible with stale
+    titles and broken targets).
+    """
+    from datetime import datetime
+    from models import Notification
+    r = db.query(Requirement).filter(Requirement.id == req_id).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="requirement not found")
+    if not is_admin(user):
+        if r.submitter_user_id != user.id:
+            raise HTTPException(status_code=403, detail="only the requester or an admin can delete")
+        if r.status not in {"draft", "clarifying", "summary_ready", "cancelled"}:
+            raise HTTPException(status_code=400, detail=f"cannot delete from status {r.status} — ask an admin")
+    db.query(Notification).filter(
+        Notification.requirement_id == req_id, Notification.archived_at.is_(None),
+    ).update({"archived_at": datetime.utcnow()})
+    db.delete(r)
+    db.commit()

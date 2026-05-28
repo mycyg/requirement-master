@@ -103,7 +103,7 @@ export function CalendarPage() {
     <main className="app-container">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="eyebrow">Calendar</p>
+          <p className="eyebrow">日程</p>
           <h1 className="mt-2 flex items-center gap-2 text-3xl font-semibold tracking-tight text-stone-950">
             <CalendarDays className="h-7 w-7 text-stone-500" aria-hidden="true" />
             日程表
@@ -164,7 +164,7 @@ export function CalendarPage() {
           </div>
           {err && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>}
           <div className={view === "month" ? "grid gap-2 md:grid-cols-2 2xl:grid-cols-3" : "space-y-2"}>
-            {visibleEvents.length === 0 && <div className="empty-state">这段时间很安静。安静得有点像暴风雨前，但我们先假装没事。</div>}
+            {visibleEvents.length === 0 && <div className="empty-state">这段时间没有日程。</div>}
             {visibleEvents.map((event) => (
               <article key={event.id} className={`rounded-lg border p-3 ${tone(event)}`}>
                 <div className="flex items-start justify-between gap-2">

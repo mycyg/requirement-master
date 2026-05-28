@@ -26,6 +26,9 @@ USER_COLUMNS: dict[str, str] = {
     "availability_status": "VARCHAR(16) DEFAULT 'free' NOT NULL",
     "availability_text": "VARCHAR(128)",
     "availability_updated_at": "DATETIME",
+    "is_admin": "BOOLEAN DEFAULT 0 NOT NULL",
+    # Soft-delete marker — see User model docstring.
+    "deleted_at": "DATETIME",
 }
 
 PROJECT_COLUMNS: dict[str, str] = {
@@ -55,6 +58,8 @@ def ensure_runtime_schema(engine: Engine) -> None:
             if name not in user_existing:
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {ddl}"))
         conn.execute(text("UPDATE users SET availability_status = 'free' WHERE availability_status IS NULL"))
+        conn.execute(text("UPDATE users SET is_admin = 0 WHERE is_admin IS NULL"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_is_admin ON users (is_admin)"))
 
         project_existing = {
             row[1]

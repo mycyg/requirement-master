@@ -37,7 +37,7 @@ export function HealthPage() {
     <main className="app-container">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="eyebrow">Project Health</p>
+          <p className="eyebrow">项目健康度</p>
           <h1 className="mt-2 text-3xl font-semibold text-stone-950">项目健康度</h1>
           <p className="mt-2 max-w-2xl text-sm text-stone-500">健康分只负责敲桌子，不会偷偷改需求状态。风险预警和效率统计分开看。</p>
         </div>

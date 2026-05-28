@@ -14,10 +14,13 @@ node_modules/
 dist/
 .vite/
 *.log
+*.tsbuildinfo
 
 # Tauri
 client/src-tauri/target/
 client/src-tauri/gen/
+client-tauri/src-tauri/target/
+client-tauri/src-tauri/gen/
 
 # Local data
 app/data/

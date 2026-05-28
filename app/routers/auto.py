@@ -127,6 +127,26 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
             return
 
         if outcome.success:
+            # Race check FIRST — if the requirement was cancelled while AI ran,
+            # don't write a zip, don't add a Delivery row, don't clobber state.
+            # Also short-circuit the job into "succeeded but skipped" so the
+            # UI doesn't show a perpetual 85% spinner.
+            if r.status != "ai_processing":
+                if job_id:
+                    job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
+                    if job:
+                        update_job(
+                            db, job,
+                            status="succeeded",
+                            progress_percent=100,
+                            message=f"AI 完成但需求状态已是 {r.status}，跳过登记交付",
+                            result_ref=req_id,
+                        )
+                        db.commit()
+                        await publish_job(job)
+                shutil.rmtree(workdir, ignore_errors=True)
+                return
+
             # Package + register a Delivery
             round_num = 1 + (db.query(Delivery).filter(Delivery.requirement_id == req_id).count())
             pkg_dir = settings.data_dir / "deliveries" / req_id
@@ -165,6 +185,12 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
                 action="ai_delivered",
                 detail={"round": round_num, "files": file_count, "seconds": outcome.seconds},
             )
+            # Synthesize a User stand-in so the lifecycle helper can format
+            # the body as "AI ({model}) 提交了交付物" — the id won't match any
+            # real user so the submitter is correctly included as recipient.
+            from services.lifecycle import queue_status_notifications, flush_status_notifications
+            ai_actor = User(id="ai-auto", nickname=f"AI ({settings.llm_model})")
+            pending = queue_status_notifications(db, r, "delivered", ai_actor)
             db.commit()
             if job_id:
                 job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
@@ -173,6 +199,7 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
                     db.commit()
                     await publish_job(job)
 
+            await flush_status_notifications(pending)
             await bus.publish(f"req:{req_id}", "requirement.updated", {"status": "delivered"})
             await bus.publish("all", "requirement.updated", {"requirement_id": req_id, "status": "delivered"})
         else:

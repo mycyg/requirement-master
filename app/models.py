@@ -33,6 +33,25 @@ class User(Base, TimestampMixin):
     availability_status: Mapped[str] = mapped_column(String(16), default="free", nullable=False)
     availability_text: Mapped[Optional[str]] = mapped_column(String(128))
     availability_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    # Admin flag — when True, `permissions.can_*` checks short-circuit to True.
+    # Set via `python scripts/set_admin.py <nickname>` or the YQGL_ADMIN_NICKNAMES env var.
+    is_admin: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
+    # Soft-delete marker. Hard delete fails because ~15 tables reference
+    # users.id without ondelete cascade; we'd rather hide the user from
+    # lists / search / assignee picker but preserve referential integrity
+    # for historical requirements they own. Set by admin via DELETE /users/{id}.
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
+
+    @property
+    def display_name(self) -> str:
+        """Pretty-print the nickname for UI: strips the `_deleted_<id8>_`
+        tombstone prefix that delete_user adds (to free the original nick
+        for re-use) and appends "（已停用）" so consumers know this is a
+        deceased account without exposing the raw tombstoned string."""
+        nick = self.nickname or ""
+        if nick.startswith("_deleted_") and len(nick) > 18 and nick[17] == "_":
+            return f"{nick[18:]}（已停用）"
+        return nick
 
 
 class ClientDevice(Base, TimestampMixin):

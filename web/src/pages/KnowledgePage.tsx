@@ -68,9 +68,9 @@ export function KnowledgePage() {
     <main className="app-container">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="eyebrow">Knowledge Grep</p>
-          <h1 className="mt-2 text-3xl font-semibold text-stone-950">知识库</h1>
-          <p className="mt-2 max-w-2xl text-sm text-stone-500">不搞向量玄学，直接把项目事实写成 Markdown，让 Agent 老老实实 grep 证据。</p>
+          <p className="eyebrow">在历史里翻翻</p>
+          <h1 className="mt-2 text-3xl font-semibold text-stone-950">历史搜索</h1>
+          <p className="mt-2 max-w-2xl text-sm text-stone-500">查项目过去的决策、规则、交付物 —— 在需求、会议、文档里找证据。</p>
         </div>
         <label className="flex min-w-[260px] items-center gap-2">
           <Filter className="h-4 w-4 text-stone-400" aria-hidden="true" />
@@ -89,17 +89,17 @@ export function KnowledgePage() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") doSearch(); }}
-              placeholder="搜需求编号、会议标题、文件名、接单人、某句离谱留言..."
+              placeholder="搜需求编号、会议标题、文件名、接单人、关键句…"
             />
             <button className="button-primary" disabled={busy || !query.trim()} onClick={doSearch}>
               <Search className="h-4 w-4" aria-hidden="true" />
-              grep
+              搜索
             </button>
           </div>
           {projectName && <p className="mt-2 text-xs text-stone-500">当前只搜：{projectName}</p>}
           <div className="mt-4 space-y-3">
             {hits.length === 0 ? (
-              <div className="empty-state">还没有命中。关键词可以朴素一点，grep 喜欢朴素。</div>
+              <div className="empty-state">还没有命中。换一些关键词试试。</div>
             ) : hits.map((hit) => (
               <article key={`${hit.document_id}-${hit.line_no}`} className="rounded-lg border border-stone-200 bg-[#fffdf8] p-4">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -127,11 +127,11 @@ export function KnowledgePage() {
             className="textarea-field mt-3 min-h-28"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            placeholder="问一个必须基于项目证据回答的问题"
+            placeholder="问一个基于项目历史的问题"
           />
           <button className="button-accent mt-3 w-full" disabled={busy || !question.trim()} onClick={ask}>
             <Sparkles className="h-4 w-4" aria-hidden="true" />
-            {busy ? "搜索证据中..." : "让 Agent grep 一下"}
+            {busy ? "正在查找证据…" : "让 AI 助理找证据"}
           </button>
           {run && (
             <div className="mt-4 rounded-lg border border-stone-200 bg-[#fffdf8] p-4">
@@ -139,13 +139,13 @@ export function KnowledgePage() {
                 <span>{run.status}</span>
                 <span>{run.citations.length} 条证据</span>
               </div>
-              <pre className="whitespace-pre-wrap text-sm leading-6 text-stone-800">{run.answer_md || "还在翻资料..."}</pre>
+              <pre className="whitespace-pre-wrap text-sm leading-6 text-stone-800">{run.answer_md || "正在翻资料…"}</pre>
             </div>
           )}
           {err && <p className="mt-3 text-sm text-red-700">{err}</p>}
           <div className="mt-4 rounded-lg border border-stone-200 bg-[#fffaf1] p-3 text-xs leading-5 text-stone-500">
             <FileSearch className="mr-1 inline h-3.5 w-3.5" aria-hidden="true" />
-            Agent 只允许用受控 grep 和打开语料文档；找不到证据就得认怂。
+            AI 助理只能基于项目的需求、会议、文档等历史回答；找不到证据时会直接说明。
           </div>
         </aside>
       </div>

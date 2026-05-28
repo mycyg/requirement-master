@@ -16,13 +16,13 @@ export function AILiveView({ events }: { events: PushEvent[] }) {
     <div className="rounded-lg bg-stone-950 p-5 text-stone-100 shadow-[0_18px_60px_rgba(31,30,28,0.22)]">
       <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#d7c2a6]">
         <Bot className="h-4 w-4" aria-hidden="true" />
-        AI 自动处理中
+        AI 助理处理中
       </div>
       <div ref={scrollRef} className="scrollbar-thin-warm max-h-96 space-y-2 overflow-auto font-mono text-xs">
         {aiEvents.map((e, i) => (
           <Line key={i} ev={e} />
         ))}
-        {aiEvents.length === 0 && <div className="text-stone-500">等待 AI 启动...</div>}
+        {aiEvents.length === 0 && <div className="text-stone-500">AI 助理准备中…</div>}
       </div>
     </div>
   );

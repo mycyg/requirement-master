@@ -236,11 +236,17 @@ async def finalize(
         db, requirement_id=req_id, actor_nickname=user.nickname,
         action="status_changed", detail={"to": "delivery_doc_pending", "round": round_num, "files": file_count},
     )
+    # Submitter notification — they need to know delivery just happened, even
+    # though the AI doc isn't ready yet. The "delivered" notification fires
+    # later from _finalize_doc when status flips to delivered.
+    from services.lifecycle import queue_status_notifications, flush_status_notifications
+    pending = queue_status_notifications(db, r, "delivery_doc_pending", user)
     db.commit()
     db.refresh(d)
 
     shutil.rmtree(pdir, ignore_errors=True)
 
+    await flush_status_notifications(pending)
     await bus.publish(f"req:{req_id}", "requirement.updated", {"status": "delivery_doc_pending"})
     await bus.publish("all", "requirement.updated", {"requirement_id": req_id, "status": "delivery_doc_pending"})
 
@@ -273,10 +279,22 @@ async def _finalize_doc(delivery_id: str, title: str, summary_md: str, zip_path:
         if d:
             d.delivery_doc_md = doc
             r = db.query(Requirement).filter(Requirement.id == d.requirement_id).first()
+            pending = []
             if r and r.status == "delivery_doc_pending":
                 r.status = "delivered"
                 r.delivery_doc_ready_at = datetime.utcnow()
+                # Notify submitter — this is THE critical "等你验收" moment.
+                # Actor here is the delivery's submitter (the worker), looked
+                # up from the submitted_by_nickname or the most recent worker.
+                from services.lifecycle import queue_status_notifications, flush_status_notifications
+                # Best-effort actor — we don't carry a User context here, so
+                # synthesize one from the worker nickname stored on the row.
+                worker = User(id="ai-finalize", nickname=d.submitted_by_nickname or "AI 助理")
+                pending = queue_status_notifications(db, r, "delivered", worker)
             db.commit()
+            if r:
+                from services.lifecycle import flush_status_notifications
+                await flush_status_notifications(pending)
             await bus.publish(f"req:{d.requirement_id}", "delivery.doc_ready", {
                 "delivery_id": d.id, "round": d.round,
             })

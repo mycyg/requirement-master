@@ -58,3 +58,15 @@ async def stream_one(req_id: str, request: Request, user: StreamUser = Depends(r
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/stream/me")
+async def stream_me(request: Request, user: StreamUser = Depends(require_stream_user)) -> StreamingResponse:
+    """Cookie-scoped per-user stream — receives `notification.created` events
+    addressed to the requesting user only. Topic is `user:{auth_user_id}`
+    (NOT a path param), so a client can't request another user's stream."""
+    return StreamingResponse(
+        _gen(request, f"user:{user.id}", user),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

@@ -1,0 +1,16 @@
+{
+  "name": "yqgl-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "需求管理大师 monorepo: web + shared + (future) client-tauri",
+  "workspaces": [
+    "shared",
+    "web",
+    "client-tauri"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=shared && npm run build --workspace=web",
+    "dev:web": "npm run dev --workspace=web",
+    "e2e:web": "npm run e2e --workspace=web"
+  }
+}

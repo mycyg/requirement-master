@@ -13,17 +13,17 @@ export function DriveHome() {
 
   return (
     <main className="narrow-container">
-      <p className="eyebrow">Project Drive</p>
+      <p className="eyebrow">项目网盘</p>
       <h1 className="mt-2 flex items-center gap-2 text-3xl font-semibold tracking-tight text-stone-950">
         <HardDrive className="h-7 w-7" aria-hidden="true" />
         项目网盘
       </h1>
       <p className="mt-3 max-w-2xl text-sm leading-6 text-stone-500">
-        先选项目，再进对应网盘。别把所有文件堆成一锅粥，系统会装作没看见，但人会崩。
+        先选项目，再进对应网盘。每个项目的文件分开管理，方便查找和同步。
       </p>
 
       <ul className="paper-surface mt-8 divide-y divide-stone-200/80 overflow-hidden">
-        {projects.length === 0 && <li className="empty-state m-4">还没有项目，网盘暂时只能对着空气营业。</li>}
+        {projects.length === 0 && <li className="empty-state m-4">还没有项目，先建一个项目再用网盘。</li>}
         {projects.map((project) => (
           <li key={project.id} className="group px-4 py-4 transition hover:bg-white sm:px-5">
             <Link to={`/p/${project.id}/drive`} className="flex items-center justify-between gap-3">

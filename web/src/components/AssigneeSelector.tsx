@@ -141,11 +141,11 @@ export function AssigneeSelector({
             {label}
           </div>
           <p className="mt-1 text-xs leading-5 text-stone-500">
-            留空就是公开待接单池；选人后，负责人和协作者都能处理和交付。
+            留空就放进等人接的公开池；选了人后，负责人和协作者都能动手、交付。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 sm:justify-end">
-          {!disabled && <span className="pill w-fit">{onlineCount ? `${onlineCount} 人在线` : "当前没人亮灯"}</span>}
+          {!disabled && <span className="pill w-fit">{onlineCount ? `${onlineCount} 人在线` : "当前没人在线"}</span>}
           <span className="pill w-fit">{selectedIds.length ? `${selectedIds.length} 人` : "公开池"}</span>
         </div>
       </div>

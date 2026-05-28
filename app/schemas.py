@@ -186,6 +186,8 @@ class UserOut(BaseModel):
     availability_status: str = "free"
     availability_text: Optional[str] = None
     availability_updated_at: Optional[datetime] = None
+    is_admin: bool = False
+    deleted_at: Optional[datetime] = None
 
 
 class UserStatusUpdateIn(BaseModel):
@@ -254,6 +256,7 @@ class RequirementOut(BaseModel):
     code: str
     project_id: str
     project_slug: str
+    submitter_user_id: str
     submitter_nickname: str
     claimed_by_user_id: Optional[str]
     claimed_by_nickname: Optional[str]

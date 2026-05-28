@@ -60,7 +60,7 @@ export function Home() {
     <main className="narrow-container">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="eyebrow">Projects</p>
+          <p className="eyebrow">项目</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-stone-950">项目</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-500">
             把需求按项目收口，后续澄清、接单、交付都从这里进入。
@@ -129,7 +129,7 @@ export function Home() {
       <ul className="paper-surface mt-8 divide-y divide-stone-200/80 overflow-hidden">
         {projects.length === 0 && (
           <li className="empty-state m-4">
-            {state === "active" ? "还没有项目，点右上角“新建项目”开始。" : state === "archived" ? "没有归档项目。" : "回收站空空如也。"}
+            {state === "active" ? "你还没有项目，建一个开始吧。" : state === "archived" ? "归档夹里是空的。" : "回收站是空的。"}
           </li>
         )}
         {projects.map((p) => (
@@ -160,7 +160,7 @@ export function Home() {
               {!p.archived && !p.deleted_at && (
                 <Link to={`/p/${p.id}/new`} className="button-secondary w-full sm:w-auto">
                   <Plus className="h-4 w-4" aria-hidden="true" />
-                  提需求
+                  提一条新需求
                 </Link>
               )}
               {!p.archived && !p.deleted_at && (

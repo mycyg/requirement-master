@@ -89,7 +89,7 @@ export function ProjectStateConfirm({
           <button className="button-secondary" disabled={busy} onClick={onCancel}>取消</button>
           <button className={copy.tone} disabled={!canConfirm} onClick={onConfirm}>
             <Icon className="h-4 w-4" aria-hidden="true" />
-            {busy ? "处理中..." : copy.button}
+            {busy ? "处理中…" : copy.button}
           </button>
         </div>
       </section>

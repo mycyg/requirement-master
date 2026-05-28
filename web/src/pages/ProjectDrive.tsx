@@ -351,7 +351,7 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
     >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="eyebrow">Project Drive</p>
+          <p className="eyebrow">项目网盘</p>
           <h1 className="mt-2 flex items-center gap-2 text-3xl font-semibold tracking-tight text-stone-950">
             <HardDrive className="h-7 w-7" aria-hidden="true" />
             {project?.name || "项目网盘"}
@@ -486,7 +486,7 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
 
             <div className="min-h-[460px] p-3">
               {drive?.items.length === 0 && (
-                <div className="empty-state">这里空空的。拖文件进来，或者新建一个文件夹让它显得像在认真工作。</div>
+                <div className="empty-state">这里还没有文件。拖文件进来，或新建一个文件夹。</div>
               )}
 
               {view === "grid" && (
@@ -670,7 +670,7 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
               {preview.preview_type === "pdf" && preview.render_url && <iframe title={preview.name} src={preview.render_url} className="h-[72vh] w-full rounded-md border border-stone-200" />}
               {preview.preview_type === "html" && htmlRender && preview.render_url && <iframe title={preview.name} src={preview.render_url} sandbox="" className="h-[72vh] w-full rounded-md border border-stone-200 bg-white" />}
               {(preview.preview_type === "code" || preview.preview_type === "markdown" || (preview.preview_type === "html" && !htmlRender) || preview.preview_type === "unsupported") && (
-                <pre className="whitespace-pre-wrap break-words rounded-md border border-stone-200 bg-stone-950 p-4 text-xs leading-5 text-stone-100">{preview.content || "空空如也。"}</pre>
+                <pre className="whitespace-pre-wrap break-words rounded-md border border-stone-200 bg-stone-950 p-4 text-xs leading-5 text-stone-100">{preview.content || "（文件没有可预览内容）"}</pre>
               )}
             </div>
           </div>

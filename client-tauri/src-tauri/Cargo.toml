@@ -1,0 +1,58 @@
+[package]
+name = "yqgl-client"
+version = "0.2.0"
+edition = "2021"
+description = "需求管理大师 桌面客户端"
+authors = ["mycyg"]
+
+[lib]
+name = "yqgl_client_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools", "macos-private-api", "tray-icon", "image-png", "image-ico"] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-os = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-store = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-process = "2"
+
+# Win11 Mica / macOS vibrancy
+window-vibrancy = "0.5"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "cookies", "native-tls"] }
+futures-util = "0.3"
+sha2 = "0.10"
+hex = "0.4"
+zip = "2"
+mime_guess = "2"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+directories = "5"
+parking_lot = "0.12"
+once_cell = "1"
+url = "2"
+urlencoding = "2"
+# File-watch (M6 spec-folder dropbox). Windows uses ReadDirectoryChangesW under
+# the hood; cross-platform but we ship the client on Windows only.
+notify = "6"
+notify-debouncer-full = "0.3"
+
+[features]
+default = []
