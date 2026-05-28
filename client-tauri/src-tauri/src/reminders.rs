@@ -28,7 +28,7 @@ pub fn spawn(app: AppHandle, state: Arc<ConfigState>) {
 async fn poll_reminders(app: &AppHandle, state: &Arc<ConfigState>) -> anyhow::Result<()> {
     let url = http::url(state, "/api/reminders/due");
     let client = http::client(state);
-    let resp = client.get(&url).send().await?;
+    let resp = http::with_auth(client.get(&url), state).send().await?;
     if !resp.status().is_success() {
         return Ok(());
     }
@@ -60,7 +60,7 @@ async fn poll_reminders(app: &AppHandle, state: &Arc<ConfigState>) -> anyhow::Re
 async fn poll_notifications(app: &AppHandle, state: &Arc<ConfigState>) -> anyhow::Result<()> {
     let url = http::url(state, "/api/notifications?status=unread");
     let client = http::client(state);
-    let resp = client.get(&url).send().await?;
+    let resp = http::with_auth(client.get(&url), state).send().await?;
     if !resp.status().is_success() { return Ok(()); }
     let list: serde_json::Value = resp.json().await?;
     if let Some(arr) = list.as_array() {

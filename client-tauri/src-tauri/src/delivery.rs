@@ -43,8 +43,7 @@ pub async fn start_delivery(
 
     // init
     let init_url = http::url(&state, &format!("/api/requirements/{req_id}/delivery/init"));
-    let init: serde_json::Value = client
-        .post(&init_url)
+    let init: serde_json::Value = http::with_auth(client.post(&init_url), &state)
         .json(&serde_json::json!({
             "filename": format!("delivery-{req_id}.zip"),
             "total_size": size,
@@ -66,7 +65,7 @@ pub async fn start_delivery(
         let n = f.read(&mut buf)?;
         buf.truncate(n);
         let url = http::url(&state, &format!("/api/requirements/{req_id}/delivery/chunk/{idx}?upload_id={upload_id}"));
-        client.put(&url)
+        http::with_auth(client.put(&url), &state)
             .header("Content-Type", "application/octet-stream")
             .body(buf)
             .send().await?
@@ -76,7 +75,7 @@ pub async fn start_delivery(
     }
 
     let fin_url = http::url(&state, &format!("/api/requirements/{req_id}/delivery/finalize?upload_id={upload_id}"));
-    client.post(&fin_url).send().await?.error_for_status()?;
+    http::with_auth(client.post(&fin_url), &state).send().await?.error_for_status()?;
     emit(&app, &req_id, "doc_pending", size, size);
 
     let _ = std::fs::remove_file(&zip_path);

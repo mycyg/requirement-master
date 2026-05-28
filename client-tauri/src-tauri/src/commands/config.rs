@@ -32,7 +32,8 @@ pub fn set_config(state: State<'_, ConfigState>, patch: serde_json::Value) -> Re
             }
         }
     })?;
-    http::refresh(&state);
+    // No http::refresh on cfg patch — the long-lived client picks up the new
+    // base_url on the next request, and worker token is per-request injected.
     Ok(new)
 }
 

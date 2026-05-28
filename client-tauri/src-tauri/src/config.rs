@@ -131,11 +131,9 @@ pub fn load() -> Result<Config> {
     }
     let raw = fs::read_to_string(&path)?;
     let mut cfg: Config = serde_json::from_str(&raw).unwrap_or_default();
-    // Auto-migrate the old 192.168.5.x default to 192.168.0.x lan prefix.
-    if cfg.server_ip.starts_with("192.168.5.") {
-        cfg.server_ip = cfg.server_ip.replacen("192.168.5.", "192.168.0.", 1);
-        cfg.server_url = String::new();
-    }
+    // NOTE: 192.168.5.x and 192.168.0.x are both valid IPs for the same server
+    // (dual-NIC, same machine on two subnets). DO NOT auto-rewrite — let the
+    // user pick whichever subnet they're on via Settings → 服务器.
     cfg.recompute_url();
     Ok(cfg)
 }

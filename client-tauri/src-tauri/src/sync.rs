@@ -72,7 +72,7 @@ pub async fn sync_requirement(
     let url = http::url(&state, &format!("/api/requirements/{req_id}/sync-manifest"));
 
     emit_progress(&app, &req_id, "manifest", 5, "正在拉清单");
-    let manifest: Manifest = client.get(&url).send().await?.error_for_status()?.json().await?;
+    let manifest: Manifest = http::with_auth(client.get(&url), &state).send().await?.error_for_status()?.json().await?;
 
     let cfg = state.read();
     let root = PathBuf::from(&cfg.sync_root)
@@ -131,7 +131,7 @@ pub async fn sync_requirement(
         } else {
             http::url(&state, &f.download_url)
         };
-        let resp = client.get(&dl_url).send().await?.error_for_status()?;
+        let resp = http::with_auth(client.get(&dl_url), &state).send().await?.error_for_status()?;
         let bytes = resp.bytes().await?;
         let mut file = fs::File::create(&target).await?;
         file.write_all(&bytes).await?;
@@ -140,7 +140,7 @@ pub async fn sync_requirement(
 
     // Ack
     let ack_url = http::url(&state, &format!("/api/requirements/{req_id}/sync-ack"));
-    client.post(&ack_url).send().await?.error_for_status()?;
+    http::with_auth(client.post(&ack_url), &state).send().await?.error_for_status()?;
     emit_progress(&app, &req_id, "done", 100, "完成");
 
     Ok(())
@@ -175,7 +175,7 @@ pub async fn sync_drive_download(
 ) -> Result<()> {
     let client = http::client(&state);
     let url = http::url(&state, &format!("/api/projects/{project_id}/drive/manifest"));
-    let manifest: serde_json::Value = client.get(&url).send().await?.error_for_status()?.json().await?;
+    let manifest: serde_json::Value = http::with_auth(client.get(&url), &state).send().await?.error_for_status()?.json().await?;
 
     let cfg = state.read();
     let slug = manifest.get("project_slug").and_then(|v| v.as_str()).unwrap_or("unknown");
@@ -209,7 +209,7 @@ pub async fn sync_drive_download(
         } else {
             http::url(&state, url_field)
         };
-        let bytes = client.get(&dl).send().await?.error_for_status()?.bytes().await?;
+        let bytes = http::with_auth(client.get(&dl), &state).send().await?.error_for_status()?.bytes().await?;
         let mut f = fs::File::create(&abs).await?;
         f.write_all(&bytes).await?;
         f.flush().await?;

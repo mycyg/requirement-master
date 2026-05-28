@@ -8,7 +8,8 @@ use crate::http;
 pub async fn list_workspaces(state: State<'_, ConfigState>, req_id: String) -> Result<serde_json::Value> {
     let client = http::client(&state);
     let url = http::url(&state, &format!("/api/requirements/{req_id}/workspaces"));
-    Ok(client.get(&url).send().await?.error_for_status()?.json().await?)
+    Ok(http::with_auth(client.get(&url), &state)
+        .send().await?.error_for_status()?.json().await?)
 }
 
 #[tauri::command]
@@ -19,7 +20,9 @@ pub async fn patch_my_workspace(
 ) -> Result<serde_json::Value> {
     let client = http::client(&state);
     let url = http::url(&state, &format!("/api/requirements/{req_id}/workspaces/me"));
-    Ok(client.patch(&url).json(&patch).send().await?.error_for_status()?.json().await?)
+    Ok(http::with_auth(client.patch(&url), &state)
+        .json(&patch)
+        .send().await?.error_for_status()?.json().await?)
 }
 
 #[tauri::command]
@@ -30,12 +33,9 @@ pub async fn add_workspace_item(
 ) -> Result<serde_json::Value> {
     let client = http::client(&state);
     let url = http::url(&state, &format!("/api/requirements/{req_id}/workspaces/me/items"));
-    Ok(client
-        .post(&url)
+    Ok(http::with_auth(client.post(&url), &state)
         .json(&serde_json::json!({ "title": title, "status": "todo" }))
-        .send().await?
-        .error_for_status()?
-        .json().await?)
+        .send().await?.error_for_status()?.json().await?)
 }
 
 #[tauri::command]
@@ -46,7 +46,9 @@ pub async fn patch_workspace_item(
 ) -> Result<serde_json::Value> {
     let client = http::client(&state);
     let url = http::url(&state, &format!("/api/workspace-items/{item_id}"));
-    Ok(client.patch(&url).json(&patch).send().await?.error_for_status()?.json().await?)
+    Ok(http::with_auth(client.patch(&url), &state)
+        .json(&patch)
+        .send().await?.error_for_status()?.json().await?)
 }
 
 #[tauri::command]
@@ -57,10 +59,7 @@ pub async fn add_workspace_update(
 ) -> Result<serde_json::Value> {
     let client = http::client(&state);
     let url = http::url(&state, &format!("/api/requirements/{req_id}/workspaces/me/updates"));
-    Ok(client
-        .post(&url)
+    Ok(http::with_auth(client.post(&url), &state)
         .json(&serde_json::json!({ "body": body, "kind": "manual" }))
-        .send().await?
-        .error_for_status()?
-        .json().await?)
+        .send().await?.error_for_status()?.json().await?)
 }

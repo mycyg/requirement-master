@@ -1,49 +1,61 @@
-//! Shared reqwest client with cookie store and the worker `X-YQGL-Client-Token` header
-//! injected on every request. Keep this file backend-free so all command modules just
-//! call `http::client(state).get(url)…`.
+//! Shared reqwest client + auth header helper.
+//!
+//! Key design: there is a *single* long-lived `Client` for the whole process so
+//! the in-memory cookie jar (populated by `/api/auth/identify`'s `Set-Cookie`)
+//! persists across every command and background task. The worker
+//! `X-YQGL-Client-Token` header is **not** baked into `default_headers` (that
+//! would force us to rebuild the Client and drop the cookies); instead each
+//! caller does `req.headers(http::auth_headers(state))` right before `.send()`.
 
 use std::sync::Arc;
 
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
-use reqwest::{header::{HeaderMap, HeaderName, HeaderValue}, Client, ClientBuilder};
+use reqwest::{header::{HeaderMap, HeaderName, HeaderValue}, Client, ClientBuilder, RequestBuilder};
 
 use crate::config::ConfigState;
 
 static CLIENT_CELL: Lazy<RwLock<Option<Arc<Client>>>> = Lazy::new(|| RwLock::new(None));
 
-fn build(cookie_token: &str, client_token: &str) -> Client {
-    let mut headers = HeaderMap::new();
-    if !client_token.is_empty() {
-        if let Ok(v) = HeaderValue::from_str(client_token) {
-            headers.insert(HeaderName::from_static("x-yqgl-client-token"), v);
-        }
-    }
-    if !cookie_token.is_empty() {
-        // Add cookie via cookie store (set on first request) — simpler: rely on cookies feature
-        // and an initial /api/auth/me + cookie_token preset is handled per-call.
-    }
-
+fn build() -> Client {
     ClientBuilder::new()
         .cookie_store(true)
-        .default_headers(headers)
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .expect("reqwest client build")
 }
 
-pub fn refresh(state: &ConfigState) {
-    let cfg = state.read();
-    let client = build(&cfg.cookie_token, &cfg.client_token);
-    *CLIENT_CELL.write() = Some(Arc::new(client));
+/// Call once at startup (or after the user logs out) to rotate the underlying
+/// connection pool + cookie jar.
+pub fn refresh(_state: &ConfigState) {
+    *CLIENT_CELL.write() = Some(Arc::new(build()));
 }
 
-pub fn client(state: &ConfigState) -> Arc<Client> {
+pub fn client(_state: &ConfigState) -> Arc<Client> {
     if let Some(c) = CLIENT_CELL.read().clone() {
         return c;
     }
-    refresh(state);
-    CLIENT_CELL.read().clone().unwrap()
+    let c = Arc::new(build());
+    *CLIENT_CELL.write() = Some(c.clone());
+    c
+}
+
+/// Build the worker auth headers (X-YQGL-Client-Token) from the current config.
+/// Empty when the user hasn't registered a device yet.
+pub fn auth_headers(state: &ConfigState) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    let token = state.read().client_token;
+    if !token.is_empty() {
+        if let Ok(v) = HeaderValue::from_str(&token) {
+            headers.insert(HeaderName::from_static("x-yqgl-client-token"), v);
+        }
+    }
+    headers
+}
+
+/// Convenience: take any `RequestBuilder`, attach the worker auth header.
+pub fn with_auth(req: RequestBuilder, state: &ConfigState) -> RequestBuilder {
+    req.headers(auth_headers(state))
 }
 
 pub fn base_url(state: &ConfigState) -> String {

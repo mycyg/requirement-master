@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CheckCircle2, Check, FolderOpen, ServerCog, Sparkles, UserRound, XCircle } from "lucide-react";
 import { Button, Card, Input, Stepper, toast } from "@yqgl/shared";
@@ -21,6 +21,17 @@ export function Onboarding() {
   const [syncRoot, setSyncRoot] = useState("D:\\工作需求");
   const [driveMode, setDriveMode] = useState<"off" | "download" | "two_way">("download");
   const [busy, setBusy] = useState(false);
+
+  // Pre-fill fields from any pre-existing config so the user doesn't have to retype.
+  useEffect(() => {
+    invoke<any>("get_config").then((cfg) => {
+      if (cfg?.server_ip) setIp(cfg.server_ip);
+      if (cfg?.server_port) setPort(String(cfg.server_port));
+      if (cfg?.nickname) setNickname(cfg.nickname);
+      if (cfg?.sync_root) setSyncRoot(cfg.sync_root);
+      if (cfg?.drive_sync_mode) setDriveMode(cfg.drive_sync_mode);
+    }).catch(() => { /* ignore — fresh install */ });
+  }, []);
 
   const testServer = async () => {
     setBusy(true);

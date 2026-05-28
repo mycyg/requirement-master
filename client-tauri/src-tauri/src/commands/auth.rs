@@ -50,7 +50,7 @@ pub async fn register_device(
     device_name: String,
 ) -> Result<DeviceToken> {
     let client = http::client(&state);
-    let url = http::url(&state, "/api/client-devices");
+    let url = http::url(&state, "/api/client-devices/register");
     let resp = client
         .post(&url)
         .json(&serde_json::json!({ "device_name": device_name, "platform": std::env::consts::OS }))
@@ -58,12 +58,20 @@ pub async fn register_device(
         .error_for_status()?
         .json::<serde_json::Value>().await?;
 
+    // Backend returns { device: ClientDeviceOut, client_token: str }.
     let token = resp.get("client_token").and_then(|v| v.as_str())
         .ok_or_else(|| Error::Other("no client_token in response".into()))?
         .to_string();
-    let device_id = resp.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let device_id = resp.get("device")
+        .and_then(|d| d.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
+    // Persist the worker token. NO http::refresh — that would rebuild the
+    // reqwest Client and drop the cookie jar from `/api/auth/identify`. The
+    // shared client is intentionally long-lived; the token is attached to each
+    // request via `http::auth_headers()` which reads from config every call.
     state.write(|cfg| { cfg.client_token = token.clone(); })?;
-    http::refresh(&state);
     Ok(DeviceToken { token, device_id })
 }

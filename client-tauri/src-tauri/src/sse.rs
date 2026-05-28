@@ -31,7 +31,7 @@ pub fn spawn(app: AppHandle, state: std::sync::Arc<ConfigState>) -> oneshot::Sen
             let url = http::url(&state, "/api/push/stream");
             let client = http::client(&state);
 
-            let resp = client.get(&url).send().await;
+            let resp = http::with_auth(client.get(&url), &state).send().await;
             match resp {
                 Err(e) => {
                     tracing::warn!("sse connect failed: {e}");
