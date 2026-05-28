@@ -27,6 +27,8 @@ USER_COLUMNS: dict[str, str] = {
     "availability_text": "VARCHAR(128)",
     "availability_updated_at": "DATETIME",
     "is_admin": "BOOLEAN DEFAULT 0 NOT NULL",
+    # Soft-delete marker — see User model docstring.
+    "deleted_at": "DATETIME",
 }
 
 PROJECT_COLUMNS: dict[str, str] = {

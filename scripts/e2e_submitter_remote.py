@@ -85,11 +85,14 @@ def deliver(c: httpx.Client, req_id: str, token: str) -> None:
                headers={"X-YQGL-Client-Token": token})
     r.raise_for_status()
     upload_id = r.json()["upload_id"]
-    r = c.put(f"/api/requirements/{req_id}/delivery/chunk/0?upload_id={upload_id}",
+    # Path params (NOT query string) — backend route is
+    # PUT /requirements/{req_id}/delivery/{upload_id}/chunk/{idx}
+    # POST /requirements/{req_id}/delivery/{upload_id}/finalize
+    r = c.put(f"/api/requirements/{req_id}/delivery/{upload_id}/chunk/0",
               content=payload,
               headers={"X-YQGL-Client-Token": token, "Content-Type": "application/octet-stream"})
     r.raise_for_status()
-    r = c.post(f"/api/requirements/{req_id}/delivery/finalize?upload_id={upload_id}",
+    r = c.post(f"/api/requirements/{req_id}/delivery/{upload_id}/finalize",
                headers={"X-YQGL-Client-Token": token})
     r.raise_for_status()
 

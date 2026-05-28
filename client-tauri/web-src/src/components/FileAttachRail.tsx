@@ -69,10 +69,25 @@ export function FileAttachRail({ reqId }: { reqId: string }) {
       const picked = await open({ multiple: true, directory: false });
       const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
       if (paths.length === 0) { setBusy(false); return; }
-      for (const p of paths) {
-        await invoke("upload_attachment", { reqId, filePath: p });
+
+      // Settle each upload independently — one bad file shouldn't abort
+      // the whole batch (and shouldn't cause the user to retry already-
+      // uploaded files as duplicates).
+      const results = await Promise.allSettled(
+        paths.map((p) => invoke("upload_attachment", { reqId, filePath: p })),
+      );
+      const ok = results.filter((r) => r.status === "fulfilled").length;
+      const fail = paths.length - ok;
+      if (fail === 0) {
+        toast({ title: `已上传 ${ok} 个文件`, tone: "success" });
+      } else {
+        const firstErr = results.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
+        toast({
+          title: `上传完成 ${ok}/${paths.length}`,
+          description: `${fail} 个失败${firstErr ? `：${String(firstErr.reason).slice(0, 100)}` : ""}`,
+          tone: "warn",
+        });
       }
-      toast({ title: `已上传 ${paths.length} 个文件`, tone: "success" });
       await refresh();
     } catch (e: any) {
       setErr(String(e));

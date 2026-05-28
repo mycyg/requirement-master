@@ -16,7 +16,7 @@ import { MyWorkload } from "@/routes/MyWorkload";
 import { Knowledge } from "@/routes/Knowledge";
 import { ProjectPulse } from "@/routes/ProjectPulse";
 import { Calendar } from "@/routes/Calendar";
-import { invoke, useEvent, isTauri, clientFetch } from "@/lib/tauri";
+import { invoke, useEvent, isTauri, clientFetch, resetClientTokenCache } from "@/lib/tauri";
 
 /**
  * Fire a Windows / OS-level toast through the Tauri notification plugin.
@@ -26,16 +26,23 @@ import { invoke, useEvent, isTauri, clientFetch } from "@/lib/tauri";
 /**
  * Sync the tray tooltip with the current unread notification count so the
  * user knows there's something waiting even with the main window hidden.
+ * Debounced — a burst of 10 notifications in 1 second results in ONE fetch
+ * 250ms after the last one, not 10 fetches.
  */
-async function refreshUnreadBadge(): Promise<void> {
+let _badgeTimer: ReturnType<typeof setTimeout> | null = null;
+function refreshUnreadBadge(): void {
   if (!isTauri()) return;
-  try {
-    const rows = await clientFetch("/api/notifications?status=unread").then((r) => r.json());
-    const count = Array.isArray(rows) ? rows.length : 0;
-    await invoke("update_tray_unread", { count });
-  } catch {
-    /* ignore — badge is best-effort */
-  }
+  if (_badgeTimer) clearTimeout(_badgeTimer);
+  _badgeTimer = setTimeout(async () => {
+    _badgeTimer = null;
+    try {
+      const rows = await clientFetch("/api/notifications?status=unread").then((r) => r.json());
+      const count = Array.isArray(rows) ? rows.length : 0;
+      await invoke("update_tray_unread", { count });
+    } catch {
+      /* ignore — badge is best-effort */
+    }
+  }, 250);
 }
 
 async function osNotify(title: string, body: string): Promise<void> {
@@ -115,6 +122,11 @@ export function App() {
             await invoke("register_device", { deviceName: window.navigator.platform || "tauri" });
           }
           await invoke("set_config", { patch: { cookie_token: "session" } });
+          // The cached config used by clientFetch may still hold the EMPTY
+          // client_token captured by the very first ensureCfg call earlier
+          // in this effect (before register_device ran). Invalidate so the
+          // next /api/* call picks up the fresh token from disk.
+          resetClientTokenCache();
           const fresh = await invoke<Cfg>("get_config");
           setCfg(fresh);
           return;

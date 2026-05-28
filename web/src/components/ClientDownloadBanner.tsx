@@ -18,19 +18,29 @@ export function ClientDownloadBanner() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    fetch("/api/downloads/manifest")
-      .then((r) => r.json())
-      .then((m: Manifest) => {
-        setManifest(m);
-        try {
-          if (m.available) {
-            const last = Number(localStorage.getItem(DISMISS_KEY) || "0");
-            // Re-show if the installer was updated after the last dismissal.
-            setDismissed(last > 0 && last >= m.mtime);
-          }
-        } catch { /* ignore */ }
-      })
-      .catch(() => setManifest({ available: false }));
+    const load = () => {
+      fetch("/api/downloads/manifest")
+        .then((r) => r.json())
+        .then((m: Manifest) => {
+          setManifest(m);
+          try {
+            if (m.available) {
+              const last = Number(localStorage.getItem(DISMISS_KEY) || "0");
+              // Dismiss applies ONLY to the exact mtime user dismissed —
+              // any newer (or rolled-back older) version re-shows. Using
+              // `>=` would suppress rollbacks; using `===` is honest.
+              setDismissed(last !== 0 && last === m.mtime);
+            }
+          } catch { /* ignore */ }
+        })
+        .catch(() => setManifest({ available: false }));
+    };
+    load();
+    // Re-check when the user returns to the tab — picks up newly published
+    // installers without forcing a full reload.
+    const onVisible = () => { if (document.visibilityState === "visible") load(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, []);
 
   if (!manifest || !manifest.available || dismissed) return null;

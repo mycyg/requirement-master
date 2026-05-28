@@ -37,9 +37,11 @@ pub async fn start_delivery(
         chunk: {
             let s = state.clone();
             let req = req_id.clone();
+            // Backend route is path-param style:
+            // PUT /requirements/{req}/delivery/{upload_id}/chunk/{idx}
             move |idx: usize, upload_id: &str| http::url(
                 &s,
-                &format!("/api/requirements/{req}/delivery/chunk/{idx}?upload_id={upload_id}"),
+                &format!("/api/requirements/{req}/delivery/{upload_id}/chunk/{idx}"),
             )
         },
         finalize: {
@@ -47,7 +49,7 @@ pub async fn start_delivery(
             let req = req_id.clone();
             move |upload_id: &str| http::url(
                 &s,
-                &format!("/api/requirements/{req}/delivery/finalize?upload_id={upload_id}"),
+                &format!("/api/requirements/{req}/delivery/{upload_id}/finalize"),
             )
         },
     };

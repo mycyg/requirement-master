@@ -28,7 +28,8 @@ from services.permissions import (
     is_admin,
 )
 from services.push_bus import bus
-from services.notifications import create_notification, publish_notification
+from services.notifications import create_notification
+from services.lifecycle import queue_status_notifications, flush_status_notifications
 from services.schedule import sync_requirement_due_event
 from services.workspaces import ensure_workspaces_for_assignments, sync_workspace_to_status
 
@@ -302,51 +303,11 @@ async def update_status(
     # Skipped when the submitter themselves is making the transition (they
     # already know). Each notification gets a unique dedupe_key per (req, event)
     # so a duplicate transition doesn't double-toast.
-    pending_notification = None
-    if user.id != r.submitter_user_id:
-        submitter = db.query(User).filter(User.id == r.submitter_user_id).first()
-        if submitter:
-            if new == "claimed":
-                pending_notification = create_notification(
-                    db, submitter,
-                    type="requirement.claimed",
-                    title=f"{r.code} 被接走了",
-                    body=f"{user.nickname} 接走了「{r.title or r.code}」",
-                    severity="normal",
-                    target_url=f"/r/{r.id}",
-                    project_id=r.project_id,
-                    requirement_id=r.id,
-                    dedupe_key=f"claimed:{r.id}",
-                )
-            elif new == "delivered":
-                pending_notification = create_notification(
-                    db, submitter,
-                    type="requirement.delivered",
-                    title=f"{r.code} 交付了，等你验收",
-                    body=f"{user.nickname} 提交了交付物 — 进去查验后通过或打回",
-                    severity="high",
-                    target_url=f"/r/{r.id}",
-                    project_id=r.project_id,
-                    requirement_id=r.id,
-                    dedupe_key=f"delivered:{r.id}",
-                )
-            elif new == "cancelled":
-                pending_notification = create_notification(
-                    db, submitter,
-                    type="requirement.cancelled",
-                    title=f"{r.code} 被取消了",
-                    body=f"{user.nickname} 取消了「{r.title or r.code}」",
-                    severity="normal",
-                    target_url=f"/r/{r.id}",
-                    project_id=r.project_id,
-                    requirement_id=r.id,
-                    dedupe_key=f"cancelled:{r.id}",
-                )
+    pending_notifications = queue_status_notifications(db, r, new, user)
 
     db.commit()
     db.refresh(r)
-    if pending_notification is not None:
-        await publish_notification(pending_notification)
+    await flush_status_notifications(pending_notifications)
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status})
     await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status})
     return _enrich(db, r)
@@ -560,6 +521,11 @@ async def finalize_summary(
     if r.status not in {"draft", "clarifying", "summary_ready"}:
         raise HTTPException(status_code=400, detail=f"cannot finalize from status {r.status}")
 
+    # Guard against silently clobbering a valid summary_ready record. If
+    # caller didn't override and we already have a summary, return unchanged.
+    if r.status == "summary_ready" and not payload.summary_md and not payload.title:
+        return _enrich(db, r)
+
     summary_md = (payload.summary_md or "").strip() or (r.summary_md or "").strip() or (r.raw_description or "").strip()
     if not summary_md:
         raise HTTPException(status_code=400, detail="no description to summarise")
@@ -593,7 +559,15 @@ def delete_requirement(
     """Hard delete. Admin always allowed. Submitter allowed only while
     the requirement is still private (draft / clarifying / summary_ready)
     — once it's been dispatched, traces in workspaces / deliveries / audit
-    log have value to other people."""
+    log have value to other people.
+
+    Archives related notifications first so users don't end up clicking
+    dead `/r/<deleted-id>` deep links from their inbox (the FK column is
+    `ondelete=SET NULL`, so without this they'd remain visible with stale
+    titles and broken targets).
+    """
+    from datetime import datetime
+    from models import Notification
     r = db.query(Requirement).filter(Requirement.id == req_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
@@ -602,5 +576,8 @@ def delete_requirement(
             raise HTTPException(status_code=403, detail="only the requester or an admin can delete")
         if r.status not in {"draft", "clarifying", "summary_ready", "cancelled"}:
             raise HTTPException(status_code=400, detail=f"cannot delete from status {r.status} — ask an admin")
+    db.query(Notification).filter(
+        Notification.requirement_id == req_id, Notification.archived_at.is_(None),
+    ).update({"archived_at": datetime.utcnow()})
     db.delete(r)
     db.commit()

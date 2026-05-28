@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentParsed } from "../api/types";
 
 type StreamState = {
@@ -101,6 +101,9 @@ export function useChatStream(req_id: string, customFetch?: ChatFetch) {
       if (ctrl.signal.aborted) return;
       setState((s) => ({ ...s, running: false, error: String(e) }));
     } finally {
+      // Release the body lock so the response can be GC'd, even if we
+      // bailed before reading EOF (network error, AbortController, etc).
+      try { await reader.cancel(); } catch { /* ignore */ }
       setState((s) => s.running ? { ...s, running: false } : s);
     }
   }, [req_id, customFetch]);
@@ -109,6 +112,10 @@ export function useChatStream(req_id: string, customFetch?: ChatFetch) {
     abortRef.current?.abort();
     setState((s) => ({ ...s, running: false }));
   }, []);
+
+  // Cancel any in-flight SSE on unmount so a route change mid-stream doesn't
+  // leak the response body lock (and doesn't continue to charge the LLM).
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   return { ...state, run, cancel, reset };
 }

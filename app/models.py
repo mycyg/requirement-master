@@ -36,6 +36,11 @@ class User(Base, TimestampMixin):
     # Admin flag — when True, `permissions.can_*` checks short-circuit to True.
     # Set via `python scripts/set_admin.py <nickname>` or the YQGL_ADMIN_NICKNAMES env var.
     is_admin: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
+    # Soft-delete marker. Hard delete fails because ~15 tables reference
+    # users.id without ondelete cascade; we'd rather hide the user from
+    # lists / search / assignee picker but preserve referential integrity
+    # for historical requirements they own. Set by admin via DELETE /users/{id}.
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
 
 
 class ClientDevice(Base, TimestampMixin):

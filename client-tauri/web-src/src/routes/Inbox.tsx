@@ -32,7 +32,13 @@ export function Inbox() {
 
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [view]);
 
-  useEvent("notification", () => refresh());
+  // Backend SSE emits notifications under `push-event` with the inner
+  // event name `notification.created` (per sse.rs forwarding). Listening
+  // for the bare event "notification" never fires — the legacy reminders
+  // module emits that, not the live notification stream.
+  useEvent<{ event: string }>("push-event", (p) => {
+    if (p?.event === "notification.created") refresh();
+  });
 
   const markRead = async (id: string) => {
     await clientFetch(`/api/notifications/${id}/read`, { method: "POST" });

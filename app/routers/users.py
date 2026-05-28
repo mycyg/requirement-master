@@ -22,10 +22,13 @@ class _AdminPatchIn(BaseModel):
 def list_users(
     search: str = Query(default="", max_length=64),
     limit: int = Query(default=30, ge=1, le=100),
+    include_deleted: bool = Query(default=False),
     db: Session = Depends(get_db),
     _: User = Depends(current_user),
 ) -> list[UserOut]:
     q = db.query(User)
+    if not include_deleted:
+        q = q.filter(User.deleted_at.is_(None))
     term = search.strip()
     if term:
         q = q.filter(User.nickname.ilike(f"%{term}%"))
@@ -83,20 +86,33 @@ def delete_user(
     db: Session = Depends(get_db),
     actor: User = Depends(current_user),
 ) -> None:
-    """Admin-only. Refuses to delete self (to avoid lockout surprises) and the
-    last remaining admin. Cascades on the model side handle owned data."""
+    """Admin-only soft-delete (sets `deleted_at`). Hard-delete would raise
+    IntegrityError because ~15 tables reference users.id without ondelete
+    cascade — by design, since users own historical work that shouldn't
+    disappear. Refuses to delete self (to avoid lockout) and the last admin.
+    Also revokes admin and any active client devices so the user can't keep
+    using the system through a cached session."""
+    from datetime import datetime
+    from models import ClientDevice
     if not is_admin(actor):
         raise HTTPException(status_code=403, detail="only admins can delete users")
     if user_id == actor.id:
         raise HTTPException(status_code=400, detail="cannot delete yourself")
     target = db.query(User).filter(User.id == user_id).first()
-    if not target:
+    if not target or target.deleted_at is not None:
         raise HTTPException(status_code=404, detail="user not found")
     if target.is_admin:
-        remaining = db.query(User).filter(User.is_admin == True, User.id != user_id).count()  # noqa: E712
+        remaining = db.query(User).filter(
+            User.is_admin == True, User.id != user_id, User.deleted_at.is_(None),  # noqa: E712
+        ).count()
         if remaining == 0:
             raise HTTPException(status_code=400, detail="cannot delete the last admin")
-    db.delete(target)
+    target.deleted_at = datetime.utcnow()
+    target.is_admin = False
+    # Revoke all devices so future requests fail auth.
+    db.query(ClientDevice).filter(
+        ClientDevice.user_id == user_id, ClientDevice.revoked_at.is_(None),
+    ).update({"revoked_at": datetime.utcnow()})
     db.commit()
 
 
