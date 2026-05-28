@@ -158,6 +158,22 @@ curl -fsSL http://192.168.5.53:8080/client/install.sh | bash
 
 Linux/macOS 脚本主要用于辅助安装和启动；完整毛玻璃桌面体验以 Windows Tauri 客户端为主。
 
+### macOS 原生包
+
+Windows 机器不能可靠地“硬搓” macOS Tauri 安装包，Apple 那套工具链得在 Mac 上干活。仓库里已经放了 GitHub Actions：
+
+```text
+.github/workflows/build-macos-client.yml
+```
+
+在 GitHub Actions 手动运行 **Build macOS Client**，会用 macOS runner 构建 Universal 包，理论上 Apple Silicon 和 Intel Mac 都能用。产物名：
+
+```text
+yqgl-client-macos-universal-unsigned
+```
+
+注意：这是未签名测试包。第一次打开可能被 macOS Gatekeeper 拦一下，内网真人测试可以右键打开；要像正经软件那样丝滑双击，需要 Apple Developer 证书签名 + notarization。苹果税，懂的都懂。
+
 ## 本地端设置
 
 客户端首次启动会走 4 步：
@@ -218,6 +234,15 @@ Rust/Tauri 原生客户端：
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 cargo check --manifest-path client-tauri\src-tauri\Cargo.toml
 npm run tauri:build --workspace=client-tauri
+```
+
+macOS Universal 包在 GitHub Actions 的 macOS runner 上构建：
+
+```bash
+npm run tauri:build --workspace=client-tauri -- \
+  --bundles dmg,app \
+  --target universal-apple-darwin \
+  --no-sign
 ```
 
 安装脚本 smoke：
