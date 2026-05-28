@@ -55,7 +55,7 @@ def me(user: User | None = Depends(optional_current_user)) -> IdentifyOut | None
     if user is None:
         return None
     return IdentifyOut(
-        id=user.id, nickname=user.nickname, created=False,
+        id=user.id, nickname=user.display_name, created=False,
         is_admin=bool(getattr(user, "is_admin", False)),
     )
 

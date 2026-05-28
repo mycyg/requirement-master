@@ -50,6 +50,7 @@ def list_users(
             availability_text=u.availability_text,
             availability_updated_at=u.availability_updated_at,
             is_admin=bool(getattr(u, "is_admin", False)),
+            deleted_at=getattr(u, "deleted_at", None),
         )
         for u in rows[:limit]
     ]
