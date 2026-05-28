@@ -24,7 +24,7 @@ const NAV: { to: string; label: string; icon: JSX.Element; emphasize?: boolean }
   { to: "/?dtab=drafts", label: "起草中", icon: <FilePen className="h-4 w-4 text-ink-muted" /> },
   { to: "/?dtab=clarifying", label: "待澄清", icon: <MessageCircleQuestion className="h-4 w-4 text-info" /> },
   { to: "/?dtab=ready", label: "投递池", icon: <Send className="h-4 w-4 text-warn" /> },
-  { to: "/?dtab=working", label: "在做中", icon: <Wrench className="h-4 w-4 text-accent" /> },
+  { to: "/?dtab=working", label: "跟进中", icon: <Wrench className="h-4 w-4 text-accent" /> },
   { to: "/?dtab=review", label: "待我验收", icon: <Star className="h-4 w-4 text-accent" />, emphasize: true },
   { to: "/?dtab=accepted", label: "已通过", icon: <CheckCircle2 className="h-4 w-4 text-success" /> },
 ];

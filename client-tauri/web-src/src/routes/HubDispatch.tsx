@@ -20,7 +20,7 @@ const TABS: { id: DTab; label: string; statuses: string[] }[] = [
   { id: "drafts",     label: "起草中",   statuses: ["draft"] },
   { id: "clarifying", label: "待澄清",   statuses: ["clarifying", "summary_ready"] },
   { id: "ready",      label: "投递池",   statuses: ["ready"] },
-  { id: "working",    label: "在做中",   statuses: ["claimed", "doing", "ai_processing", "delivery_doc_pending", "revision_requested"] },
+  { id: "working",    label: "跟进中",   statuses: ["claimed", "doing", "ai_processing", "delivery_doc_pending", "revision_requested"] },
   { id: "review",     label: "待我验收", statuses: ["delivered"] },
   { id: "accepted",   label: "已通过",   statuses: ["accepted"] },
 ];
@@ -136,7 +136,7 @@ function emptyTitle(t: DTab): string {
     drafts: "还没有草稿",
     clarifying: "没有需要澄清的需求",
     ready: "投递池是空的",
-    working: "暂时没有在做中的需求",
+    working: "没有需要跟进的需求",
     review: "没有需要你验收的交付",
     accepted: "近期没有已通过的需求",
   }[t];
@@ -147,7 +147,7 @@ function emptyDesc(t: DTab): string {
     drafts: "点右上「新建需求」起一条。",
     clarifying: "需求已经投递出去，或还没创建。",
     ready: "投递后等接单人接走，会出现在这里。",
-    working: "没有人正在做你发起的需求。",
+    working: "你发起的需求里没有正在被人做的。",
     review: "等接单人完成交付后，需要你点「通过」或「打回」。",
     accepted: "30 天内验收通过的需求会出现在这里。",
   }[t];

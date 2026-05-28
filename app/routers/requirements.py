@@ -47,6 +47,7 @@ def _assignee_out(a: RequirementAssignment) -> RequirementAssigneeOut:
 def _to_out(r: Requirement, *, submitter_nickname: str, project_slug: str) -> RequirementOut:
     return RequirementOut(
         id=r.id, code=r.code, project_id=r.project_id, project_slug=project_slug,
+        submitter_user_id=r.submitter_user_id,
         submitter_nickname=submitter_nickname,
         claimed_by_user_id=r.claimed_by_user_id,
         claimed_by_nickname=r.claimed_by_nickname,
@@ -492,10 +493,13 @@ async def finalize_summary(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> RequirementOut:
-    """Allow the submitter (or an admin) to mark a draft as `summary_ready`
-    without going through the AI clarification chat. Used by the Tauri
-    desktop client's "立即投递" path — the wizard already collected enough
-    structured info that re-asking via LLM is unnecessary friction."""
+    """Admin-only emergency bypass that marks a draft as `summary_ready`
+    without going through the AI clarification chat. Normal flow MUST be
+    draft → AI chat (auto sets summary_ready) → submit → ready. This
+    bypass exists only for cases where the LLM is down or a hot-fix
+    requirement is too trivial to clarify."""
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="finalize-summary 是应急旁路，正常请走 AI 澄清")
     r = (
         db.query(Requirement)
         .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
@@ -504,8 +508,6 @@ async def finalize_summary(
     )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
-    if r.submitter_user_id != user.id and not is_admin(user):
-        raise HTTPException(status_code=403, detail="only the requester can finalize")
     if r.status not in {"draft", "clarifying", "summary_ready"}:
         raise HTTPException(status_code=400, detail=f"cannot finalize from status {r.status}")
 

@@ -113,6 +113,7 @@ export type Requirement = {
   code: string;
   project_id: string;
   project_slug: string;
+  submitter_user_id: string;
   submitter_nickname: string;
   claimed_by_user_id: string | null;
   claimed_by_nickname: string | null;

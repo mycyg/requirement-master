@@ -183,6 +183,50 @@ pub async fn set_user_admin(
         .json().await?)
 }
 
+// ---------- H. AI clarification chat (read history + post answer + trigger auto-process) ----------
+// The streaming POST /chat itself is hit directly from the React side via
+// `useChatStream` (SSE through fetch + ReadableStream — works fine inside the
+// Tauri webview). These commands are for the non-streaming round-trips.
+
+#[tauri::command]
+pub async fn chat_messages(
+    state: State<'_, ConfigState>,
+    req_id: String,
+) -> Result<serde_json::Value> {
+    let client = http::client(&state);
+    let url = http::url(&state, &format!("/api/requirements/{req_id}/chat/messages"));
+    Ok(http::with_auth(client.get(&url), &state)
+        .send().await?.error_for_status()?.json().await?)
+}
+
+#[tauri::command]
+pub async fn post_chat_answer(
+    state: State<'_, ConfigState>,
+    req_id: String,
+    body: serde_json::Value,
+) -> Result<serde_json::Value> {
+    let client = http::client(&state);
+    let url = http::url(&state, &format!("/api/requirements/{req_id}/chat/answer"));
+    Ok(http::with_auth(client.post(&url), &state)
+        .json(&body)
+        .send().await?
+        .error_for_status()?
+        .json().await?)
+}
+
+#[tauri::command]
+pub async fn auto_process(
+    state: State<'_, ConfigState>,
+    req_id: String,
+) -> Result<serde_json::Value> {
+    let client = http::client(&state);
+    let url = http::url(&state, &format!("/api/requirements/{req_id}/auto-process"));
+    Ok(http::with_auth(client.post(&url), &state)
+        .send().await?
+        .error_for_status()?
+        .json().await?)
+}
+
 #[tauri::command]
 pub async fn delete_user(
     state: State<'_, ConfigState>,

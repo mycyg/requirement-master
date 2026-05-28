@@ -10,7 +10,14 @@ type StreamState = {
   running: boolean;
 };
 
-export function useChatStream(req_id: string) {
+/**
+ * Custom fetch wrapper — caller can pass `clientFetch` (from the Tauri
+ * client's lib/tauri.ts) so SSE works inside the desktop webview where
+ * the origin isn't the backend. Default = native fetch for the web client.
+ */
+export type ChatFetch = (input: string, init?: RequestInit) => Promise<Response>;
+
+export function useChatStream(req_id: string, customFetch?: ChatFetch) {
   const [state, setState] = useState<StreamState>({
     thinking: "", text: "", parsed: null, error: null, done: false, running: false,
   });
@@ -28,9 +35,9 @@ export function useChatStream(req_id: string) {
 
     let resp: Response;
     try {
-      resp = await fetch(`/api/requirements/${req_id}/chat`, {
+      const doFetch = customFetch ?? ((u, init) => fetch(u, { ...init, credentials: "include" }));
+      resp = await doFetch(`/api/requirements/${req_id}/chat`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(opts),
         signal: ctrl.signal,
@@ -96,7 +103,7 @@ export function useChatStream(req_id: string) {
     } finally {
       setState((s) => s.running ? { ...s, running: false } : s);
     }
-  }, [req_id]);
+  }, [req_id, customFetch]);
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();

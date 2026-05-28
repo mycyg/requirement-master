@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Check,
+  Crown,
   Download,
   FileText,
   FolderOpen,
@@ -8,9 +10,10 @@ import {
   Rocket,
   RotateCcw,
   Send,
+  Trash2,
   UserCog,
 } from "lucide-react";
-import { Button, Card, Modal, Textarea, toast } from "@yqgl/shared";
+import { Button, Card, Modal, Textarea, toast, isSubmitter, isAdmin } from "@yqgl/shared";
 import type { Requirement } from "@yqgl/shared";
 import { invoke } from "@/lib/tauri";
 import { AssigneeSelector } from "@/components/AssigneeSelector";
@@ -27,21 +30,25 @@ import { FileAttachRail } from "@/components/FileAttachRail";
  * 验收 / 打回 的核心交互特意做得显眼 —— 顶部 hero 卡片 + accent 渐变背景 +
  * 一键打开本地交付目录，避免提交人忘了点。
  */
+type Me = { id: string; nickname: string; is_admin?: boolean } | null;
 type Props = {
   req: Requirement;
-  meId: string | null;
+  me: Me;
   onChange: () => void;
 };
 
-export function ActionRailDispatch({ req, meId, onChange }: Props) {
+export function ActionRailDispatch({ req, me, onChange }: Props) {
+  const nav = useNavigate();
   const [submitOpen, setSubmitOpen] = useState(false);
   const [assigneesOpen, setAssigneesOpen] = useState(false);
   const [reviseOpen, setReviseOpen] = useState(false);
   const [acceptOpen, setAcceptOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const isSubmitter = !!meId && req.submitter_user_id === meId;
-  if (!isSubmitter) return null;
+  const meIsSubmitter = isSubmitter(req, me);
+  const meIsAdmin = isAdmin(me);
+  // Submitters always; admins also (they can manage anyone's requirements).
+  if (!meIsSubmitter && !meIsAdmin) return null;
 
   const submit = async () => {
     setBusy(true);
@@ -90,6 +97,18 @@ export function ActionRailDispatch({ req, meId, onChange }: Props) {
       toast({ title: "已发起下载", description: "查看本地交付目录可看到 zip 文件。", tone: "info" });
     } catch (e: any) {
       toast({ title: "下载失败", description: String(e), tone: "error" });
+    } finally { setBusy(false); }
+  };
+
+  const deleteIt = async () => {
+    if (!confirm(`确定彻底删除需求「${req.code} · ${req.title || "未命名"}」吗？此操作不可撤销。`)) return;
+    setBusy(true);
+    try {
+      await invoke("delete_requirement", { reqId: req.id });
+      toast({ title: "已删除", tone: "info" });
+      nav("/");
+    } catch (e: any) {
+      toast({ title: "删除失败", description: String(e), tone: "error" });
     } finally { setBusy(false); }
   };
 
@@ -149,7 +168,11 @@ export function ActionRailDispatch({ req, meId, onChange }: Props) {
     const isWorking = ["claimed", "doing", "ai_processing", "delivery_doc_pending"].includes(req.status);
     return (
       <>
-        {isDraft && (
+        {/* For draft phase, the canonical "投递" path now lives behind AI
+            clarification. Show 投递 button only when status=summary_ready
+            (after AI did its job). draft/clarifying → guide them to /clarify
+            via TaskDetail's banner instead. */}
+        {req.status === "summary_ready" && (
           <Button variant="accent" leftIcon={<Rocket className="h-4 w-4" />} onClick={() => setSubmitOpen(true)}>
             投递
           </Button>
@@ -167,6 +190,18 @@ export function ActionRailDispatch({ req, meId, onChange }: Props) {
             <Check className="h-4 w-4" /> 已通过验收
           </span>
         )}
+        {/* Delete: submitter can delete while still private; admin always */}
+        {(meIsAdmin || (meIsSubmitter && ["draft", "clarifying", "summary_ready", "cancelled"].includes(req.status))) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            leftIcon={<Trash2 className="h-3.5 w-3.5" />}
+            onClick={deleteIt}
+            className="text-error hover:bg-error-soft"
+          >
+            删除
+          </Button>
+        )}
       </>
     );
   })();
@@ -178,15 +213,24 @@ export function ActionRailDispatch({ req, meId, onChange }: Props) {
       <Card variant="glass-quiet" padding="md" className="mb-5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2 text-body-sm text-ink-muted">
-            <FileText className="h-4 w-4" />
-            <span>你是这个需求的发起人，这里是你能做的事</span>
+            {meIsAdmin && !meIsSubmitter ? (
+              <>
+                <Crown className="h-4 w-4 text-accent" />
+                <span>管理员工具栏 — 你可以管理任何人的需求</span>
+              </>
+            ) : (
+              <>
+                <FileText className="h-4 w-4" />
+                <span>你是这个需求的发起人，这里是你能做的事</span>
+              </>
+            )}
           </div>
           <div className="flex gap-2 flex-wrap">{actions}</div>
         </div>
       </Card>
 
       {/* For draft-phase submitters, expose the file attach rail inline */}
-      {["draft", "clarifying", "summary_ready"].includes(req.status) && (
+      {meIsSubmitter && ["draft", "clarifying", "summary_ready"].includes(req.status) && (
         <Card variant="glass" padding="md" className="mb-5">
           <h3 className="text-h4 text-ink mb-3 flex items-center gap-2">
             <FileText className="h-4 w-4 text-ink-muted" />

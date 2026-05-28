@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { Hub } from "@/routes/Hub";
 import { HubDispatch } from "@/routes/HubDispatch";
 import { NewRequirement } from "@/routes/NewRequirement";
+import { Clarify } from "@/routes/Clarify";
 import { ProjectDrive } from "@/routes/ProjectDrive";
 import { TaskDetail } from "@/routes/TaskDetail";
 import { Inbox } from "@/routes/Inbox";
@@ -147,6 +148,7 @@ export function App() {
             <Routes>
               <Route path="/" element={<HubRouter />} />
               <Route path="/r/new" element={<NewRequirement />} />
+              <Route path="/r/:id/clarify" element={<Clarify />} />
               <Route path="/r/:id" element={<TaskDetail />} />
               <Route path="/p" element={<ProjectDrive />} />
               <Route path="/p/:projectId" element={<ProjectDrive />} />

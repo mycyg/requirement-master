@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, FolderOpen, Hammer, Play, PackageCheck, RefreshCw } from "lucide-react";
+import { ArrowLeft, Bot, FolderOpen, Hammer, Play, PackageCheck, RefreshCw, UserCheck } from "lucide-react";
 import { invoke, useEvent } from "@/lib/tauri";
 import {
   Avatar,
@@ -18,6 +18,10 @@ import {
   TabsPanel,
   Textarea,
   toast,
+  isSubmitter,
+  isAssignee as isAssigneeFn,
+  isAdmin,
+  useSpace,
 } from "@yqgl/shared";
 import type { Requirement, RequirementWorkspace } from "@yqgl/shared";
 import { DeliveryWizard } from "@/components/DeliveryWizard";
@@ -26,12 +30,17 @@ import { ActionRailDispatch } from "@/components/ActionRailDispatch";
 export function TaskDetail() {
   const { id = "" } = useParams();
   const nav = useNavigate();
+  const { space } = useSpace();
   const [req, setReq] = useState<Requirement | null>(null);
   const [workspaces, setWorkspaces] = useState<RequirementWorkspace[]>([]);
   const [tab, setTab] = useState("overview");
-  const [me, setMe] = useState<{ id: string; nickname: string } | null>(null);
+  const [me, setMe] = useState<{ id: string; nickname: string; is_admin?: boolean } | null>(null);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Submitter who also happens to be assigned must explicitly opt in to
+  // see worker UI. Default false avoids "wait why is there a 接单 button on
+  // my own requirement" confusion.
+  const [workerView, setWorkerView] = useState(false);
 
   const refresh = async () => {
     if (!id) return;
@@ -39,7 +48,7 @@ export function TaskDetail() {
       const [r, ws, identity] = await Promise.all([
         invoke<Requirement>("get_requirement", { reqId: id }),
         invoke<RequirementWorkspace[]>("list_workspaces", { reqId: id }).catch(() => []),
-        invoke<{ id: string; nickname: string } | null>("me").catch(() => null),
+        invoke<{ id: string; nickname: string; is_admin?: boolean } | null>("me").catch(() => null),
       ]);
       setReq(r);
       setWorkspaces(ws);
@@ -68,9 +77,17 @@ export function TaskDetail() {
   }
 
   const myWs = workspaces.find((w) => me && w.user_id === me.id) ?? null;
-  const isAssignee = !!myWs ||
-    !!(req.assignees ?? []).find((a) => me && a.user_id === me.id) ||
-    req.claimed_by_user_id === me?.id;
+  const meIsSubmitter = isSubmitter(req, me);
+  const meIsAssignee = isAssigneeFn(req, me);
+  const meIsAdmin = isAdmin(me);
+  // Show worker UI when viewer is an assignee AND not viewing as a submitter
+  // (unless they explicitly opt in via the "我也来做" toggle). Admins viewing
+  // someone else's req act as observers — no worker UI unless they're also
+  // assignees.
+  const showWorkerUi = meIsAssignee && (!meIsSubmitter || workerView);
+  // Back link: context-aware. Submitters / observers in 派活 Space →派活 hub.
+  // Otherwise → 接活 hub.
+  const backHref = space === "dispatch" ? "/?dtab=ready" : "/?tab=mine";
 
   const claim = async () => {
     setBusy(true);
@@ -111,16 +128,16 @@ export function TaskDetail() {
   return (
     <div className="flex-1 p-6 overflow-auto">
       <button
-        onClick={() => nav("/")}
+        onClick={() => nav(backHref)}
         className="inline-flex items-center gap-1.5 text-body-sm text-ink-muted hover:text-ink mb-4"
       >
         <ArrowLeft className="h-4 w-4" /> 返回工单
       </button>
 
-      {/* Submitter-only operations live in their own card up top so the verify /
-          revise affordance is impossible to miss when status=delivered. The
-          component returns null for non-submitters. */}
-      <ActionRailDispatch req={req} meId={me?.id ?? null} onChange={refresh} />
+      {/* Submitter / admin operations card up top so verify/revise/delete
+          affordances are impossible to miss. ActionRailDispatch internally
+          gates on viewer role. */}
+      <ActionRailDispatch req={req} me={me} onChange={refresh} />
 
       <Card variant="glass-strong" padding="lg" className="mb-5">
         <div className="flex items-start justify-between gap-4">
@@ -165,24 +182,77 @@ export function TaskDetail() {
           />
         </div>
 
-        {req.status === "ready" && (
+        {/* Worker actions — claim/start/deliver. Hidden for submitter who
+            hasn't opted into worker view (avoids "wait why am I seeing
+            接单 on my own requirement"). */}
+        {req.status === "ready" && (!meIsSubmitter || workerView) && (
           <div className="mt-4">
             <Button variant="accent" leftIcon={<Hammer className="h-4 w-4" />} loading={busy} onClick={claim}>
               接这单
             </Button>
           </div>
         )}
-        {req.status === "claimed" && isAssignee && (
+        {req.status === "claimed" && showWorkerUi && (
           <div className="mt-4">
             <Button variant="accent" leftIcon={<Play className="h-4 w-4" />} loading={busy} onClick={startDoing}>
               开始做
             </Button>
           </div>
         )}
-        {req.status === "doing" && isAssignee && (
+        {req.status === "doing" && showWorkerUi && (
           <div className="mt-4">
             <Button variant="accent" leftIcon={<PackageCheck className="h-4 w-4" />} onClick={() => setDeliveryOpen(true)}>
               完成并交付
+            </Button>
+          </div>
+        )}
+
+        {/* Submitter who is also assigned: opt-in to worker view */}
+        {meIsSubmitter && meIsAssignee && !workerView && (
+          <div className="mt-4 flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<UserCheck className="h-3.5 w-3.5" />}
+              onClick={() => setWorkerView(true)}
+            >
+              我也来做（切到接单人视角）
+            </Button>
+            <span className="text-caption text-ink-faint">你既是发起人也是负责人</span>
+          </div>
+        )}
+        {meIsSubmitter && meIsAssignee && workerView && (
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={() => setWorkerView(false)}
+              className="text-caption text-ink-faint hover:text-ink underline-offset-4 hover:underline"
+            >
+              ← 切回发起人视角
+            </button>
+          </div>
+        )}
+
+        {/* Submitter prompt to start AI clarification if status is still draft/clarifying */}
+        {meIsSubmitter && (req.status === "draft" || req.status === "clarifying") && (
+          <div className="mt-4">
+            <Button
+              variant="accent"
+              leftIcon={<Bot className="h-4 w-4" />}
+              onClick={() => nav(`/r/${req.id}/clarify`)}
+            >
+              {req.status === "draft" ? "去跟 AI 聊聊" : "继续澄清"}
+            </Button>
+          </div>
+        )}
+        {meIsSubmitter && req.status === "summary_ready" && (
+          <div className="mt-4 flex gap-2">
+            <Button
+              variant="accent"
+              leftIcon={<Bot className="h-4 w-4" />}
+              onClick={() => nav(`/r/${req.id}/clarify`)}
+            >
+              查看摘要并投递
             </Button>
           </div>
         )}
@@ -238,7 +308,10 @@ export function TaskDetail() {
           )}
         </div>
 
-        {/* Right column: my workspace */}
+        {/* Right column: my workspace — only visible to assignees (or
+            submitter who opted into worker view). Submitters monitoring
+            their own requirement don't need this clutter. */}
+        {showWorkerUi && (
         <div className="space-y-5">
           {myWs ? (
             <MyWorkspace ws={myWs} reqId={id} onChange={refresh} />
@@ -251,6 +324,7 @@ export function TaskDetail() {
             </Card>
           )}
         </div>
+        )}
       </div>
 
       <DeliveryWizard

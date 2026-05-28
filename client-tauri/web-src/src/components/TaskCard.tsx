@@ -1,16 +1,12 @@
 import { useNavigate } from "react-router-dom";
-import { CalendarClock } from "lucide-react";
-import { Card, AvatarGroup, StatusBadge, Progress, Badge } from "@yqgl/shared";
+import { CalendarClock, Crown, Users } from "lucide-react";
+import { Card, StatusBadge, Progress, Badge } from "@yqgl/shared";
 import type { Requirement } from "@yqgl/shared";
 
 export function TaskCard({ req, action }: { req: Requirement; action?: React.ReactNode }) {
   const nav = useNavigate();
   const lead = req.assignees?.find((a) => a.role === "lead");
   const collabs = req.assignees?.filter((a) => a.role !== "lead") ?? [];
-  const users = [
-    ...(lead ? [{ nickname: lead.nickname }] : []),
-    ...collabs.map((c) => ({ nickname: c.nickname })),
-  ];
 
   const due = req.due_at ? new Date(req.due_at) : null;
   const overdue = !!(due && due.getTime() < Date.now());
@@ -35,11 +31,27 @@ export function TaskCard({ req, action }: { req: Requirement; action?: React.Rea
           </div>
           <h3 className="text-h4 text-ink truncate">{req.title || "(整理中)"}</h3>
         </div>
-        {users.length > 0 && <AvatarGroup users={users} size="sm" />}
+        {/* Role-aware participants — lead with crown, collab count with users icon. */}
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          {lead ? (
+            <span className="inline-flex items-center gap-1 px-1.5 h-5 rounded-pill bg-accent-soft text-accent text-caption">
+              <Crown className="h-2.5 w-2.5" /> {lead.nickname}
+            </span>
+          ) : (
+            <Badge tone="warn" size="xs">待接</Badge>
+          )}
+          {collabs.length > 0 && (
+            <span className="inline-flex items-center gap-1 text-caption text-ink-faint">
+              <Users className="h-2.5 w-2.5" /> +{collabs.length} 协作
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="mt-3 flex items-center gap-3 text-caption text-ink-muted">
         <span>{req.project_slug}</span>
+        <span className="text-ink-faint">·</span>
+        <span>{req.submitter_nickname} 发</span>
         {due && (
           <Badge tone={dueTone as any} size="xs">
             <CalendarClock className="h-3 w-3" />

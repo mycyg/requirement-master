@@ -255,6 +255,7 @@ class RequirementOut(BaseModel):
     code: str
     project_id: str
     project_slug: str
+    submitter_user_id: str
     submitter_nickname: str
     claimed_by_user_id: Optional[str]
     claimed_by_nickname: Optional[str]

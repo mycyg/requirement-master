@@ -4,12 +4,13 @@ import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
+  Bot,
   CalendarClock,
   FolderKanban,
   FolderPlus,
   Paperclip,
   Plus,
-  Rocket,
+  Sparkles,
   Users,
 } from "lucide-react";
 import { Button, Card, Input, Modal, Stepper, Textarea, toast, type Step } from "@yqgl/shared";
@@ -66,6 +67,11 @@ export function NewRequirement() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [meAdmin, setMeAdmin] = useState(false);
+
+  useEffect(() => {
+    invoke<{ is_admin?: boolean } | null>("me").then((m) => setMeAdmin(!!m?.is_admin)).catch(() => {});
+  }, []);
 
   const refreshProjects = async (selectId?: string) => {
     const rows = await invoke<Project[]>("list_my_projects");
@@ -132,19 +138,24 @@ export function NewRequirement() {
 
   const goBack = () => setStep((s) => Math.max(0, s - 1));
 
-  const doSubmit = async () => {
+  const goClarify = () => {
     if (!reqId) { setErr("草稿还没建好。"); return; }
+    nav(`/r/${reqId}/clarify`);
+  };
+
+  // Admin-only emergency bypass: skip AI clarification entirely. Backend
+  // gates this with is_admin, so non-admins get 403.
+  const adminSkipAi = async () => {
+    if (!reqId) { setErr("草稿还没建好。"); return; }
+    if (!confirm("跳过 AI 澄清会让需求直接进入「投递池」 — 接单人看到的就是你刚写的原文。确定？")) return;
     setBusy(true);
     try {
-      // Composite endpoint: finalize summary (skip AI clarification) +
-      // submit. We pass the description as the summary so the card title /
-      // body are sensible without a round-trip to the LLM.
       await invoke("finalize_and_submit", {
         reqId,
         summaryMd: desc.trim() || null,
         title: desc.trim().split(/\r?\n/)[0]?.slice(0, 40) || null,
       });
-      toast({ title: "已投递", description: "等接单人接走，会在「投递池」里看到。", tone: "success" });
+      toast({ title: "已投递（跳过 AI）", tone: "warn" });
       nav(`/r/${reqId}`);
     } catch (e: any) {
       setErr(String(e));
@@ -366,21 +377,37 @@ export function NewRequirement() {
 
           {step === 5 && (
             <div className="space-y-4 text-center">
-              <div className="grid h-12 w-12 mx-auto place-items-center rounded-full bg-accent-soft text-accent">
-                <Rocket className="h-5 w-5" />
+              <div className="grid h-14 w-14 mx-auto place-items-center rounded-full bg-gradient-to-br from-[#6B5BFF] to-[#FF6E8E] text-white shadow-2">
+                <Sparkles className="h-6 w-6" />
               </div>
-              <h2 className="text-h3 text-ink">就差最后一步</h2>
+              <h2 className="text-h3 text-ink">下一步：跟 AI 聊聊</h2>
               <p className="text-body-sm text-ink-muted max-w-md mx-auto">
-                投递后接单人会立刻收到通知。你随时可以在「派活 · 投递池」里追踪。
+                AI 助理会跟你聊几轮，把需求打磨清楚，然后你确认投递。
+                <br />
+                <span className="text-ink-faint text-caption">
+                  接单人看到的是 AI 整理后的清晰版本，不是你的草稿原文。
+                </span>
               </p>
               <div className="flex justify-center gap-2 pt-2">
                 <Button variant="secondary" onClick={() => reqId && nav(`/r/${reqId}`)} disabled={!reqId}>
                   先去看看草稿
                 </Button>
-                <Button variant="accent" onClick={doSubmit} loading={busy} leftIcon={<Rocket className="h-4 w-4" />}>
-                  立即投递
+                <Button variant="accent" onClick={goClarify} disabled={!reqId} leftIcon={<Bot className="h-4 w-4" />}>
+                  跟 AI 聊聊
                 </Button>
               </div>
+              {meAdmin && (
+                <div className="pt-4 text-center">
+                  <button
+                    type="button"
+                    onClick={adminSkipAi}
+                    disabled={busy || !reqId}
+                    className="text-caption text-ink-faint hover:text-warn underline-offset-4 hover:underline disabled:opacity-50"
+                  >
+                    跳过 AI 直接投递（不推荐 · 仅管理员）
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

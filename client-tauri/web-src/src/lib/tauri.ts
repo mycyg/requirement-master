@@ -51,40 +51,53 @@ export function useEvent<T = unknown>(event: string, handler: (payload: T) => vo
 export { isTauri };
 
 /**
- * Cached worker client_token (filled the first time we read config from Rust).
- * Auto-attached to every clientFetch call so backend `require_local_client`
- * routes work the same as `invoke()`.
+ * Cached config snapshot (client_token + server_url). The webview's origin in
+ * production is `tauri://localhost`, so a bare `fetch('/api/...')` would 404 —
+ * we have to prepend the configured backend URL. Vite dev (browser at
+ * http://127.0.0.1:5174) has a /api proxy in vite.config.ts so the leading
+ * slash works there too; clientFetch keeps that path verbatim in dev.
  */
-let _clientToken: string | null = null;
+let _cfgCache: { token: string; baseUrl: string } | null = null;
 
-async function ensureClientToken(): Promise<string | null> {
-  if (_clientToken !== null) return _clientToken;
+async function ensureCfg(): Promise<{ token: string; baseUrl: string }> {
+  if (_cfgCache) return _cfgCache;
   if (!isTauri()) {
-    _clientToken = ""; // browser dev fallback
-    return _clientToken;
+    _cfgCache = { token: "", baseUrl: "" };  // dev: rely on vite proxy
+    return _cfgCache;
   }
   try {
     const cfg = await invoke<{ client_token?: string; server_url?: string }>("get_config");
-    _clientToken = cfg?.client_token ?? "";
+    _cfgCache = {
+      token: cfg?.client_token ?? "",
+      baseUrl: (cfg?.server_url ?? "").replace(/\/+$/, ""),
+    };
   } catch {
-    _clientToken = "";
+    _cfgCache = { token: "", baseUrl: "" };
   }
-  return _clientToken;
+  return _cfgCache;
 }
 
 /**
  * Drop-in `fetch` for pages that hit the FastAPI server directly. Injects the
- * worker client_token header in Tauri context so endpoints guarded by
- * `require_local_client` (claim, sync, delivery, …) actually authorize.
+ * worker client_token header in Tauri context so backend `require_local_client`
+ * routes (claim, sync, delivery, …) authorize, AND prepends the configured
+ * backend base URL when running inside the Tauri webview (whose origin is not
+ * the backend).
  */
 export async function clientFetch(input: string, init: RequestInit = {}): Promise<Response> {
-  const token = await ensureClientToken();
+  const cfg = await ensureCfg();
   const headers = new Headers(init.headers || {});
-  if (token) headers.set("X-YQGL-Client-Token", token);
-  return fetch(input, { ...init, credentials: "include", headers });
+  if (cfg.token) headers.set("X-YQGL-Client-Token", cfg.token);
+  // Only absolutize when the caller passed a same-origin /api path AND we know
+  // a backend URL. Leave full URLs untouched.
+  let url = input;
+  if (cfg.baseUrl && input.startsWith("/")) {
+    url = cfg.baseUrl + input;
+  }
+  return fetch(url, { ...init, credentials: "include", headers });
 }
 
-/** Reset the cached token; call after a successful re-login / device-register. */
+/** Reset the cached cfg; call after re-login / device-register / settings change. */
 export function resetClientTokenCache() {
-  _clientToken = null;
+  _cfgCache = null;
 }
