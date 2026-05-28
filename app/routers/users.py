@@ -77,6 +77,29 @@ def update_my_status(
     )
 
 
+@router.delete("/users/{user_id}", status_code=204)
+def delete_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+    actor: User = Depends(current_user),
+) -> None:
+    """Admin-only. Refuses to delete self (to avoid lockout surprises) and the
+    last remaining admin. Cascades on the model side handle owned data."""
+    if not is_admin(actor):
+        raise HTTPException(status_code=403, detail="only admins can delete users")
+    if user_id == actor.id:
+        raise HTTPException(status_code=400, detail="cannot delete yourself")
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="user not found")
+    if target.is_admin:
+        remaining = db.query(User).filter(User.is_admin == True, User.id != user_id).count()  # noqa: E712
+        if remaining == 0:
+            raise HTTPException(status_code=400, detail="cannot delete the last admin")
+    db.delete(target)
+    db.commit()
+
+
 @router.put("/users/{user_id}/admin", response_model=UserOut)
 def set_user_admin(
     user_id: str,

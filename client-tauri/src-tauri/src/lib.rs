@@ -119,6 +119,7 @@ pub fn run() {
             commands::submitter::finalize_and_submit,
             commands::submitter::delete_requirement,
             commands::submitter::set_user_admin,
+            commands::submitter::delete_user,
             commands::submitter::create_project,
             commands::submitter::delete_project,
         ])

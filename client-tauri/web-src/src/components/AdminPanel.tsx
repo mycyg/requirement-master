@@ -201,6 +201,19 @@ function UsersSection({ meId }: { meId: string }) {
     } finally { setUpdating(null); }
   };
 
+  const removeUser = async (u: UserRow) => {
+    if (u.id === meId) { toast({ title: "不能删自己", tone: "warn" }); return; }
+    if (!confirm(`确定彻底删除用户「${u.nickname}」吗？此操作不可撤销。`)) return;
+    setUpdating(u.id);
+    try {
+      await invoke("delete_user", { userId: u.id });
+      toast({ title: `已删除 ${u.nickname}`, tone: "success" });
+      refresh();
+    } catch (e: any) {
+      toast({ title: "删除失败", description: String(e), tone: "error" });
+    } finally { setUpdating(null); }
+  };
+
   return (
     <section>
       <h3 className="text-h4 text-ink mb-2 flex items-center gap-2">
@@ -230,15 +243,27 @@ function UsersSection({ meId }: { meId: string }) {
               {u.is_admin && <Badge tone="accent" size="xs"><Crown className="h-2.5 w-2.5" />管理员</Badge>}
               {u.id === meId && <Badge tone="neutral" size="xs">你</Badge>}
             </div>
-            <Button
-              size="xs"
-              variant={u.is_admin ? "ghost" : "secondary"}
-              loading={updating === u.id}
-              leftIcon={u.is_admin ? <ShieldOff className="h-3 w-3" /> : <Crown className="h-3 w-3" />}
-              onClick={() => toggle(u)}
-            >
-              {u.is_admin ? "撤销" : "设为管理员"}
-            </Button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button
+                size="xs"
+                variant={u.is_admin ? "ghost" : "secondary"}
+                loading={updating === u.id}
+                leftIcon={u.is_admin ? <ShieldOff className="h-3 w-3" /> : <Crown className="h-3 w-3" />}
+                onClick={() => toggle(u)}
+              >
+                {u.is_admin ? "撤销" : "设为管理员"}
+              </Button>
+              <button
+                type="button"
+                onClick={() => removeUser(u)}
+                disabled={u.id === meId || updating === u.id}
+                className="h-7 w-7 grid place-items-center rounded-sm text-ink-faint hover:bg-error-soft hover:text-error transition disabled:opacity-30 disabled:cursor-not-allowed"
+                aria-label={`删除 ${u.nickname}`}
+                title={u.id === meId ? "不能删自己" : `删除 ${u.nickname}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </li>
         ))}
       </ul>

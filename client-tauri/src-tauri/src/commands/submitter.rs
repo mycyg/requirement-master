@@ -184,6 +184,19 @@ pub async fn set_user_admin(
 }
 
 #[tauri::command]
+pub async fn delete_user(
+    state: State<'_, ConfigState>,
+    user_id: String,
+) -> Result<()> {
+    let client = http::client(&state);
+    let url = http::url(&state, &format!("/api/users/{user_id}"));
+    http::with_auth(client.delete(&url), &state)
+        .send().await?
+        .error_for_status()?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn create_project(
     state: State<'_, ConfigState>,
     name: String,

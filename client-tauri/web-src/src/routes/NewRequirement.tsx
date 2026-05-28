@@ -5,13 +5,14 @@ import {
   ArrowLeft,
   ArrowRight,
   CalendarClock,
-  CheckCircle2,
   FolderKanban,
+  FolderPlus,
   Paperclip,
+  Plus,
   Rocket,
   Users,
 } from "lucide-react";
-import { Button, Card, Input, Stepper, Textarea, toast, type Step } from "@yqgl/shared";
+import { Button, Card, Input, Modal, Stepper, Textarea, toast, type Step } from "@yqgl/shared";
 import { invoke } from "@/lib/tauri";
 import { AssigneeSelector } from "@/components/AssigneeSelector";
 import { FileAttachRail } from "@/components/FileAttachRail";
@@ -64,6 +65,17 @@ export function NewRequirement() {
   const [reqId, setReqId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+
+  const refreshProjects = async (selectId?: string) => {
+    const rows = await invoke<Project[]>("list_my_projects");
+    setProjects(rows);
+    if (selectId) {
+      setProjectId(selectId);
+    } else if (rows.length > 0 && !projectId) {
+      setProjectId(rows[0].id);
+    }
+  };
 
   useEffect(() => {
     invoke<Project[]>("list_my_projects")
@@ -156,18 +168,32 @@ export function NewRequirement() {
         <Card variant="glass" padding="lg" className="anim-fade-up">
           {step === 0 && (
             <div className="space-y-4">
-              <p className="text-body-sm text-ink-muted">
-                <FolderKanban className="inline h-4 w-4 mr-1 text-ink-faint" />
-                这个需求归属哪个项目？接单人会看到这个项目的标签和归档目录。
-              </p>
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-body-sm text-ink-muted flex-1">
+                  <FolderKanban className="inline h-4 w-4 mr-1 text-ink-faint" />
+                  这个需求归属哪个项目？接单人会看到这个项目的标签和归档目录。
+                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  leftIcon={<FolderPlus className="h-3.5 w-3.5" />}
+                  onClick={() => setNewProjectOpen(true)}
+                >
+                  新建项目
+                </Button>
+              </div>
               {projects === null ? (
                 <div className="text-body-sm text-ink-faint">项目列表加载中…</div>
               ) : projects.length === 0 ? (
-                <div className="glass-sunken p-4">
-                  <div className="text-body-sm text-ink">你还没加入任何项目。</div>
-                  <div className="text-caption text-ink-muted mt-1">
-                    找管理员把你加进项目，或者你自己是管理员的话去「设置 → 管理员」新建一个。
+                <div className="glass-sunken p-6 text-center">
+                  <FolderPlus className="h-8 w-8 mx-auto text-ink-faint mb-2" />
+                  <div className="text-body-sm text-ink">还没有项目</div>
+                  <div className="text-caption text-ink-muted mt-1 mb-3">
+                    项目用来给一组需求做分类和归档，新建一个吧。
                   </div>
+                  <Button variant="accent" size="sm" leftIcon={<Plus className="h-3.5 w-3.5" />} onClick={() => setNewProjectOpen(true)}>
+                    新建项目
+                  </Button>
                 </div>
               ) : (
                 <div className="grid sm:grid-cols-2 gap-2">
@@ -197,6 +223,20 @@ export function NewRequirement() {
                       </div>
                     </button>
                   ))}
+                  {/* + 新建 tile in the same grid so it lives where the eye is */}
+                  <button
+                    type="button"
+                    onClick={() => setNewProjectOpen(true)}
+                    className="flex items-center gap-3 h-14 px-4 rounded-md text-left transition glass-sunken border border-dashed border-line-strong text-ink-muted hover:bg-accent-soft/40 hover:text-ink hover:border-accent/40"
+                  >
+                    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-sm bg-accent-soft text-accent">
+                      <Plus className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-body-sm font-medium">新建项目</div>
+                      <div className="text-caption">用于一组新的需求</div>
+                    </div>
+                  </button>
                 </div>
               )}
             </div>
@@ -383,6 +423,90 @@ export function NewRequirement() {
             </div>
           )}
         </Card>
+      </div>
+
+      <Modal open={newProjectOpen} onClose={() => setNewProjectOpen(false)} title="新建项目" size="sm">
+        <NewProjectForm
+          onCancel={() => setNewProjectOpen(false)}
+          onCreated={(p) => {
+            setNewProjectOpen(false);
+            refreshProjects(p.id);
+          }}
+        />
+      </Modal>
+    </div>
+  );
+}
+
+function NewProjectForm({
+  onCancel,
+  onCreated,
+}: {
+  onCancel: () => void;
+  onCreated: (project: Project) => void;
+}) {
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Auto-derive slug from the name as user types (lowercase ASCII + dash).
+  // User can still edit the slug field manually.
+  const [slugTouched, setSlugTouched] = useState(false);
+  const onNameChange = (v: string) => {
+    setName(v);
+    if (!slugTouched) {
+      const auto = v.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
+      setSlug(auto);
+    }
+  };
+
+  const submit = async () => {
+    setErr(null);
+    if (!name.trim()) { setErr("项目名不能空"); return; }
+    if (!/^[a-z0-9-]+$/.test(slug)) { setErr("slug 只能用小写字母 / 数字 / 横线"); return; }
+    setBusy(true);
+    try {
+      const p = await invoke<Project>("create_project", { name: name.trim(), slug });
+      toast({ title: `项目「${p.name}」已创建`, tone: "success" });
+      onCreated(p);
+    } catch (e: any) {
+      setErr(String(e));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="space-y-3">
+      <label className="block">
+        <span className="text-eyebrow text-ink-muted block mb-1">项目名</span>
+        <Input
+          autoFocus
+          value={name}
+          onChange={(e) => onNameChange(e.target.value)}
+          placeholder="比如：客户端重构"
+        />
+      </label>
+      <label className="block">
+        <span className="text-eyebrow text-ink-muted block mb-1">slug（需求编号前缀）</span>
+        <Input
+          value={slug}
+          onChange={(e) => { setSlug(e.target.value.toLowerCase()); setSlugTouched(true); }}
+          placeholder="client"
+        />
+        <div className="text-caption text-ink-faint mt-1">
+          需求会编号为 <span className="font-mono">{(slug || "SLUG").toUpperCase()}-001</span>，定了别再改
+        </div>
+      </label>
+      {err && (
+        <div className="flex items-center gap-2 text-body-sm text-error">
+          <AlertCircle className="h-4 w-4" /> {err}
+        </div>
+      )}
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="ghost" onClick={onCancel}>取消</Button>
+        <Button variant="accent" loading={busy} onClick={submit} leftIcon={<FolderPlus className="h-4 w-4" />}>
+          创建
+        </Button>
       </div>
     </div>
   );
