@@ -116,6 +116,29 @@ impl Config {
         }
     }
 
+    /// Force-coerce any stale `two_way` setting back to `download`. The
+    /// two-way mode was removed from the tray + UI but old config files
+    /// (and `tauri build` packaged dev configs) may still hold the string.
+    /// Without this coercion the user would land on Hub, the sync worker
+    /// would log a hardcoded English error every 60s, and the picker UI
+    /// has no way to set it back. Called from every Config entry point.
+    pub fn normalize_drive_mode(&mut self) {
+        if self.drive_sync_mode != "off" && self.drive_sync_mode != "download" {
+            self.drive_sync_mode = "download".to_string();
+        }
+    }
+
+    /// Drop notification/reminder dedup state. Called on logout, nickname
+    /// change, or server-URL swap so a re-onboarded user sees fresh
+    /// toasts rather than having yesterday's identity's dedup rows
+    /// silently suppress legitimate first-time notifications.
+    pub fn clear_dedup_state(&mut self) {
+        self.known_reqs = serde_json::json!({});
+        self.known_revision_requests = serde_json::json!({});
+        self.known_reminders = serde_json::json!({});
+        self.known_notifications = serde_json::json!({});
+    }
+
     pub fn base_url(&self) -> String {
         if !self.server_url.is_empty() {
             self.server_url.trim_end_matches('/').to_string()
@@ -147,6 +170,7 @@ pub fn load() -> Result<Config> {
             if let Ok(raw) = fs::read_to_string(&legacy) {
                 if let Ok(mut cfg) = serde_json::from_str::<Config>(&raw) {
                     cfg.recompute_url();
+                    cfg.normalize_drive_mode();
                     if let Some(parent) = path.parent() {
                         fs::create_dir_all(parent)?;
                     }
@@ -166,7 +190,7 @@ pub fn load() -> Result<Config> {
     // on the server — irreversible. Keeping the backup lets a human
     // (or a future repair tool) recover the tokens.
     let cfg = match serde_json::from_str::<Config>(&raw) {
-        Ok(mut c) => { c.recompute_url(); c }
+        Ok(mut c) => { c.recompute_url(); c.normalize_drive_mode(); c }
         Err(e) => {
             tracing::warn!("config.json parse failed ({e}); preserving as .broken backup and using defaults");
             let ts = std::time::SystemTime::now()

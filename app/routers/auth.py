@@ -43,16 +43,15 @@ def identify(
     payload: IdentifyIn,
     response: Response,
     db: Session = Depends(get_db),
-    existing_session: User | None = Depends(optional_current_user),
 ) -> IdentifyOut:
+    # LAN/nickname identity model: matching a nickname reuses the existing
+    # account. This is intentional — users routinely clear cookies, swap
+    # devices, or onboard a fresh client; rejecting nickname reuse would
+    # permanently lock them out with no recovery path. Squatting protection
+    # is the job of `_deleted_` prefix reservation + the future password/SSO
+    # layer, not /identify.
     nickname = _validate_nickname(payload.nickname)
-    existing = db.query(User).filter(User.nickname == nickname, User.deleted_at.is_(None)).first()
-    if existing and (not existing_session or existing_session.id != existing.id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="nickname already registered; use the existing device session or ask an admin to reset it",
-        )
-    user, created = (existing, False) if existing else get_or_create_user(db, nickname)
+    user, created = get_or_create_user(db, nickname)
     db.commit()
     issue_cookie(response, user)
     return IdentifyOut(

@@ -265,7 +265,14 @@ async def _process_decomposition(plan_id: str, job_id: str, user_id: str) -> Non
         db.commit()
         await publish_job(job)
         result = await analyze_requirement(plan.requirement, stage=plan.stage, actor=user)
+        # `db.refresh(plan.requirement)` re-loads the Requirement's own
+        # columns but leaves the `.project` ORM relationship pointing at the
+        # cached Project object from before the LLM call. Admins can archive
+        # the project in the 30s the call takes; without refreshing the
+        # relationship the next check still reads project.archived=False.
         db.refresh(plan.requirement)
+        if plan.requirement.project is not None:
+            db.refresh(plan.requirement.project)
         if not requirement_project_is_active(plan.requirement):
             update_job(db, job, status="failed", progress_percent=100, message="项目已归档或删除，已取消任务拆解")
             plan.status = "dismissed"

@@ -323,19 +323,29 @@ def rebuild_knowledge_index(db: Session, project_id: str | None = None) -> int:
         row.content_hash = content_hash
         row.updated_at = datetime.utcnow()
         count += 1
+    # Two-pass stale cleanup: delete DB rows first, commit, THEN unlink
+    # orphan files. If we unlinked before commit and the commit failed
+    # (FK violation, disk full, lock timeout), search would later resurrect
+    # a row whose corpus file no longer exists and every read would throw.
+    # File deletes are idempotent and best-effort — losing the unlink just
+    # leaves an orphan markdown in CORPUS_ROOT, which the next reindex
+    # tolerates.
     stale_q = db.query(KnowledgeDocument)
     if project_id:
         stale_q = stale_q.filter(KnowledgeDocument.project_id == project_id)
+    orphan_files: list[str] = []
     for row in stale_q.all():
         if (row.source_type, row.source_id) in seen:
             continue
         if row.corpus_path:
-            try:
-                Path(row.corpus_path).unlink(missing_ok=True)
-            except Exception:
-                pass
+            orphan_files.append(row.corpus_path)
         db.delete(row)
     db.commit()
+    for path_str in orphan_files:
+        try:
+            Path(path_str).unlink(missing_ok=True)
+        except Exception:
+            pass
     return count
 
 
@@ -428,10 +438,12 @@ def search_knowledge(
     # vector. Each search would walk every requirement, chat, comment,
     # activity, workspace_update, meeting, drive_file, delivery on disk.
     # With concurrent users searching, this hammered the disk and slowed
-    # every search to seconds. The index is maintained on data mutation
-    # paths (see services that call rebuild_knowledge_index after their
-    # writes) and by `POST /api/knowledge/reindex` for admin recovery.
-    # If the corpus is missing for a few seconds after a fresh write,
+    # every search to seconds. Freshness is now driven by
+    # `_periodic_knowledge_reindex` (5 min, in main.py lifespan) and by
+    # `POST /api/knowledge/reindex` for admin-on-demand rebuilds. Write
+    # paths used to also call rebuild inline; that turned every drive
+    # rename into a 10s stall on large projects, so it was removed too.
+    # If the corpus is missing for a few minutes after a fresh write,
     # the next search will simply miss those rows — acceptable.
     doc_q = db.query(KnowledgeDocument)
     doc_q = doc_q.outerjoin(Project, KnowledgeDocument.project_id == Project.id).filter(

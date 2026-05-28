@@ -147,16 +147,12 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
 
     db = SessionLocal()
     try:
-        r = (
-            db.query(Requirement)
-            .join(Project, Project.id == Requirement.project_id)
-            .filter(
-                Requirement.id == req_id,
-                Project.archived == False,  # noqa: E712
-                Project.deleted_at.is_(None),
-            )
-            .first()
-        )
+        # Look the requirement up WITHOUT a project-active filter. Admin can
+        # archive a project mid-AI; we still need to write the delivery (the
+        # AI work is done, files are on disk) or mark the job failed (so the
+        # UI doesn't spin forever). Restoring the project is a separate
+        # admin action; we don't conflate it with this background task.
+        r = db.query(Requirement).filter(Requirement.id == req_id).first()
         if not r:
             return
 
@@ -277,16 +273,11 @@ async def _mark_auto_failed(req_id: str, actor: str, title: str, reason: str, jo
     db = SessionLocal()
     try:
         job = None
-        r = (
-            db.query(Requirement)
-            .join(Project, Project.id == Requirement.project_id)
-            .filter(
-                Requirement.id == req_id,
-                Project.archived == False,  # noqa: E712
-                Project.deleted_at.is_(None),
-            )
-            .first()
-        )
+        # No project filter — must run on archived / soft-deleted projects too,
+        # otherwise the BackgroundJob row stays `running` forever and the
+        # requirement stays `ai_processing` with no UI recovery. See
+        # `_run_and_finalize` for the symmetric rationale.
+        r = db.query(Requirement).filter(Requirement.id == req_id).first()
         if not r:
             return
         # Same cancel-aware guard as the inline failure path above.

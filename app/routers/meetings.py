@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import shutil
 import uuid
@@ -31,6 +32,7 @@ from services.permissions import can_view_requirement_record
 from services.push_bus import bus
 
 router = APIRouter(prefix="/api", tags=["meetings"])
+logger = logging.getLogger(__name__)
 
 CHUNK_SIZE = 5 * 1024 * 1024
 MAX_BYTES = 1024 * 1024 * 1024
@@ -154,8 +156,10 @@ def init_meeting_upload(
         raise HTTPException(status_code=400, detail="total_chunks does not match configured chunk size")
     if payload.requirement_id:
         req = db.query(Requirement).filter(Requirement.id == payload.requirement_id, Requirement.project_id == project_id).first()
-        if not req or not can_view_requirement_record(req, user):
-            raise HTTPException(status_code=400, detail="requirement_id must belong to this project")
+        if not req:
+            raise HTTPException(status_code=404, detail="requirement_id not found in this project")
+        if not can_view_requirement_record(req, user):
+            raise HTTPException(status_code=403, detail="you do not have access to this requirement")
     upload_id = uuid.uuid4().hex
     pdir = _partial_dir(upload_id)
     pdir.mkdir(parents=True, exist_ok=True)
@@ -414,17 +418,37 @@ async def confirm_meeting_insight(
     meeting = insight.meeting
     if meeting.uploaded_by_user_id != user.id:
         raise HTTPException(status_code=403, detail="only the meeting uploader can confirm this insight")
-    if insight.status != "pending":
+    # Idempotent fast-path: this insight is already done. For requirement-
+    # creating kinds, "done" means the requirement is actually on disk
+    # (created_requirement_id IS NOT NULL); a previous attempt that crashed
+    # mid-create left the insight `confirmed` with NULL requirement_id, and
+    # we must allow that retry to complete rather than silently returning
+    # 200 with no requirement.
+    creates_requirement = insight.kind in {"new_requirement", "requirement_change"}
+    already_done = insight.status != "pending" and (
+        not creates_requirement or insight.created_requirement_id is not None
+    )
+    if already_done:
         return _insight_out(insight)
     _require_project(db, meeting.project_id)
     # Atomic CAS — double-click on "confirm" would otherwise pass the
     # `!= "pending"` check twice, both bump project.next_seq, both
-    # insert duplicate Requirement rows (one 500s on uq constraint, but
-    # the user-visible effect is unpredictable).
+    # insert duplicate Requirement rows. The CAS also accepts a confirmed-
+    # but-stranded insight so a manual retry can complete the work.
+    from sqlalchemy import and_, or_
     from sqlalchemy import update as sql_update
+    cas_filter = MeetingInsight.status == "pending"
+    if creates_requirement:
+        cas_filter = or_(
+            cas_filter,
+            and_(
+                MeetingInsight.status == "confirmed",
+                MeetingInsight.created_requirement_id.is_(None),
+            ),
+        )
     cas = db.execute(
         sql_update(MeetingInsight)
-        .where(MeetingInsight.id == insight_id, MeetingInsight.status == "pending")
+        .where(MeetingInsight.id == insight_id, cas_filter)
         .values(status="confirmed", confirmed_by_user_id=user.id, confirmed_at=datetime.utcnow())
     )
     if cas.rowcount == 0:
@@ -433,13 +457,13 @@ async def confirm_meeting_insight(
         db.refresh(insight)
         return _insight_out(insight)
     # Persist the state transition before creating the draft requirement.
-    # If the later requirement-code allocation hits an IntegrityError and
-    # rolls back, the insight must not become pending again.
+    # If the later requirement-code allocation rolls back, the insight stays
+    # `confirmed-without-requirement` and a retry can pick it back up.
     db.commit()
     insight = db.query(MeetingInsight).filter(MeetingInsight.id == insight_id).first()
     if not insight:
         raise HTTPException(status_code=404, detail="meeting insight not found")
-    if insight.kind in {"new_requirement", "requirement_change"}:
+    if creates_requirement:
         # Retry on next_seq race with another insight-confirm / requirement-
         # create / drive-comment running in parallel. Without this, concurrent
         # confirms can both compute the same `SLUG-NNN` and one 500s on the
@@ -479,6 +503,14 @@ async def confirm_meeting_insight(
                 insight = db.query(MeetingInsight).filter(MeetingInsight.id == insight_id).first()
                 if not insight:
                     raise HTTPException(status_code=404, detail="meeting insight not found")
+            except Exception as e:
+                # Any non-IntegrityError (OperationalError, FK error, disk
+                # full, etc.) means we can't complete this confirm. Leave the
+                # insight as `confirmed-without-requirement` so the user can
+                # click 确认 again and the CAS above will accept the retry.
+                db.rollback()
+                logger.exception("confirm_meeting_insight: failed to create requirement for insight %s", insight_id)
+                raise HTTPException(status_code=500, detail=f"could not create requirement: {e}") from e
         else:
             raise HTTPException(status_code=500, detail=f"could not allocate requirement code: {last_err}")
     # status/confirmed_by/confirmed_at were already set atomically by the

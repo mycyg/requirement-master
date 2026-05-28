@@ -39,6 +39,12 @@ async fn poll_reminders(app: &AppHandle, state: &ConfigState) -> anyhow::Result<
     if let Some(arr) = list.as_array() {
         for r in arr {
             let reminder_id = r.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if reminder_id.is_empty() {
+                // No stable id from /api/reminders/due — skip rather than
+                // dedup on an empty key which would suppress all future
+                // empty-id reminders forever.
+                continue;
+            }
             let due_at = r.get("due_at").and_then(|v| v.as_str()).unwrap_or("");
             let key = format!("{reminder_id}:{due_at}");
             if known_map.contains_key(&key) {
@@ -89,6 +95,13 @@ async fn poll_notifications(app: &AppHandle, state: &ConfigState) -> anyhow::Res
     if let Some(arr) = list.as_array() {
         for n in arr {
             let notification_id = n.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if notification_id.is_empty() {
+                // No stable identity → cannot dedup. Skip the toast entirely
+                // rather than re-firing every 60s. A backend bug that emits
+                // notifications without `id` is preferable to drown the user
+                // in toasts.
+                continue;
+            }
             let updated_at = n.get("updated_at").and_then(|v| v.as_str()).unwrap_or("");
             let key = format!("{notification_id}:{updated_at}");
             if known_map.contains_key(&key) {
@@ -102,9 +115,7 @@ async fn poll_notifications(app: &AppHandle, state: &ConfigState) -> anyhow::Res
                     .title(title).body(body).show();
             }
             let _ = app.emit("notification", n.clone());
-            if !notification_id.is_empty() {
-                new_seen.push((key, serde_json::json!(chrono::Utc::now().to_rfc3339())));
-            }
+            new_seen.push((key, serde_json::json!(chrono::Utc::now().to_rfc3339())));
         }
     }
     if !new_seen.is_empty() {

@@ -44,7 +44,6 @@ from schemas import (
 )
 from services.drive_comment_agent import classify_drive_comment
 from services.file_parser import is_parseable, parse_file
-from services.knowledge import rebuild_knowledge_index
 from services.permissions import is_admin
 from services.push_bus import bus
 
@@ -209,13 +208,6 @@ def _publish_drive_changed(project_id: str, item_ids: list[str] | None = None) -
             loop.create_task(bus.publish("all", "drive.changed", data))
         except Exception:
             pass
-
-
-def _refresh_project_knowledge(db: Session, project_id: str) -> None:
-    try:
-        rebuild_knowledge_index(db, project_id=project_id)
-    except Exception:
-        logger.exception("failed to refresh project knowledge corpus for project %s", project_id)
 
 
 def _active_sibling(
@@ -764,7 +756,6 @@ def finalize_drive_upload(
     db.refresh(item)
     shutil.rmtree(pdir, ignore_errors=True)
     _publish_drive_changed(project_id, [item.id])
-    _refresh_project_knowledge(db, project_id)
     return _item_out(db, item)
 
 
@@ -918,7 +909,6 @@ def patch_drive_item(
     db.commit()
     db.refresh(item)
     _publish_drive_changed(item.project_id, [item.id])
-    _refresh_project_knowledge(db, item.project_id)
     return _item_out(db, item)
 
 
@@ -935,11 +925,16 @@ def paste_drive_items(
     if any(item.project_id != project_id for item in items):
         raise HTTPException(status_code=400, detail="all items must belong to this project")
     if payload.mode == "copy":
+        # Copy still needs the same ownership check as move/delete — without
+        # it any LAN user could duplicate any file they didn't author, which
+        # is inconsistent with the rest of the drive surface and would let
+        # private drafts leak via a second-hand copy.
+        for item in items:
+            _require_manage_item(db, item, user)
         copied = [_copy_item(db, item, payload.target_parent_id, user) for item in items]
         op = _record_op(db, project_id, user, "paste_copy", {"item_ids": [i.id for i in copied]})
         db.commit()
         _publish_drive_changed(project_id, [i.id for i in copied])
-        _refresh_project_knowledge(db, project_id)
         return DriveOperationOut(operation_id=op.id, items=[_item_out(db, i) for i in copied])
 
     # Record BOTH old parent AND old name so undo can restore the
@@ -965,7 +960,6 @@ def paste_drive_items(
     })
     db.commit()
     _publish_drive_changed(project_id, [i.id for i in items])
-    _refresh_project_knowledge(db, project_id)
     return DriveOperationOut(operation_id=op.id, items=[_item_out(db, i) for i in items])
 
 
@@ -977,12 +971,12 @@ def copy_one_drive_item(
     user: User = Depends(current_user),
 ) -> DriveOperationOut:
     item = _require_item(db, item_id)
+    _require_manage_item(db, item, user)
     _require_folder(db, item.project_id, target_parent_id)
     copied = _copy_item(db, item, target_parent_id, user)
     op = _record_op(db, item.project_id, user, "paste_copy", {"item_ids": [copied.id]})
     db.commit()
     _publish_drive_changed(item.project_id, [copied.id])
-    _refresh_project_knowledge(db, item.project_id)
     return DriveOperationOut(operation_id=op.id, items=[_item_out(db, copied)])
 
 
@@ -1007,7 +1001,6 @@ def cut_one_drive_item(
     db.commit()
     db.refresh(item)
     _publish_drive_changed(item.project_id, [item.id])
-    _refresh_project_knowledge(db, item.project_id)
     return _item_out(db, item)
 
 
@@ -1019,7 +1012,6 @@ def delete_drive_item(item_id: str, db: Session = Depends(get_db), user: User = 
     op = _record_op(db, item.project_id, user, "delete", {"item_ids": [item.id]})
     db.commit()
     _publish_drive_changed(item.project_id, [item.id])
-    _refresh_project_knowledge(db, item.project_id)
     return DriveOperationOut(operation_id=op.id)
 
 
@@ -1037,7 +1029,6 @@ def bulk_delete_drive_items(payload: DriveBulkIn, db: Session = Depends(get_db),
     op = _record_op(db, project_id, user, "delete", {"item_ids": [item.id for item in items]})
     db.commit()
     _publish_drive_changed(project_id, [item.id for item in items])
-    _refresh_project_knowledge(db, project_id)
     return DriveOperationOut(operation_id=op.id)
 
 
@@ -1052,7 +1043,6 @@ def restore_drive_item(item_id: str, db: Session = Depends(get_db), user: User =
     db.commit()
     db.refresh(item)
     _publish_drive_changed(item.project_id, [item.id])
-    _refresh_project_knowledge(db, item.project_id)
     return _item_out(db, item)
 
 
@@ -1109,7 +1099,6 @@ def undo_drive_operation(project_id: str, db: Session = Depends(get_db), user: U
     op.undone_at = datetime.utcnow()
     db.commit()
     _publish_drive_changed(project_id, [])
-    _refresh_project_knowledge(db, project_id)
     return DriveOperationOut(operation_id=op.id)
 
 
@@ -1184,7 +1173,6 @@ async def create_drive_comment(
         comment.status = "posted"
     db.commit()
     db.refresh(comment)
-    _refresh_project_knowledge(db, project_id)
     await bus.publish("all", "drive.comment", {
         "project_id": project_id,
         "folder_id": folder_db_id,

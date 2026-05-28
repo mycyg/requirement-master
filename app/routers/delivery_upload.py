@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import shutil
 import uuid
@@ -28,6 +29,7 @@ from services.push_bus import bus
 from services.workspaces import ensure_workspaces_for_assignments, sync_workspace_to_status
 
 router = APIRouter(prefix="/api", tags=["delivery-upload"])
+logger = logging.getLogger(__name__)
 
 MAX_BYTES = 1024 * 1024 * 1024  # 1 GB
 CHUNK_SIZE = 5 * 1024 * 1024  # 5 MB
@@ -225,6 +227,10 @@ async def finalize(
         tmp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=f"invalid delivery zip: {e}")
 
+    # Capture the prior status so we can revert atomically if the post-CAS
+    # work fails (notably `os.replace` on Windows under live AV scans).
+    prior_status = r.status
+
     # Atomic CAS — without this, a submitter who cancelled the requirement
     # mid-upload would have the cancelled status blindly overwritten by
     # delivery_doc_pending. Also prevents two concurrent finalizes from
@@ -247,7 +253,34 @@ async def finalize(
     db.refresh(r)
     round_num = 1 + db.query(Delivery).filter(Delivery.requirement_id == req_id).count()
     out_path = out_dir / f"round-{round_num}.zip"
-    os.replace(tmp_path, out_path)
+
+    # Everything after CAS must be exception-protected: `os.replace`,
+    # `Delivery` insert, lifecycle helpers all can raise. On any failure
+    # we revert the CAS so the requirement doesn't stick in
+    # delivery_doc_pending without an actual delivery row.
+    def _rollback_status() -> None:
+        try:
+            db.rollback()
+            db.execute(
+                sql_update(Requirement)
+                .where(
+                    Requirement.id == req_id,
+                    Requirement.status == "delivery_doc_pending",
+                )
+                .values(status=prior_status, delivered_at=None)
+            )
+            db.commit()
+        except Exception:
+            logger.exception("delivery_upload: failed to roll back status for req %s", req_id)
+
+    try:
+        os.replace(tmp_path, out_path)
+    except OSError as e:
+        tmp_path.unlink(missing_ok=True)
+        out_path.unlink(missing_ok=True)
+        _rollback_status()
+        raise HTTPException(status_code=500, detail=f"could not save delivery package: {e}") from e
+
     d = Delivery(
         requirement_id=req_id, round=round_num,
         package_path=str(out_path), package_size=total,
@@ -271,12 +304,12 @@ async def finalize(
         db.commit()
         db.refresh(d)
     except IntegrityError:
-        db.rollback()
         out_path.unlink(missing_ok=True)
+        _rollback_status()
         raise HTTPException(status_code=409, detail="delivery round already exists; refresh and retry")
     except Exception:
-        db.rollback()
         out_path.unlink(missing_ok=True)
+        _rollback_status()
         raise
 
     shutil.rmtree(pdir, ignore_errors=True)

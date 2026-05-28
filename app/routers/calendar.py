@@ -65,18 +65,6 @@ def _validate_links(db: Session, project_id: str | None, requirement_id: str | N
             raise HTTPException(status_code=400, detail="requirement_id must belong to project_id")
 
 
-def _visible_event(db: Session, event: ScheduleEvent, user: User) -> bool:
-    if event.project_id:
-        project = db.query(Project).filter(Project.id == event.project_id).first()
-        if not project or project.archived or project.deleted_at:
-            return False
-    if event.requirement_id:
-        req = db.query(Requirement).filter(Requirement.id == event.requirement_id).first()
-        if not req or not can_view_requirement_record(req, user):
-            return False
-    return True
-
-
 @router.get("/events", response_model=list[ScheduleEventOut])
 def list_events(
     start: datetime | None = Query(default=None),
@@ -120,7 +108,10 @@ def list_events(
     if end:
         q = q.filter(ScheduleEvent.start_at.is_(None) | (ScheduleEvent.start_at <= end))
         q = q.filter(ScheduleEvent.end_at <= end)
-    rows = [ev for ev in q.order_by(ScheduleEvent.end_at.asc()).limit(500).all() if _visible_event(db, ev, user)]
+    # All visibility filtering (project-active + private-requirement access)
+    # is done in SQL above; no need for an N+1 post-filter loop that requeries
+    # Project/Requirement once per event row.
+    rows = q.order_by(ScheduleEvent.end_at.asc()).limit(500).all()
     if mine:
         rows = [
             ev for ev in rows

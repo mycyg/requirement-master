@@ -3,10 +3,22 @@
 The app is still LAN/nickname based, so these helpers keep the current open
 dispatch board while protecting draft assets and assigned work from casual access.
 
-Admin override: any user with ``is_admin = True`` short-circuits every ``can_*``
-check to True. Admins still need a registered client device to perform actions
-guarded by ``require_local_client`` (claim, sync, delivery) — admin doesn't
-mean "bypass safety", it means "bypass relationship-based filters".
+Admin scope:
+* For READ paths (view requirement, view assets, ack sync): admin
+  short-circuits every relationship-based filter AND the project-active
+  filter. Admin must always be able to audit any historical project
+  state, including archived/deleted ones — that's the whole point of the
+  admin flag.
+* For WRITE paths (add attachment, manage assignees, claim, work):
+  admin bypasses relationship filters but still respects the
+  project-active filter. Mutating an archived project would silently
+  undo the archive intent and break the "read-only review state"
+  contract. To act, admin restores the project first via
+  ``POST /api/projects/{id}/restore``.
+
+Admins still need a registered client device to perform actions guarded by
+``require_local_client`` (claim, sync, delivery) — admin doesn't mean "bypass
+device safety", it means "bypass relationship-based filters".
 """
 from __future__ import annotations
 
@@ -36,30 +48,35 @@ def requirement_project_is_active(req: Requirement) -> bool:
 
 
 def can_view_requirement_record(req: Requirement, user: User) -> bool:
-    if not requirement_project_is_active(req):
-        return False
+    # Admin view bypass MUST come before the project-active filter — see
+    # module docstring. Without this, admins lose audit visibility into
+    # archived/deleted projects.
     if is_admin(user):
         return True
+    if not requirement_project_is_active(req):
+        return False
     if is_submitter(req, user) or is_assignee(req, user):
         return True
     return req.status not in PRIVATE_REQUIREMENT_STATUSES
 
 
 def can_view_requirement_assets(req: Requirement, user: User) -> bool:
-    if not requirement_project_is_active(req):
-        return False
     if is_admin(user):
         return True
+    if not requirement_project_is_active(req):
+        return False
     if is_submitter(req, user) or is_assignee(req, user):
         return True
     return req.status not in PRIVATE_REQUIREMENT_STATUSES
 
 
 def can_ack_requirement_sync(req: Requirement, user: User) -> bool:
-    if not requirement_project_is_active(req):
-        return False
+    # Sync-ack is a read-style metadata fetch (records that the local client
+    # has the latest manifest). Treat as a read for admin override purposes.
     if is_admin(user):
         return True
+    if not requirement_project_is_active(req):
+        return False
     return can_view_requirement_assets(req, user)
 
 

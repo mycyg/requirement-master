@@ -13,6 +13,15 @@ pub fn get_config(state: State<'_, ConfigState>) -> Config {
 pub fn set_config(state: State<'_, ConfigState>, patch: serde_json::Value) -> Result<Config> {
     let new = state.write(|cfg| {
         if let Some(obj) = patch.as_object() {
+            // Identity-affecting fields: clear dedup state so notifications/reminders
+            // don't carry over between users or server installations. Detect BEFORE
+            // applying the patch by comparing new vs current.
+            let identity_changed =
+                obj.get("nickname").and_then(|v| v.as_str()).is_some_and(|v| v != cfg.nickname)
+                || obj.get("server_ip").and_then(|v| v.as_str()).is_some_and(|v| v != cfg.server_ip)
+                || obj.get("server_url").and_then(|v| v.as_str()).is_some_and(|v| v != cfg.server_url)
+                || obj.get("client_token").and_then(|v| v.as_str()).is_some_and(|v| v != cfg.client_token);
+
             if let Some(v) = obj.get("server_ip").and_then(|v| v.as_str()) { cfg.server_ip = v.into(); cfg.server_url.clear(); }
             if let Some(v) = obj.get("server_port").and_then(|v| v.as_u64()) { cfg.server_port = v as u16; cfg.server_url.clear(); }
             if let Some(v) = obj.get("server_scheme").and_then(|v| v.as_str()) { cfg.server_scheme = v.into(); cfg.server_url.clear(); }
@@ -29,6 +38,12 @@ pub fn set_config(state: State<'_, ConfigState>, patch: serde_json::Value) -> Re
             if let Some(v) = obj.get("theme").and_then(|v| v.as_str()) { cfg.theme = v.into(); }
             if let Some(v) = obj.get("reminder_offsets_minutes").and_then(|v| v.as_array()) {
                 cfg.reminder_offsets_minutes = v.iter().filter_map(|x| x.as_i64()).collect();
+            }
+            // Coerce any stale `two_way` to `download` — the picker UI was
+            // removed and the sync worker hard-rejects it.
+            cfg.normalize_drive_mode();
+            if identity_changed {
+                cfg.clear_dedup_state();
             }
         }
     })?;

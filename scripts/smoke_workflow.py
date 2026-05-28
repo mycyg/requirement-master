@@ -50,9 +50,14 @@ def main() -> None:
             r = dana.post("/api/auth/identify", json={"nickname": "dana"})
             expect(200, r.status_code, r.text)
             dana_id = r.json()["id"]
+            # Re-identifying as an existing nickname from a fresh client reuses
+            # the account (LAN trust model). This used to 409, but that locked
+            # any user out of their account after cookie expiry — see
+            # services/auth.py /identify for details.
             with TestClient(app) as intruder:
                 r = intruder.post("/api/auth/identify", json={"nickname": "alice"})
-                expect(409, r.status_code, r.text)
+                expect(200, r.status_code, r.text)
+                assert r.json()["id"] == alice_id, r.text
 
             def register_device(client, name: str) -> tuple[dict[str, str], str]:
                 resp = client.post(
