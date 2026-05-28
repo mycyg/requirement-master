@@ -186,6 +186,7 @@ class UserOut(BaseModel):
     availability_status: str = "free"
     availability_text: Optional[str] = None
     availability_updated_at: Optional[datetime] = None
+    is_admin: bool = False
 
 
 class UserStatusUpdateIn(BaseModel):

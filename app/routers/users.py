@@ -40,6 +40,7 @@ def list_users(
             availability_status=u.availability_status or "free",
             availability_text=u.availability_text,
             availability_updated_at=u.availability_updated_at,
+            is_admin=bool(getattr(u, "is_admin", False)),
         )
         for u in rows[:limit]
     ]
@@ -66,4 +67,5 @@ def update_my_status(
         availability_status=user.availability_status,
         availability_text=user.availability_text,
         availability_updated_at=user.availability_updated_at,
+        is_admin=bool(getattr(user, "is_admin", False)),
     )

@@ -33,6 +33,9 @@ class User(Base, TimestampMixin):
     availability_status: Mapped[str] = mapped_column(String(16), default="free", nullable=False)
     availability_text: Mapped[Optional[str]] = mapped_column(String(128))
     availability_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    # Admin flag — when True, `permissions.can_*` checks short-circuit to True.
+    # Set via `python scripts/set_admin.py <nickname>` or the YQGL_ADMIN_NICKNAMES env var.
+    is_admin: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
 
 
 class ClientDevice(Base, TimestampMixin):
