@@ -1,15 +1,21 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from auth import current_user
 from db import get_db
 from models import User
 from schemas import UserOut, UserStatusUpdateIn
+from services.permissions import is_admin
 from services.presence import get_presence_map
 
 router = APIRouter(prefix="/api", tags=["users"])
+
+
+class _AdminPatchIn(BaseModel):
+    is_admin: bool
 
 
 @router.get("/users", response_model=list[UserOut])
@@ -68,4 +74,38 @@ def update_my_status(
         availability_text=user.availability_text,
         availability_updated_at=user.availability_updated_at,
         is_admin=bool(getattr(user, "is_admin", False)),
+    )
+
+
+@router.put("/users/{user_id}/admin", response_model=UserOut)
+def set_user_admin(
+    user_id: str,
+    payload: _AdminPatchIn,
+    db: Session = Depends(get_db),
+    actor: User = Depends(current_user),
+) -> UserOut:
+    """Grant or revoke admin. Admin-only. Refuses to revoke the last
+    remaining admin so the install can't be locked out."""
+    if not is_admin(actor):
+        raise HTTPException(status_code=403, detail="only admins can change admin status")
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="user not found")
+    if not payload.is_admin and target.is_admin:
+        remaining = db.query(User).filter(User.is_admin == True, User.id != user_id).count()  # noqa: E712
+        if remaining == 0:
+            raise HTTPException(status_code=400, detail="cannot revoke the last admin")
+    target.is_admin = payload.is_admin
+    db.commit()
+    db.refresh(target)
+    presence = get_presence_map([target.id])[target.id]
+    return UserOut(
+        id=target.id,
+        nickname=target.nickname,
+        is_online=presence.is_online,
+        last_seen_at=presence.last_seen_at,
+        availability_status=target.availability_status or "free",
+        availability_text=target.availability_text,
+        availability_updated_at=target.availability_updated_at,
+        is_admin=bool(target.is_admin),
     )

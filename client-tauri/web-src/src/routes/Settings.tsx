@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Input, Switch, toast, useTheme, type ThemeMode } from "@yqgl/shared";
 import { invoke } from "@/lib/tauri";
+import { AdminPanel } from "@/components/AdminPanel";
 
 type Cfg = any;
 
@@ -161,6 +162,9 @@ export function Settings() {
           <div>配置文件：%APPDATA%\\yqgl\\config.json</div>
         </div>
       </Card>
+
+      {/* AdminPanel returns null for non-admins, so this is invisible to most. */}
+      <AdminPanel />
     </div>
   );
 }

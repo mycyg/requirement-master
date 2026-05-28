@@ -116,6 +116,11 @@ pub fn run() {
             commands::submitter::open_spec_folder,
             commands::submitter::list_drive_root,
             commands::submitter::upload_drive_item,
+            commands::submitter::finalize_and_submit,
+            commands::submitter::delete_requirement,
+            commands::submitter::set_user_admin,
+            commands::submitter::create_project,
+            commands::submitter::delete_project,
         ])
         .run(tauri::generate_context!())
         .expect("error while running yqgl client");

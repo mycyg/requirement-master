@@ -64,6 +64,11 @@ def get_project(project_id: str, db: Session = Depends(get_db), _: User = Depend
 
 
 def _require_owner(p: Project, user: User) -> None:
+    # Admin override — global admins manage any project so a single person
+    # can clean up after teammates who left or mis-named slugs.
+    from services.permissions import is_admin  # local import to avoid cycle
+    if is_admin(user):
+        return
     if p.owner_nickname != user.nickname:
         raise HTTPException(status_code=403, detail="only the project owner can change project state")
 

@@ -32,6 +32,8 @@ import os
 # Two NICs on the same prod box: 0.224 (LAN) and 5.53 (separate subnet). Either
 # works; override with YQGL_BASE if the route to one is flaky.
 BASE = os.environ.get("YQGL_BASE", "http://192.168.5.53:8080")
+# Make all base_url+timeouts more lenient since prod is on a flaky NIC.
+TIMEOUT = 60
 CHUNK_SIZE = 5 * 1024 * 1024
 
 
@@ -135,35 +137,18 @@ def main() -> int:
         att_id = upload_attachment(sc, req_id, s_tok, big, "e2e-spec.bin")
         print(f"   → attachment {att_id[:8]}…  ({len(big)} bytes)")
 
+        print("== finalize-summary (skip AI clarification, brand new endpoint) ==")
+        r = sc.post(f"/api/requirements/{req_id}/finalize-summary",
+                    json={},  # let backend derive summary from raw_description
+                    headers={"X-YQGL-Client-Token": s_tok})
+        r.raise_for_status()
+        print(f"   → status = {r.json().get('status')}  (should be summary_ready)")
+
         print("== submit_requirement ==")
-        # The /submit endpoint only accepts requirements in `summary_ready` state.
-        # Reaching that state requires AI clarification (clarifying → summary_ready)
-        # which is its own multi-turn flow not exercised here. So we PATCH the
-        # status directly via the submitter's allowed transition path:
-        # draft → clarifying.  If the server lets us write a summary directly,
-        # we'll also do that; otherwise we just log the gap.
-        r = sc.patch(f"/api/requirements/{req_id}/status",
-                     json={"status": "clarifying"},
-                     headers={"X-YQGL-Client-Token": s_tok})
-        if r.status_code == 200:
-            print(f"   → moved draft → clarifying (next: AI clarification, then submit)")
-        else:
-            print(f"   → PATCH status returned {r.status_code} ({r.text[:80]}); not a regression "
-                  "— the AI-clarification chain is owned by the web client.")
-        # Attempt the submit anyway so we exercise the endpoint shape.
         r = sc.post(f"/api/requirements/{req_id}/submit",
                     headers={"X-YQGL-Client-Token": s_tok})
-        if r.status_code == 400:
-            print(f"   → submit returned 400 (expected — requires summary_ready state). "
-                  "The endpoint itself is reachable and auth-gated correctly.")
-        else:
-            r.raise_for_status()
-            print(f"   → submit OK, status = {r.json().get('status')}")
-        # The downstream claim → deliver → accept chain requires a `ready` state,
-        # which we don't have. Skip the rest cleanly.
-        print("\n[short-circuit] claim/deliver/accept require summary_ready→ready; that needs the AI"
-              " clarification flow (web client owns it). The submitter-side endpoints all reachable.")
-        return 0
+        r.raise_for_status()
+        print(f"   → status = {r.json().get('status')}")
 
     # === Claimant session ===
     with httpx.Client(base_url=BASE, timeout=30) as cc:

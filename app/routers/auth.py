@@ -18,6 +18,7 @@ class IdentifyOut(BaseModel):
     id: str
     nickname: str
     created: bool
+    is_admin: bool = False
 
 
 @router.post("/identify", response_model=IdentifyOut)
@@ -28,14 +29,20 @@ def identify(payload: IdentifyIn, response: Response, db: Session = Depends(get_
     user, created = get_or_create_user(db, nickname)
     db.commit()
     issue_cookie(response, user)
-    return IdentifyOut(id=user.id, nickname=user.nickname, created=created)
+    return IdentifyOut(
+        id=user.id, nickname=user.nickname, created=created,
+        is_admin=bool(getattr(user, "is_admin", False)),
+    )
 
 
 @router.get("/me", response_model=IdentifyOut | None)
 def me(user: User | None = Depends(optional_current_user)) -> IdentifyOut | None:
     if user is None:
         return None
-    return IdentifyOut(id=user.id, nickname=user.nickname, created=False)
+    return IdentifyOut(
+        id=user.id, nickname=user.nickname, created=False,
+        is_admin=bool(getattr(user, "is_admin", False)),
+    )
 
 
 @router.post("/logout")

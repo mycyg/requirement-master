@@ -128,6 +128,90 @@ pub async fn submit_requirement(
         .json().await?)
 }
 
+/// Composite: finalize the summary (so backend will accept submit) then submit.
+/// This is what the wizard's "立即投递" button calls — skips the AI clarification
+/// chat because the wizard already collected structured info.
+#[tauri::command]
+pub async fn finalize_and_submit(
+    state: State<'_, ConfigState>,
+    req_id: String,
+    summary_md: Option<String>,
+    title: Option<String>,
+) -> Result<serde_json::Value> {
+    let client = http::client(&state);
+
+    let fin_url = http::url(&state, &format!("/api/requirements/{req_id}/finalize-summary"));
+    http::with_auth(client.post(&fin_url), &state)
+        .json(&serde_json::json!({ "summary_md": summary_md, "title": title }))
+        .send().await?
+        .error_for_status()?;
+
+    let submit_url = http::url(&state, &format!("/api/requirements/{req_id}/submit"));
+    Ok(http::with_auth(client.post(&submit_url), &state)
+        .send().await?
+        .error_for_status()?
+        .json().await?)
+}
+
+#[tauri::command]
+pub async fn delete_requirement(
+    state: State<'_, ConfigState>,
+    req_id: String,
+) -> Result<()> {
+    let client = http::client(&state);
+    let url = http::url(&state, &format!("/api/requirements/{req_id}"));
+    http::with_auth(client.delete(&url), &state)
+        .send().await?
+        .error_for_status()?;
+    Ok(())
+}
+
+// ---------- G. Admin (managed-by-小光) ----------
+
+#[tauri::command]
+pub async fn set_user_admin(
+    state: State<'_, ConfigState>,
+    user_id: String,
+    is_admin: bool,
+) -> Result<serde_json::Value> {
+    let client = http::client(&state);
+    let url = http::url(&state, &format!("/api/users/{user_id}/admin"));
+    Ok(http::with_auth(client.put(&url), &state)
+        .json(&serde_json::json!({ "is_admin": is_admin }))
+        .send().await?
+        .error_for_status()?
+        .json().await?)
+}
+
+#[tauri::command]
+pub async fn create_project(
+    state: State<'_, ConfigState>,
+    name: String,
+    slug: String,
+    description: Option<String>,
+) -> Result<serde_json::Value> {
+    let client = http::client(&state);
+    let url = http::url(&state, "/api/projects");
+    Ok(http::with_auth(client.post(&url), &state)
+        .json(&serde_json::json!({ "name": name, "slug": slug, "description": description }))
+        .send().await?
+        .error_for_status()?
+        .json().await?)
+}
+
+#[tauri::command]
+pub async fn delete_project(
+    state: State<'_, ConfigState>,
+    project_id: String,
+) -> Result<serde_json::Value> {
+    let client = http::client(&state);
+    let url = http::url(&state, &format!("/api/projects/{project_id}"));
+    Ok(http::with_auth(client.delete(&url), &state)
+        .send().await?
+        .error_for_status()?
+        .json().await?)
+}
+
 // ---------- F. Project Drive (shared per-project files) ----------
 
 #[tauri::command]

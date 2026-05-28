@@ -11,6 +11,8 @@ pub struct Identity {
     pub nickname: String,
     #[serde(default)]
     pub created: bool,
+    #[serde(default)]
+    pub is_admin: bool,
 }
 
 #[tauri::command]

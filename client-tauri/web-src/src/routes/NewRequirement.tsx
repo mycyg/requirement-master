@@ -19,6 +19,7 @@ import { FileAttachRail } from "@/components/FileAttachRail";
 type Priority = "low" | "normal" | "high" | "urgent";
 
 const STEPS: Step[] = [
+  { key: "project",  label: "归属项目" },
   { key: "desc",     label: "想说的事" },
   { key: "assignee", label: "谁来做" },
   { key: "due",      label: "截止时间" },
@@ -74,12 +75,11 @@ export function NewRequirement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Step indices: 0=项目, 1=描述, 2=谁来做, 3=截止, 4=附件, 5=投递
   const validateStep = (): string | null => {
-    if (step === 0) {
-      if (!projectId) return "先选一个项目。";
-      if (!desc.trim()) return "至少写一句你想做的事。";
-    }
-    if (step === 2 && !dueAt) return "截止时间是这件事存在的前提，请先填。";
+    if (step === 0 && !projectId) return "先选一个项目。";
+    if (step === 1 && !desc.trim()) return "至少写一句你想做的事。";
+    if (step === 3 && !dueAt) return "截止时间是这件事存在的前提，请先填。";
     return null;
   };
 
@@ -90,7 +90,7 @@ export function NewRequirement() {
 
     // Create the draft once we cross the "due date" step — that's when we
     // have all the required fields for a `draft` requirement on the backend.
-    if (step === 2 && !reqId) {
+    if (step === 3 && !reqId) {
       setBusy(true);
       try {
         const body: Record<string, unknown> = {
@@ -124,7 +124,14 @@ export function NewRequirement() {
     if (!reqId) { setErr("草稿还没建好。"); return; }
     setBusy(true);
     try {
-      await invoke("submit_requirement", { reqId });
+      // Composite endpoint: finalize summary (skip AI clarification) +
+      // submit. We pass the description as the summary so the card title /
+      // body are sensible without a round-trip to the LLM.
+      await invoke("finalize_and_submit", {
+        reqId,
+        summaryMd: desc.trim() || null,
+        title: desc.trim().split(/\r?\n/)[0]?.slice(0, 40) || null,
+      });
       toast({ title: "已投递", description: "等接单人接走，会在「投递池」里看到。", tone: "success" });
       nav(`/r/${reqId}`);
     } catch (e: any) {
@@ -149,35 +156,54 @@ export function NewRequirement() {
         <Card variant="glass" padding="lg" className="anim-fade-up">
           {step === 0 && (
             <div className="space-y-4">
-              <div>
-                <label className="text-eyebrow text-ink-muted block mb-2">
-                  <FolderKanban className="inline h-3.5 w-3.5 mr-1" />
-                  归属项目
-                </label>
-                {projects === null ? (
-                  <div className="text-body-sm text-ink-faint">项目列表加载中…</div>
-                ) : projects.length === 0 ? (
-                  <div className="text-body-sm text-error">你还没加入任何项目。</div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {projects.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => setProjectId(p.id)}
-                        className={`h-8 px-3 rounded-sm text-body-sm transition ${
-                          projectId === p.id
-                            ? "bg-accent text-white"
-                            : "glass-quiet text-ink-soft hover:text-ink hover:bg-accent-soft/60"
-                        }`}
-                      >
-                        {p.name}
-                      </button>
-                    ))}
+              <p className="text-body-sm text-ink-muted">
+                <FolderKanban className="inline h-4 w-4 mr-1 text-ink-faint" />
+                这个需求归属哪个项目？接单人会看到这个项目的标签和归档目录。
+              </p>
+              {projects === null ? (
+                <div className="text-body-sm text-ink-faint">项目列表加载中…</div>
+              ) : projects.length === 0 ? (
+                <div className="glass-sunken p-4">
+                  <div className="text-body-sm text-ink">你还没加入任何项目。</div>
+                  <div className="text-caption text-ink-muted mt-1">
+                    找管理员把你加进项目，或者你自己是管理员的话去「设置 → 管理员」新建一个。
                   </div>
-                )}
-              </div>
+                </div>
+              ) : (
+                <div className="grid sm:grid-cols-2 gap-2">
+                  {projects.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setProjectId(p.id)}
+                      className={`flex items-center gap-3 h-14 px-4 rounded-md text-left transition ${
+                        projectId === p.id
+                          ? "bg-accent text-white shadow-2"
+                          : "glass-quiet text-ink hover:bg-accent-soft/60"
+                      }`}
+                    >
+                      <div className={`grid h-8 w-8 shrink-0 place-items-center rounded-sm ${
+                        projectId === p.id ? "bg-white/20" : "bg-accent-soft text-accent"
+                      }`}>
+                        <FolderKanban className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className={`text-body-sm font-medium truncate ${projectId === p.id ? "text-white" : "text-ink"}`}>
+                          {p.name}
+                        </div>
+                        <div className={`text-caption truncate ${projectId === p.id ? "text-white/80" : "text-ink-muted"}`}>
+                          {p.slug}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
+          {step === 1 && (
+            <div className="space-y-4">
               <div>
                 <label className="text-eyebrow text-ink-muted block mb-2">想说的事</label>
                 <Textarea
@@ -212,7 +238,7 @@ export function NewRequirement() {
             </div>
           )}
 
-          {step === 1 && (
+          {step === 2 && (
             <div className="space-y-3">
               <p className="text-body-sm text-ink-muted">
                 <Users className="inline h-4 w-4 mr-1 text-ink-faint" />
@@ -229,7 +255,7 @@ export function NewRequirement() {
             </div>
           )}
 
-          {step === 2 && (
+          {step === 3 && (
             <div className="space-y-4">
               <p className="text-body-sm text-ink-muted">
                 <CalendarClock className="inline h-4 w-4 mr-1 text-ink-faint" />
@@ -282,7 +308,7 @@ export function NewRequirement() {
             </div>
           )}
 
-          {step === 3 && (
+          {step === 4 && (
             <div className="space-y-3">
               <p className="text-body-sm text-ink-muted">
                 <Paperclip className="inline h-4 w-4 mr-1 text-ink-faint" />
@@ -298,7 +324,7 @@ export function NewRequirement() {
             </div>
           )}
 
-          {step === 4 && (
+          {step === 5 && (
             <div className="space-y-4 text-center">
               <div className="grid h-12 w-12 mx-auto place-items-center rounded-full bg-accent-soft text-accent">
                 <Rocket className="h-5 w-5" />
@@ -324,7 +350,7 @@ export function NewRequirement() {
             </div>
           )}
 
-          {step < 4 && (
+          {step < 5 && (
             <div className="mt-6 flex items-center justify-between">
               <Button
                 variant="secondary"
@@ -340,12 +366,12 @@ export function NewRequirement() {
                 loading={busy}
                 rightIcon={!busy ? <ArrowRight className="h-4 w-4" /> : undefined}
               >
-                {step === 2 && !reqId ? "保存并继续" : "下一步"}
+                {step === 3 && !reqId ? "保存并继续" : "下一步"}
               </Button>
             </div>
           )}
 
-          {step === 4 && reqId && (
+          {step === 5 && reqId && (
             <div className="mt-6 flex items-center">
               <Button
                 variant="ghost"
