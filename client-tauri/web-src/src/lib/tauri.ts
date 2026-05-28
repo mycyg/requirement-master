@@ -9,6 +9,12 @@ function isTauri(): boolean {
 }
 
 export async function invoke<T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  // E2E hook: a playwright spec or storybook can install `__YQGL_MOCK_INVOKE__`
+  // on window to short-circuit the real IPC. Production code never sets it.
+  const mock = (window as any).__YQGL_MOCK_INVOKE__;
+  if (typeof mock === "function") {
+    return mock(cmd, args) as Promise<T>;
+  }
   if (!isTauri()) {
     throw new Error(`invoke('${cmd}') called outside Tauri runtime`);
   }

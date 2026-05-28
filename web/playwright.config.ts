@@ -30,7 +30,10 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
-  webServer: [
+  // Set YQGL_USE_REMOTE=1 to skip the locally-launched uvicorn + vite servers
+  // (useful when the spec targets the prod backend at 192.168.0.224 and/or
+  // a separately-started client vite at 5174).
+  webServer: process.env.YQGL_USE_REMOTE === "1" ? [] : [
     {
       command: `python -m uvicorn main:app --app-dir app --host 127.0.0.1 --port ${apiPort}`,
       cwd: rootDir,

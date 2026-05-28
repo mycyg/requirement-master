@@ -104,39 +104,32 @@ export function App() {
   return (
     <div className="flex flex-col h-screen">
       <TitleBar sseConnected={sseConnected} />
-      <Routes>
-        {needsOnboarding ? (
-          <>
-            <Route path="/onboarding" element={<Onboarding />} />
-            <Route path="*" element={<Navigate to="/onboarding" replace />} />
-          </>
-        ) : (
-          <>
-            <Route
-              path="/*"
-              element={
-                <div className="flex flex-1 min-h-0">
-                  <Sidebar />
-                  <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-                    <Routes>
-                      <Route path="/" element={<Hub />} />
-                      <Route path="/r/:id" element={<TaskDetail />} />
-                      <Route path="/inbox" element={<Inbox />} />
-                      <Route path="/settings" element={<Settings />} />
-                      <Route path="/me/workload" element={<MyWorkload />} />
-                      <Route path="/me/knowledge" element={<Knowledge />} />
-                      <Route path="/me/pulse" element={<ProjectPulse />} />
-                      <Route path="/me/calendar" element={<Calendar />} />
-                      <Route path="/onboarding" element={<Navigate to="/" replace />} />
-                      <Route path="*" element={<Navigate to="/" replace />} />
-                    </Routes>
-                  </div>
-                </div>
-              }
-            />
-          </>
-        )}
-      </Routes>
+      {needsOnboarding ? (
+        <Routes>
+          <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="*" element={<Navigate to="/onboarding" replace />} />
+        </Routes>
+      ) : (
+        // Flat routing avoids the v6 "nested <Routes> under /*" pitfall
+        // where the child Routes re-match the full pathname.
+        <div className="flex flex-1 min-h-0">
+          <Sidebar />
+          <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+            <Routes>
+              <Route path="/" element={<Hub />} />
+              <Route path="/r/:id" element={<TaskDetail />} />
+              <Route path="/inbox" element={<Inbox />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/me/workload" element={<MyWorkload />} />
+              <Route path="/me/knowledge" element={<Knowledge />} />
+              <Route path="/me/pulse" element={<ProjectPulse />} />
+              <Route path="/me/calendar" element={<Calendar />} />
+              <Route path="/onboarding" element={<Navigate to="/" replace />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </div>
+        </div>
+      )}
       <ToastHost />
     </div>
   );
