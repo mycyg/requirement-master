@@ -73,9 +73,17 @@ def create_notification(
 
 
 async def publish_notification(row: Notification) -> None:
+    """Publish ONLY to the recipient user's private channel. Earlier code
+    fanned out to the global `all` topic too — but every client subscribed
+    to `all` then received every notification with title + body + actor
+    nickname for every user in the org. Cross-user information disclosure
+    over an SSE connection that's hard to spot in devtools logs.
+
+    Clients now subscribe to `/api/push/stream/me` (cookie-scoped) to
+    receive their own notifications, separately from the global
+    `/api/push/stream` which carries non-PII requirement.* events."""
     payload = notification_out(row).model_dump(mode="json")
     await bus.publish(f"user:{row.user_id}", "notification.created", payload)
-    await bus.publish("all", "notification.created", {"user_id": row.user_id, **payload})
 
 
 async def notify_users(db: Session, users: list[User], **kwargs) -> list[Notification]:

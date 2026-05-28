@@ -46,8 +46,12 @@ export function FileAttachRail({ reqId }: { reqId: string }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Subscribe to chunk-upload progress events.
+  // Subscribe to chunk-upload progress events. The `alive` flag protects
+  // against the case where the component unmounts BEFORE `listen` resolves —
+  // without it the listener would register after cleanup ran and never be
+  // disposed (subscription leak across navigations).
   useEffect(() => {
+    let alive = true;
     let off: (() => void) | undefined;
     listen<UploadProgress>("upload-progress", (p) => {
       if (p.req_id !== reqId) return;
@@ -56,8 +60,10 @@ export function FileAttachRail({ reqId }: { reqId: string }) {
         setProgress(null);
         refresh();
       }
-    }).then((d) => { off = d; });
-    return () => { if (off) off(); };
+    }).then((d) => {
+      if (!alive) d(); else off = d;
+    });
+    return () => { alive = false; if (off) off(); };
   }, [reqId, refresh]);
 
   const pickAndUpload = async () => {

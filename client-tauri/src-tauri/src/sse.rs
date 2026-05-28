@@ -1,6 +1,15 @@
-//! SSE long-connection with exponential backoff. Forwards every event to the
-//! frontend as a single `push-event` payload `{ event: string, data: any }`.
+//! SSE long-connections with exponential backoff. Two streams in parallel:
+//!  - `/api/push/stream`        — global non-PII (requirement.ready/.updated)
+//!  - `/api/push/stream/me`     — cookie-scoped, only this user's notifications
+//!
+//! Both forward into a single `push-event` Tauri event so the React side
+//! doesn't have to care which channel it came from. Earlier code subscribed
+//! only to the global topic — combined with the backend's prior fan-out of
+//! notifications to `"all"`, every client received every user's
+//! notifications. Splitting now means a curl on `/stream` (anyone) only
+//! sees the org-wide non-PII feed.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -17,85 +26,114 @@ pub struct PushEvent {
     pub data: serde_json::Value,
 }
 
-pub fn spawn(app: AppHandle, state: std::sync::Arc<ConfigState>) -> oneshot::Sender<()> {
+pub fn spawn(app: AppHandle, state: Arc<ConfigState>) -> oneshot::Sender<()> {
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
 
+    // We want a single stop signal to cancel both streams. Wrap stop_rx in
+    // an Arc<Mutex<>> so both tasks can poll it. Cleaner: have the outer
+    // task hold stop_rx and abort the child tasks on stop.
     tauri::async_runtime::spawn(async move {
-        let mut backoff_ms: u64 = 1000;
+        let app1 = app.clone();
+        let state1 = state.clone();
+        let global_handle = tauri::async_runtime::spawn(async move {
+            run_stream(&app1, &state1, "/api/push/stream", true).await;
+        });
+        let app2 = app.clone();
+        let state2 = state.clone();
+        let user_handle = tauri::async_runtime::spawn(async move {
+            run_stream(&app2, &state2, "/api/push/stream/me", false).await;
+        });
+
+        // Wait for stop signal or either task ending (which shouldn't
+        // happen — they loop forever).
+        let _ = stop_rx.try_recv(); // initial flush
         loop {
-            // Allow caller-side abort.
             if stop_rx.try_recv().is_ok() {
-                break;
+                global_handle.abort();
+                user_handle.abort();
+                return;
             }
-
-            let url = http::url(&state, "/api/push/stream");
-            let client = http::client(&state);
-
-            let resp = http::with_auth(client.get(&url), &state).send().await;
-            match resp {
-                Err(e) => {
-                    tracing::warn!("sse connect failed: {e}");
-                    let _ = app.emit("sse-status", serde_json::json!({"status": "disconnected"}));
-                }
-                Ok(r) if !r.status().is_success() => {
-                    tracing::warn!("sse status {}", r.status());
-                }
-                Ok(r) => {
-                    let _ = app.emit("sse-status", serde_json::json!({"status": "connected"}));
-                    backoff_ms = 1000;
-                    let mut stream = r.bytes_stream();
-                    let mut buf = String::new();
-                    let mut event_name = String::new();
-                    let mut data_buf = String::new();
-
-                    while let Some(chunk) = stream.next().await {
-                        if stop_rx.try_recv().is_ok() {
-                            return;
-                        }
-                        let bytes = match chunk {
-                            Ok(b) => b,
-                            Err(e) => {
-                                tracing::warn!("sse chunk err: {e}");
-                                break;
-                            }
-                        };
-                        if let Ok(piece) = std::str::from_utf8(&bytes) {
-                            buf.push_str(piece);
-                        }
-                        while let Some(nl) = buf.find('\n') {
-                            let line = buf[..nl].to_string();
-                            buf.drain(..=nl);
-                            let line = line.trim_end_matches('\r');
-                            if line.is_empty() {
-                                if !event_name.is_empty() {
-                                    let value: serde_json::Value = serde_json::from_str(&data_buf)
-                                        .unwrap_or_else(|_| serde_json::Value::String(data_buf.clone()));
-                                    let _ = app.emit(
-                                        "push-event",
-                                        PushEvent { event: event_name.clone(), data: value },
-                                    );
-                                }
-                                event_name.clear();
-                                data_buf.clear();
-                            } else if let Some(rest) = line.strip_prefix("event:") {
-                                event_name = rest.trim().to_string();
-                            } else if let Some(rest) = line.strip_prefix("data:") {
-                                if !data_buf.is_empty() {
-                                    data_buf.push('\n');
-                                }
-                                data_buf.push_str(rest.trim());
-                            }
-                        }
-                    }
-                    let _ = app.emit("sse-status", serde_json::json!({"status": "disconnected"}));
-                }
-            }
-
-            // Exponential backoff capped at 30s
-            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
-            backoff_ms = (backoff_ms * 2).min(30_000);
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
     });
 
     stop_tx
+}
+
+/// Connects to `path` and forwards SSE events as Tauri push-event emits.
+/// `emit_connection_status` controls whether sse-status events fire (only
+/// the global stream does, so we don't double-flash the title bar dot).
+async fn run_stream(app: &AppHandle, state: &Arc<ConfigState>, path: &str, emit_connection_status: bool) {
+    let mut backoff_ms: u64 = 1000;
+    loop {
+        let url = http::url(state, path);
+        let client = http::client(state);
+
+        let resp = http::with_auth(client.get(&url), state).send().await;
+        match resp {
+            Err(e) => {
+                tracing::warn!("sse {path} connect failed: {e}");
+                if emit_connection_status {
+                    let _ = app.emit("sse-status", serde_json::json!({"status": "disconnected"}));
+                }
+            }
+            Ok(r) if !r.status().is_success() => {
+                tracing::warn!("sse {path} status {}", r.status());
+            }
+            Ok(r) => {
+                if emit_connection_status {
+                    let _ = app.emit("sse-status", serde_json::json!({"status": "connected"}));
+                }
+                backoff_ms = 1000;
+                let mut stream = r.bytes_stream();
+                let mut buf = String::new();
+                let mut event_name = String::new();
+                let mut data_buf = String::new();
+
+                while let Some(chunk) = stream.next().await {
+                    let bytes = match chunk {
+                        Ok(b) => b,
+                        Err(e) => {
+                            tracing::warn!("sse {path} chunk err: {e}");
+                            break;
+                        }
+                    };
+                    if let Ok(piece) = std::str::from_utf8(&bytes) {
+                        buf.push_str(piece);
+                    }
+                    while let Some(nl) = buf.find('\n') {
+                        let line = buf[..nl].to_string();
+                        buf.drain(..=nl);
+                        let line = line.trim_end_matches('\r');
+                        if line.is_empty() {
+                            if !event_name.is_empty() {
+                                let value: serde_json::Value = serde_json::from_str(&data_buf)
+                                    .unwrap_or_else(|_| serde_json::Value::String(data_buf.clone()));
+                                let _ = app.emit(
+                                    "push-event",
+                                    PushEvent { event: event_name.clone(), data: value },
+                                );
+                            }
+                            event_name.clear();
+                            data_buf.clear();
+                        } else if let Some(rest) = line.strip_prefix("event:") {
+                            event_name = rest.trim().to_string();
+                        } else if let Some(rest) = line.strip_prefix("data:") {
+                            if !data_buf.is_empty() {
+                                data_buf.push('\n');
+                            }
+                            data_buf.push_str(rest.trim());
+                        }
+                    }
+                }
+                if emit_connection_status {
+                    let _ = app.emit("sse-status", serde_json::json!({"status": "disconnected"}));
+                }
+            }
+        }
+
+        // Exponential backoff capped at 30s
+        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+        backoff_ms = (backoff_ms * 2).min(30_000);
+    }
 }

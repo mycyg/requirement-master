@@ -157,6 +157,12 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
                 submitted_by_nickname=f"AI ({settings.llm_model})",
             )
             db.add(d)
+            # If the requirement got cancelled while AI was running,
+            # don't clobber it back to delivered. Allowed transitions
+            # from `ai_processing` are only `cancelled` — anything else
+            # means a race / manual intervention we shouldn't overwrite.
+            if r.status != "ai_processing":
+                return
             r.status = "delivered"
             r.delivered_at = datetime.utcnow()
             r.delivery_doc_ready_at = r.delivered_at

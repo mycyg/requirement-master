@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from auth import current_user
+from auth import current_user, forget_user_cookie
 from db import get_db
 from models import User
 from schemas import UserOut, UserStatusUpdateIn
@@ -89,17 +89,28 @@ def delete_user(
     """Admin-only soft-delete (sets `deleted_at`). Hard-delete would raise
     IntegrityError because ~15 tables reference users.id without ondelete
     cascade — by design, since users own historical work that shouldn't
-    disappear. Refuses to delete self (to avoid lockout) and the last admin.
-    Also revokes admin and any active client devices so the user can't keep
-    using the system through a cached session."""
+    disappear.
+
+    Hardening to make soft-delete actually mean something:
+      - refuse if actor == target (lockout protection)
+      - refuse if target is the last live admin (lockout protection)
+      - drop the admin flag (so set_user_admin can't trivially restore)
+      - rotate cookie_token so all outstanding browser sessions become
+        invalid immediately (without this, the user's open tabs keep
+        working until cookie expiry)
+      - tombstone the nickname (prefix `_deleted_<id8>_`) so a new person
+        with the same name can identify cleanly; the old user can never
+        re-identify because get_or_create_user filters deleted_at
+      - revoke all ClientDevice rows (kills worker-token auth)
+    """
     from datetime import datetime
     from models import ClientDevice
     if not is_admin(actor):
         raise HTTPException(status_code=403, detail="only admins can delete users")
     if user_id == actor.id:
         raise HTTPException(status_code=400, detail="cannot delete yourself")
-    target = db.query(User).filter(User.id == user_id).first()
-    if not target or target.deleted_at is not None:
+    target = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
+    if not target:
         raise HTTPException(status_code=404, detail="user not found")
     if target.is_admin:
         remaining = db.query(User).filter(
@@ -109,7 +120,11 @@ def delete_user(
             raise HTTPException(status_code=400, detail="cannot delete the last admin")
     target.deleted_at = datetime.utcnow()
     target.is_admin = False
-    # Revoke all devices so future requests fail auth.
+    # Free the original nickname so a new person with the same name can
+    # identify. 64-char column → truncate prefix conservatively.
+    suffix = f"_deleted_{target.id[:8]}_"
+    target.nickname = (suffix + target.nickname)[:64]
+    forget_user_cookie(db, target)  # rotate cookie_token
     db.query(ClientDevice).filter(
         ClientDevice.user_id == user_id, ClientDevice.revoked_at.is_(None),
     ).update({"revoked_at": datetime.utcnow()})
@@ -124,14 +139,17 @@ def set_user_admin(
     actor: User = Depends(current_user),
 ) -> UserOut:
     """Grant or revoke admin. Admin-only. Refuses to revoke the last
-    remaining admin so the install can't be locked out."""
+    remaining admin so the install can't be locked out. Refuses to act
+    on soft-deleted users — otherwise admin could resurrect them."""
     if not is_admin(actor):
         raise HTTPException(status_code=403, detail="only admins can change admin status")
-    target = db.query(User).filter(User.id == user_id).first()
+    target = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
     if not target:
         raise HTTPException(status_code=404, detail="user not found")
     if not payload.is_admin and target.is_admin:
-        remaining = db.query(User).filter(User.is_admin == True, User.id != user_id).count()  # noqa: E712
+        remaining = db.query(User).filter(
+            User.is_admin == True, User.id != user_id, User.deleted_at.is_(None),  # noqa: E712
+        ).count()
         if remaining == 0:
             raise HTTPException(status_code=400, detail="cannot revoke the last admin")
     target.is_admin = payload.is_admin

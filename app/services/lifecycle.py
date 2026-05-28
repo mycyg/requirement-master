@@ -116,10 +116,24 @@ def queue_status_notifications(
     if not recipients:
         return []
 
+    # Substitute via str.replace, NOT str.format — a nickname or title
+    # containing "{" (e.g. an attacker tries to claim the nickname
+    # "{actor.__class__}") would otherwise crash with KeyError or worse
+    # leak attribute access. .replace is dumb and safe.
     label = req.title or req.code
-    fmt = {"code": req.code, "title": req.title or "", "label": label, "actor": actor.nickname}
-    title = spec["title"].format(**fmt)
-    body = spec["body"].format(**fmt)
+    subs = [
+        ("{code}", req.code),
+        ("{title}", req.title or ""),
+        ("{label}", label),
+        ("{actor}", actor.nickname),
+    ]
+    def render(tpl: str) -> str:
+        out = tpl
+        for needle, value in subs:
+            out = out.replace(needle, value)
+        return out
+    title = render(spec["title"])
+    body = render(spec["body"])
 
     rows: list[Notification] = []
     for target in recipients:
