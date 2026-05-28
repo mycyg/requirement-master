@@ -16,7 +16,45 @@ import { MyWorkload } from "@/routes/MyWorkload";
 import { Knowledge } from "@/routes/Knowledge";
 import { ProjectPulse } from "@/routes/ProjectPulse";
 import { Calendar } from "@/routes/Calendar";
-import { invoke, useEvent, isTauri } from "@/lib/tauri";
+import { invoke, useEvent, isTauri, clientFetch } from "@/lib/tauri";
+
+/**
+ * Fire a Windows / OS-level toast through the Tauri notification plugin.
+ * Silently falls back to nothing in browser dev. Permission is requested
+ * once per process — the plugin caches the answer.
+ */
+/**
+ * Sync the tray tooltip with the current unread notification count so the
+ * user knows there's something waiting even with the main window hidden.
+ */
+async function refreshUnreadBadge(): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const rows = await clientFetch("/api/notifications?status=unread").then((r) => r.json());
+    const count = Array.isArray(rows) ? rows.length : 0;
+    await invoke("update_tray_unread", { count });
+  } catch {
+    /* ignore — badge is best-effort */
+  }
+}
+
+async function osNotify(title: string, body: string): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const mod = await import("@tauri-apps/plugin-notification");
+    let granted = await mod.isPermissionGranted();
+    if (!granted) {
+      const p = await mod.requestPermission();
+      granted = p === "granted";
+    }
+    if (granted) {
+      await mod.sendNotification({ title, body });
+    }
+  } catch (e) {
+    // No-op — system notifications are nice-to-have, not load-bearing.
+    console.warn("osNotify failed", e);
+  }
+}
 
 /**
  * Routes `/` to either HubWork (接活 / claimant view) or HubDispatch
@@ -107,21 +145,51 @@ export function App() {
     }
   });
 
+  // Bridge SSE push events to BOTH an in-app toast AND a Windows system
+  // notification (right-bottom desktop popup) — submitters specifically
+  // need the OS notification because they often have the window minimized
+  // while waiting for someone to deliver.
   useEvent<any>("push-event", (p) => {
     if (p?.event === "requirement.ready") {
+      const title = `新工单来了 ${p.data?.code ?? ""}`;
+      const body = p.data?.title ?? "";
       toast({
-        title: `新工单来了 ${p.data?.code ?? ""}`,
-        description: p.data?.title ?? "",
-        tone: "accent",
+        title, description: body, tone: "accent",
         action: p.data?.requirement_id ? {
           label: "去看看",
           onClick: () => nav(`/r/${p.data.requirement_id}`),
         } : undefined,
       });
+      osNotify(title, body);
     } else if (p?.event === "delivery.doc_ready") {
       toast({ title: "AI 助理写完交付文档了", tone: "success" });
+      osNotify("AI 助理写完交付文档了", "可以查验交付物了");
     }
   });
+
+  // notification.created is per-user; fires the moment the backend creates
+  // a notification (e.g. submitter's requirement got claimed/delivered).
+  useEvent<any>("push-event", (p) => {
+    if (p?.event !== "notification.created") return;
+    const { title, body, severity, requirement_id } = p.data || {};
+    if (!title) return;
+    toast({
+      title, description: body, tone: severity === "high" ? "accent" : "info",
+      action: requirement_id ? {
+        label: "去看看",
+        onClick: () => nav(`/r/${requirement_id}`),
+      } : undefined,
+    });
+    osNotify(title, body || "");
+    refreshUnreadBadge();
+  });
+
+  // Initial badge sync — pick up notifications received while the app was
+  // closed. Re-runs whenever cfg changes (covers re-onboarding).
+  useEffect(() => {
+    if (!cfg?.client_token) return;
+    refreshUnreadBadge();
+  }, [cfg?.client_token]);
 
   if (!cfg) {
     return (

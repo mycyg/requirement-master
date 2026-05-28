@@ -183,6 +183,26 @@ pub async fn set_user_admin(
         .json().await?)
 }
 
+// ---------- I. Tray unread badge ----------
+// The OS doesn't give us a real red-dot overlay on the tray icon (Win11 has
+// no public API for that), so we communicate unread state via the tray
+// tooltip: e.g. "需求管理大师 · 3 条新通知". The label appears on hover and
+// next to the icon on macOS. Cheap to maintain, no extra icon assets.
+
+#[tauri::command]
+pub fn update_tray_unread(app: AppHandle, count: u32) -> Result<()> {
+    let title = if count == 0 {
+        "需求管理大师".to_string()
+    } else {
+        format!("需求管理大师 · {count} 条新通知")
+    };
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let _ = tray.set_tooltip(Some(&title));
+        let _ = tray.set_title(Some(&title));
+    }
+    Ok(())
+}
+
 // ---------- H. AI clarification chat (read history + post answer + trigger auto-process) ----------
 // The streaming POST /chat itself is hit directly from the React side via
 // `useChatStream` (SSE through fetch + ReadableStream — works fine inside the

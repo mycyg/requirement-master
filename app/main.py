@@ -133,6 +133,31 @@ def client_file(name: str):
     return FileResponse(path)
 
 
+# ───── Desktop client installer downloads ─────────────────────────────
+# Looks for installers in /srv/yqgl/downloads/ (mirrored from local CI).
+# Frontend banner offers /downloads/yqgl-client-setup.exe — single canonical
+# filename so we don't have to rev banner copy on each release.
+DOWNLOADS_ROOT = Path("/srv/yqgl/downloads")
+if DOWNLOADS_ROOT.is_dir():
+    app.mount("/downloads", StaticFiles(directory=DOWNLOADS_ROOT), name="downloads")
+
+
+@app.get("/api/downloads/manifest")
+def downloads_manifest() -> dict:
+    """Tiny manifest so the web banner can hide the download button until
+    a build is actually available, and show version + size next to it."""
+    target = DOWNLOADS_ROOT / "yqgl-client-setup.exe"
+    if not target.exists():
+        return {"available": False}
+    stat = target.stat()
+    return {
+        "available": True,
+        "url": "/downloads/yqgl-client-setup.exe",
+        "size_bytes": stat.st_size,
+        "mtime": stat.st_mtime,
+    }
+
+
 # ───── static frontend (vite build deployed to /srv/yqgl/web/dist) ─────
 WEB_ROOT = Path("/srv/yqgl/web/dist")
 if WEB_ROOT.is_dir():

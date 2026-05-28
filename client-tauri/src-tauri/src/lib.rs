@@ -125,6 +125,7 @@ pub fn run() {
             commands::submitter::chat_messages,
             commands::submitter::post_chat_answer,
             commands::submitter::auto_process,
+            commands::submitter::update_tray_unread,
         ])
         .run(tauri::generate_context!())
         .expect("error while running yqgl client");

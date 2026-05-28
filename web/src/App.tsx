@@ -20,6 +20,7 @@ import {
 import { useIdentity } from "./hooks/useIdentity";
 import { NicknameDialog } from "./components/NicknameDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { ClientDownloadBanner } from "./components/ClientDownloadBanner";
 import { Home } from "./pages/Home";
 import { ProjectView } from "./pages/ProjectView";
 import { NewRequirement } from "./pages/NewRequirement";
@@ -91,6 +92,7 @@ function Shell({ nickname, onOpenSettings }: { nickname: string; onOpenSettings:
 
   return (
     <div className="app-shell">
+      <ClientDownloadBanner />
       <TopNav
         nickname={nickname}
         onOpenSettings={onOpenSettings}
