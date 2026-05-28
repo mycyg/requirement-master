@@ -237,7 +237,9 @@ class ProjectDriveComment(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(32), default="pending_llm", nullable=False, index=True)
     llm_kind: Mapped[Optional[str]] = mapped_column(String(32))
     llm_reason: Mapped[Optional[str]] = mapped_column(Text)
-    draft_requirement_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirements.id"), index=True)
+    draft_requirement_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("requirements.id", ondelete="SET NULL"), index=True,
+    )
 
     project: Mapped[Project] = relationship()
     folder: Mapped[Optional[ProjectDriveItem]] = relationship()
@@ -294,10 +296,14 @@ class MeetingInsight(Base, TimestampMixin):
     kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    target_requirement_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirements.id"), index=True)
+    target_requirement_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("requirements.id", ondelete="SET NULL"), index=True,
+    )
     confidence_reason: Mapped[Optional[str]] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
-    created_requirement_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirements.id"), index=True)
+    created_requirement_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("requirements.id", ondelete="SET NULL"), index=True,
+    )
     confirmed_by_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), index=True)
     confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
@@ -329,8 +335,12 @@ class Requirement(Base, TimestampMixin):
 
     start_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     due_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
-    source_meeting_id: Mapped[Optional[str]] = mapped_column(ForeignKey("meeting_records.id"), index=True)
-    source_requirement_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requirements.id"), index=True)
+    source_meeting_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("meeting_records.id", ondelete="SET NULL"), index=True,
+    )
+    source_requirement_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("requirements.id", ondelete="SET NULL"), index=True,
+    )
     claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     done_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime)

@@ -55,12 +55,44 @@ pub fn open_folder(state: State<'_, ConfigState>, path: String) -> Result<()> {
     }
     drop(cfg);
 
-    // We accept a path that doesn't yet exist (folder may have been
-    // pruned). For existence check we use canonicalize-or-fall-back.
-    let canon_target: PathBuf = target.canonicalize().unwrap_or_else(|_| target.clone());
+    // We accept a path that doesn't yet exist (typical first-time-on-a-task
+    // case — user clicks "Open Folder" before any file has been synced
+    // into it). Canonicalize() requires the path to exist, so we walk up
+    // to the nearest existing ancestor and canonicalize THAT, then append
+    // the still-non-existent tail. This produces a canonical-form path
+    // (e.g. `\\?\D:\…` on Windows) that compares cleanly against the
+    // canonicalized roots — without it, the raw `D:\…` target fails the
+    // `starts_with(\\?\D:\…)` check and every "Open Folder" click 500s.
+    fn canonicalize_with_existing_ancestor(p: &Path) -> PathBuf {
+        let mut existing: PathBuf = p.to_path_buf();
+        let mut tail: Vec<std::ffi::OsString> = Vec::new();
+        loop {
+            match existing.canonicalize() {
+                Ok(canon) => {
+                    let mut out = canon;
+                    for seg in tail.iter().rev() {
+                        out.push(seg);
+                    }
+                    return out;
+                }
+                Err(_) => {
+                    let file_name = existing.file_name().map(|s| s.to_os_string());
+                    if !existing.pop() || file_name.is_none() {
+                        // Ran off the top — give up and return as-is.
+                        return p.to_path_buf();
+                    }
+                    if let Some(name) = file_name {
+                        tail.push(name);
+                    }
+                }
+            }
+        }
+    }
+
+    let canon_target: PathBuf = canonicalize_with_existing_ancestor(&target);
 
     let allowed = roots.iter().any(|root| {
-        let canon_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+        let canon_root = canonicalize_with_existing_ancestor(root);
         canon_target.starts_with(&canon_root)
     });
     if !allowed {

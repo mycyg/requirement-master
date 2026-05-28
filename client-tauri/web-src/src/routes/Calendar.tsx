@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CalendarOff, Plus } from "lucide-react";
-import { Button, Card, EmptyState, Badge } from "@yqgl/shared";
+import { Button, Card, EmptyState, Badge, parseServerDate } from "@yqgl/shared";
 import { clientJson } from "@/lib/tauri";
 
 type Event = {
@@ -64,8 +64,8 @@ export function Calendar() {
       <div className="grid grid-cols-7 gap-2">
         {days.map((d) => {
           const dayEvents = events.filter((e) => {
-            const ed = new Date(e.end_at);
-            return ed.toDateString() === d.toDateString();
+            const ed = parseServerDate(e.end_at);
+            return ed?.toDateString() === d.toDateString();
           });
           const isToday = d.toDateString() === new Date().toDateString();
           return (
@@ -74,7 +74,7 @@ export function Calendar() {
               <div className="min-h-[120px] space-y-1">
                 {dayEvents.length === 0 && <div className="text-caption text-ink-faint">—</div>}
                 {dayEvents.map((e) => {
-                  const ed = new Date(e.end_at);
+                  const ed = parseServerDate(e.end_at) ?? new Date(0);
                   const overdue = ed < new Date() && e.event_type === "requirement_due";
                   return (
                     <button
@@ -124,7 +124,7 @@ export function Calendar() {
                 </Badge>
                 <div className="flex-1 min-w-0">
                   <div className="text-body text-ink truncate">{e.title}</div>
-                  <div className="text-caption text-ink-muted">{new Date(e.end_at).toLocaleString("zh-CN", { hour12: false }).slice(5, 16)}</div>
+                  <div className="text-caption text-ink-muted">{parseServerDate(e.end_at)?.toLocaleString("zh-CN", { hour12: false }).slice(5, 16)}</div>
                 </div>
                 {e.requirement_id && (
                   <button className="text-caption text-accent hover:underline" onClick={() => nav(`/r/${e.requirement_id}`)}>

@@ -89,7 +89,16 @@ def _require_item(db: Session, item_id: str, *, include_deleted: bool = False) -
 
 
 def _can_manage_project(project: Project, user: User) -> bool:
-    return is_admin(user) or project.owner_nickname == user.nickname
+    # Identity-based ownership — mirrors projects.py::_require_owner.
+    # Without owner_user_id, a re-registered nickname could inherit drive
+    # management rights over a tombstoned user's project (same shape as
+    # the M5 fix for project lifecycle endpoints, but applied to drive
+    # mutations).
+    if is_admin(user):
+        return True
+    if project.owner_user_id is not None:
+        return project.owner_user_id == user.id
+    return project.owner_nickname == user.nickname
 
 
 def _require_manage_item(db: Session, item: ProjectDriveItem, user: User) -> None:
@@ -211,16 +220,38 @@ def _publish_drive_changed(project_id: str, item_ids: list[str] | None = None) -
             pass
 
 
+import threading as _threading
+
+# Per-project debounce — bulk operations (paste 50 items, delete 50 items,
+# bulk drive ops) call schedule_project_reindex once per item, but only ONE
+# reindex per project per burst is useful. The first one to land sets the
+# in_progress flag; subsequent schedules within the same window become
+# no-ops. After the reindex completes, if any schedule came in during it
+# the worker re-runs once more and clears the flag.
+_reindex_lock = _threading.Lock()
+_reindex_state: dict[str, dict[str, bool]] = {}  # project_id -> {"running": bool, "dirty": bool}
+
+
 def _reindex_project_in_background(project_id: str) -> None:
     """Owns its own DB session (request session already closed by the time
-    BackgroundTasks runs). Idempotent and side-effect-only."""
-    db = SessionLocal()
-    try:
-        rebuild_knowledge_index(db, project_id=project_id)
-    except Exception:
-        logger.exception("background project reindex failed for %s", project_id)
-    finally:
-        db.close()
+    BackgroundTasks runs). Coalesces with concurrent schedules via
+    `_reindex_state` so a burst of writes triggers at most 2 reindexes
+    (one immediate, one trailing if more dirties arrived mid-run)."""
+    while True:
+        db = SessionLocal()
+        try:
+            rebuild_knowledge_index(db, project_id=project_id)
+        except Exception:
+            logger.exception("background project reindex failed for %s", project_id)
+        finally:
+            db.close()
+        with _reindex_lock:
+            state = _reindex_state.get(project_id)
+            if state is None or not state.get("dirty"):
+                if state is not None:
+                    state["running"] = False
+                return
+            state["dirty"] = False  # consume the dirty flag and re-loop
 
 
 def schedule_project_reindex(background: BackgroundTasks, project_id: str) -> None:
@@ -228,8 +259,15 @@ def schedule_project_reindex(background: BackgroundTasks, project_id: str) -> No
     request (the old `_refresh_project_knowledge` sync call stalled drive
     renames for 10s on large projects), but freshens the search index
     within seconds instead of waiting 5 minutes for the periodic task.
-    Safe to call from every drive write; duplicates coalesce naturally
-    via SQLite's serialize-writes guarantee."""
+
+    Bulk-safe: 50 calls in a row from one request (e.g. paste-copy 50
+    items) translate to at most 2 reindex runs via `_reindex_state`."""
+    with _reindex_lock:
+        state = _reindex_state.setdefault(project_id, {"running": False, "dirty": False})
+        if state["running"]:
+            state["dirty"] = True
+            return
+        state["running"] = True
     background.add_task(_reindex_project_in_background, project_id)
 
 

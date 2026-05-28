@@ -206,20 +206,33 @@ async def finalize(
     out_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = out_dir / f".{upload_id}.zip.tmp"
 
-    h = hashlib.sha256()
-    total = 0
-    with open(tmp_path, "wb") as out:
-        for c in chunks:
-            with open(c, "rb") as src:
-                while True:
-                    buf = src.read(1024 * 1024)
-                    if not buf: break
-                    out.write(buf)
-                    h.update(buf)
-                    total += len(buf)
+    # 1 GB merges synchronously freeze every other request handler. The
+    # handler is `async def` so the chunk-loop blocks the event loop —
+    # health checks time out, SSE streams stall, other uploads stall.
+    # Push the bytes work to a worker thread.
+    def _merge_chunks_sync() -> tuple[int, str]:
+        h = hashlib.sha256()
+        total = 0
+        with open(tmp_path, "wb") as out:
+            for c in chunks:
+                with open(c, "rb") as src:
+                    while True:
+                        buf = src.read(1024 * 1024)
+                        if not buf: break
+                        out.write(buf)
+                        h.update(buf)
+                        total += len(buf)
+        return total, h.hexdigest()
+    total, digest_hex = await asyncio.to_thread(_merge_chunks_sync)
     if total != meta["total_size"]:
         tmp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=f"size mismatch: got {total}, expected {meta['total_size']}")
+    # Reconstruct a hashlib-compatible object for downstream `.hexdigest()`
+    # callers (kept minimal — we just need the hex string).
+    class _Digest:
+        def __init__(self, hexstr: str) -> None: self._hex = hexstr
+        def hexdigest(self) -> str: return self._hex
+    h = _Digest(digest_hex)
 
     try:
         file_count = len(inspect_zip_entries(tmp_path))

@@ -87,7 +87,10 @@ async def _periodic_partial_cleanup() -> None:
     await asyncio.sleep(600)  # first sweep 10 minutes after boot
     while True:
         try:
-            cleanup_stale_partials(settings.data_dir)
+            # rglob filesystem walk + per-file stat → run off-loop so the
+            # 6-hour cleanup doesn't freeze the event loop for tens of
+            # seconds on a tree with thousands of stale partials.
+            await asyncio.to_thread(cleanup_stale_partials, settings.data_dir)
         except Exception:
             _logger.exception("periodic partial-upload cleanup failed")
         await asyncio.sleep(6 * 60 * 60)

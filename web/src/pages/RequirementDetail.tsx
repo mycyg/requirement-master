@@ -93,10 +93,19 @@ export function RequirementDetail() {
   const currentStatus = latestStatus || req?.status;
   const desktopRuntime = isDesktopRuntime();
 
+  // Token-based cancel guard: when the user navigates /r/A → /r/B mid-fetch,
+  // A's in-flight Promise.all could resolve AFTER B's setReq landed and
+  // overwrite B's attachments/workspaces/taskPlans/acceptanceItems with
+  // A's data while req still shows B. Each refresh bumps the token; only
+  // the latest token's writes are accepted.
+  const refreshTokenRef = useRef(0);
   const refresh = async () => {
     if (!id) return;
+    const myToken = ++refreshTokenRef.current;
+    const isCurrent = () => refreshTokenRef.current === myToken;
     try {
       const r = await api.getRequirement(id);
+      if (!isCurrent()) return;
       setReq(r);
       setLoadErr(null);
       const [nextAttachments, nextWorkspaces, nextPlans, nextAcceptance] = await Promise.all([
@@ -105,11 +114,13 @@ export function RequirementDetail() {
         api.listTaskPlans(id).catch(() => []),
         api.listAcceptanceItems(id).catch(() => []),
       ]);
+      if (!isCurrent()) return;
       setAttachments(nextAttachments);
       setWorkspaces(nextWorkspaces);
       setTaskPlans(nextPlans);
       setAcceptanceItems(nextAcceptance);
     } catch (e: any) {
+      if (!isCurrent()) return;
       // Without this, a 404 / 401 left `req` null forever and the user
       // stared at "加载中…" with no escape route.
       setLoadErr(String(e));

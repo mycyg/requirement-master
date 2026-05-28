@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { CalendarClock, Crown, Users } from "lucide-react";
-import { Card, StatusBadge, Progress, Badge } from "@yqgl/shared";
+import { Card, StatusBadge, Progress, Badge, parseServerDate } from "@yqgl/shared";
 import type { Requirement } from "@yqgl/shared";
 
 export function TaskCard({ req, action }: { req: Requirement; action?: React.ReactNode }) {
@@ -8,7 +8,9 @@ export function TaskCard({ req, action }: { req: Requirement; action?: React.Rea
   const lead = req.assignees?.find((a) => a.role === "lead");
   const collabs = req.assignees?.filter((a) => a.role !== "lead") ?? [];
 
-  const due = req.due_at ? new Date(req.due_at) : null;
+  // Backend emits naive UTC; parseServerDate appends Z so toLocaleString
+  // doesn't misread it as local. Without this CN users see every DDL 8h early.
+  const due = parseServerDate(req.due_at);
   const overdue = !!(due && due.getTime() < Date.now());
   const dueTone =
     overdue ? "error" :

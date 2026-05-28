@@ -143,6 +143,10 @@ async def _process_knowledge_ask(run_id: str, job_id: str, user_id: str) -> None
         await publish_job(job)
         await publish_notification(note)
     except Exception as exc:
+        # Rollback any partially-flushed state from the LLM/index work
+        # before re-querying, mirroring meetings._process_meeting and
+        # decompositions._process_decomposition.
+        db.rollback()
         row = db.query(KnowledgeAskRun).filter(KnowledgeAskRun.id == run_id).first()
         job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
         if row:

@@ -51,8 +51,18 @@ def list_projects(
     # Non-admins must not enumerate OTHER people's archived/deleted projects
     # — that leaks ownership records of work someone deliberately removed.
     # They can still see THEIR OWN archived/deleted projects (restore UX).
+    # Identity-based filter mirrors `_require_owner`: prefer owner_user_id
+    # (set on all post-migration rows) and only fall back to nickname for
+    # legacy rows where owner_user_id is still NULL. A recycled nickname
+    # would otherwise see the previous owner's archived projects.
     if state in ("archived", "deleted", "all") and not is_admin(user):
-        q = q.filter(Project.owner_nickname == user.nickname)
+        from sqlalchemy import and_, or_
+        q = q.filter(
+            or_(
+                Project.owner_user_id == user.id,
+                and_(Project.owner_user_id.is_(None), Project.owner_nickname == user.nickname),
+            )
+        )
     rows = q.order_by(Project.created_at.desc()).all()
     return [_to_out(p) for p in rows]
 

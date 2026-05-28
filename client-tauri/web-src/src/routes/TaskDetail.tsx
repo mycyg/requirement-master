@@ -20,6 +20,7 @@ import {
   toast,
   isSubmitter,
   isAssignee as isAssigneeFn,
+  parseServerDate,
   useSpace,
 } from "@yqgl/shared";
 import type { Requirement, RequirementWorkspace } from "@yqgl/shared";
@@ -149,7 +150,7 @@ export function TaskDetail() {
             <h1 className="text-h2 text-ink break-words">{req.title || "(整理中)"}</h1>
             <div className="mt-2 flex items-center gap-3 text-caption text-ink-muted">
               <span>提交人 {req.submitter_nickname}</span>
-              {req.due_at && <span>截止 {new Date(req.due_at).toLocaleString("zh-CN", { hour12: false })}</span>}
+              {req.due_at && <span>截止 {parseServerDate(req.due_at)?.toLocaleString("zh-CN", { hour12: false })}</span>}
             </div>
             {req.assignees?.length ? (
               <div className="mt-3">
@@ -489,7 +490,7 @@ function MyWorkspace({
         <div className="mt-3 space-y-2 max-h-48 overflow-auto">
           {ws.updates?.slice(0, 10).map((u) => (
             <div key={u.id} className="glass-sunken p-2 text-caption">
-              <div className="text-ink-faint">{u.actor_nickname} · {new Date(u.created_at).toLocaleString("zh-CN", { hour12: false }).slice(5, 16)}</div>
+              <div className="text-ink-faint">{u.actor_nickname} · {parseServerDate(u.created_at)?.toLocaleString("zh-CN", { hour12: false }).slice(5, 16)}</div>
               <div className="text-ink-soft">{u.body}</div>
             </div>
           ))}

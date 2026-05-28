@@ -151,8 +151,12 @@ def queue_status_notifications(
             target_url=f"/r/{req.id}",
             project_id=req.project_id,
             requirement_id=req.id,
-            # dedupe across same-event retries (e.g. PATCH /status replay)
-            dedupe_key=f"{new_status}:{req.id}",
+            # Dedupe across same-event retries (e.g. PATCH /status replay
+            # firing twice). Include actor id so a cycle like
+            # revision_requested → doing → revision_requested doesn't have
+            # worker A's notification silently overwritten with worker B's
+            # body — they're genuinely two different events.
+            dedupe_key=f"{new_status}:{req.id}:{actor.id}",
         ))
     return rows
 

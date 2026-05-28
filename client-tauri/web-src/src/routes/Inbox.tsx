@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell, BellOff, Inbox as InboxIcon } from "lucide-react";
-import { Button, Card, EmptyState, Badge } from "@yqgl/shared";
+import { Button, Card, EmptyState, Badge, parseServerDate } from "@yqgl/shared";
 import { clientFetch, clientJson, useEvent } from "@/lib/tauri";
 
 type Notif = {
@@ -126,7 +126,7 @@ export function Inbox() {
                   <div className="text-body text-ink truncate">{n.title}</div>
                   {n.body && <div className="text-caption text-ink-muted mt-0.5 line-clamp-2">{n.body}</div>}
                   <div className="text-caption text-ink-faint mt-1">
-                    {new Date(n.created_at).toLocaleString("zh-CN", { hour12: false }).slice(5, 16)}
+                    {parseServerDate(n.created_at)?.toLocaleString("zh-CN", { hour12: false }).slice(5, 16)}
                   </div>
                 </div>
                 {!n.read_at && (

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Card, Progress, EmptyState, Badge } from "@yqgl/shared";
+import { Card, Progress, EmptyState, Badge, parseServerDate } from "@yqgl/shared";
 import { clientJson } from "@/lib/tauri";
 
 type Workload = {
@@ -113,7 +113,7 @@ export function MyWorkload() {
                     {r.blocked_reason && <Badge size="xs" tone="error">阻塞</Badge>}
                   </div>
                   <div className="text-body text-ink truncate">{r.title || "(整理中)"}</div>
-                  {r.due_at && <div className="text-caption text-ink-muted mt-0.5">截止 {new Date(r.due_at).toLocaleString("zh-CN", { hour12: false }).slice(5, 16)}</div>}
+                  {r.due_at && <div className="text-caption text-ink-muted mt-0.5">截止 {parseServerDate(r.due_at)?.toLocaleString("zh-CN", { hour12: false }).slice(5, 16)}</div>}
                 </div>
                 <div className="w-32 shrink-0">
                   <Progress value={r.progress_percent ?? 0} size="sm" />

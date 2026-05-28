@@ -55,7 +55,10 @@ def get_workload(
         req_q = req_q.filter(Requirement.project_id == project_id)
     reqs = req_q.order_by(Requirement.due_at.asc().nullslast(), Requirement.created_at.desc()).limit(1000).all()
 
-    users = {u.id: u for u in db.query(User).all()}
+    # Soft-deleted users tombstone their nickname as `_deleted_<id>_<orig>`.
+    # Filtering them out of the workload table prevents leaking that
+    # internal tombstone format AND drops "0 hours, 0 capacity" ghost rows.
+    users = {u.id: u for u in db.query(User).filter(User.deleted_at.is_(None)).all()}
     presence = get_presence_map(list(users))
     task_map: dict[str, list[WorkloadRequirementOut]] = defaultdict(list)
     hours_map: dict[str, float] = defaultdict(float)
@@ -103,7 +106,7 @@ def get_workload(
         load = int(round((hours / capacity) * 100)) if capacity > 0 else 0
         rows.append(UserWorkloadOut(
             user_id=user.id,
-            nickname=user.nickname,
+            nickname=user.display_name,
             is_online=presence[user.id].is_online,
             availability_status=status,
             availability_text=user.availability_text,

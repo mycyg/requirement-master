@@ -610,7 +610,8 @@ def delete_requirement(
     titles and broken targets).
     """
     from datetime import datetime
-    from models import Notification
+    from sqlalchemy import update as sql_update
+    from models import MeetingInsight, Notification, ProjectDriveComment
     r = db.query(Requirement).filter(Requirement.id == req_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
@@ -623,5 +624,15 @@ def delete_requirement(
     db.query(Notification).filter(
         Notification.requirement_id == req_id, Notification.archived_at.is_(None),
     ).update({"archived_at": datetime.utcnow()})
+    # Explicitly NULL out cross-references before delete. The model FKs use
+    # `ondelete=SET NULL`, but SQLite tables created BEFORE that schema
+    # change kept the old NO ACTION constraint (ALTER TABLE can't change
+    # FK on_delete), so on older deployments the delete would fail with
+    # FOREIGN KEY constraint violation under `PRAGMA foreign_keys=ON`.
+    # Doing it in application code is portable + works on both schemas.
+    db.execute(sql_update(ProjectDriveComment).where(ProjectDriveComment.draft_requirement_id == req_id).values(draft_requirement_id=None))
+    db.execute(sql_update(MeetingInsight).where(MeetingInsight.target_requirement_id == req_id).values(target_requirement_id=None))
+    db.execute(sql_update(MeetingInsight).where(MeetingInsight.created_requirement_id == req_id).values(created_requirement_id=None))
+    db.execute(sql_update(Requirement).where(Requirement.source_requirement_id == req_id).values(source_requirement_id=None))
     db.delete(r)
     db.commit()

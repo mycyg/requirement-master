@@ -46,12 +46,17 @@ def create_notification(
             .first()
         )
         if existing:
+            # Dedupe-update overwrites content from the new event. Reset
+            # BOTH read_at and archived_at to surface the change in the
+            # user's inbox — otherwise they'd see a stale "已读 1 小时前"
+            # entry whose title/body silently mutated under them.
             existing.title = title
             existing.body = body
             existing.severity = severity
             existing.target_url = target_url
             existing.project_id = project_id
             existing.requirement_id = requirement_id
+            existing.read_at = None
             existing.archived_at = None
             existing.updated_at = datetime.utcnow()
             db.flush()
