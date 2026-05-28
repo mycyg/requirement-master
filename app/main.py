@@ -256,27 +256,85 @@ def client_file(name: str):
 
 
 # ───── Desktop client installer downloads ─────────────────────────────
-# Looks for installers in /srv/yqgl/downloads/ (mirrored from local CI).
-# Frontend banner offers /downloads/yqgl-client-setup.exe — single canonical
-# filename so we don't have to rev banner copy on each release.
+# Looks for installers in /srv/yqgl/downloads/ (mirrored from local CI), plus
+# an optional GitHub Release URL for the macOS universal client.
 DOWNLOADS_ROOT = Path("/srv/yqgl/downloads")
 if DOWNLOADS_ROOT.is_dir():
     app.mount("/downloads", StaticFiles(directory=DOWNLOADS_ROOT), name="downloads")
 
 
+def _download_entry(
+    *,
+    id: str,
+    label: str,
+    filename: str | None = None,
+    fallback_url: str = "",
+    fallback_size: int = 0,
+    note: str = "",
+) -> dict | None:
+    if filename:
+        target = DOWNLOADS_ROOT / filename
+        if target.exists():
+            stat = target.stat()
+            return {
+                "id": id,
+                "label": label,
+                "url": f"/downloads/{filename}",
+                "size_bytes": stat.st_size,
+                "mtime": stat.st_mtime,
+                "external": False,
+                "note": note,
+            }
+    if fallback_url:
+        return {
+            "id": id,
+            "label": label,
+            "url": fallback_url,
+            "size_bytes": fallback_size,
+            "mtime": 0,
+            "external": True,
+            "note": note,
+        }
+    return None
+
+
 @app.get("/api/downloads/manifest")
 def downloads_manifest() -> dict:
-    """Tiny manifest so the web banner can hide the download button until
-    a build is actually available, and show version + size next to it."""
-    target = DOWNLOADS_ROOT / "yqgl-client-setup.exe"
-    if not target.exists():
-        return {"available": False}
-    stat = target.stat()
+    """Installer manifest for the web banner.
+
+    The legacy top-level fields still point to the first available installer so
+    older clients remain harmless while the new web UI renders platform cards.
+    """
+    platforms = [
+        entry for entry in [
+            _download_entry(
+                id="windows",
+                label="Windows",
+                filename="yqgl-client-setup.exe",
+                note="本地工作台 + 托盘常驻",
+            ),
+            _download_entry(
+                id="macos",
+                label="macOS",
+                filename="yqgl-client-macos-universal-unsigned.dmg",
+                fallback_url=settings.macos_client_download_url,
+                fallback_size=settings.macos_client_size_bytes,
+                note="Universal 未签名测试包",
+            ),
+        ]
+        if entry
+    ]
+    if not platforms:
+        return {"available": False, "platforms": []}
+    primary = platforms[0]
+    version_key = "|".join(f"{p['id']}:{p.get('mtime') or p['url']}" for p in platforms)
     return {
         "available": True,
-        "url": "/downloads/yqgl-client-setup.exe",
-        "size_bytes": stat.st_size,
-        "mtime": stat.st_mtime,
+        "url": primary["url"],
+        "size_bytes": primary.get("size_bytes", 0),
+        "mtime": primary.get("mtime", 0),
+        "version_key": version_key,
+        "platforms": platforms,
     }
 
 
