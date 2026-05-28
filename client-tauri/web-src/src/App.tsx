@@ -63,22 +63,21 @@ export function App() {
         setCfg({ nickname: "", cookie_token: "", client_token: "" });
         return;
       }
-      // Auto re-auth: if a nickname already exists from a previous run but the
-      // cookie/worker token has been wiped (cookies don't survive process
-      // restart), silently re-identify and re-register the device. Avoids
-      // forcing the user back through onboarding on every launch.
-      if (initial.nickname && (!initial.client_token || !initial.cookie_token)) {
+      // Auto re-auth on every launch when a nickname is known. The reqwest
+      // cookie jar is *always* empty after process restart (it's in-memory
+      // only), so we can't trust `cookie_token` as a signal — it's just a
+      // sentinel marking "user has onboarded before". identify is idempotent
+      // (same nickname → same user_id), and register_device returns the
+      // existing token if the device record already exists.
+      if (initial.nickname) {
         try {
           await invoke("identify", { nickname: initial.nickname });
           if (!initial.client_token) {
             await invoke("register_device", { deviceName: window.navigator.platform || "tauri" });
           }
-          // Persist a sentinel so `needsOnboarding` becomes false; the live
-          // cookie is in the reqwest jar, not on disk.
           await invoke("set_config", { patch: { cookie_token: "session" } });
           const fresh = await invoke<Cfg>("get_config");
           setCfg(fresh);
-          toast({ title: `已重新登录 ${initial.nickname}`, tone: "success" });
           return;
         } catch {
           // fall through — user can finish onboarding manually
