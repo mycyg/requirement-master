@@ -485,7 +485,7 @@ pub async fn open_spec_folder(
     std::fs::create_dir_all(&path)?;
     ensure_dir_inside_root(&PathBuf::from(&sync_root), &path).await?;
 
-    crate::commands::shell::open_folder(path.to_string_lossy().to_string())
+    crate::commands::shell::open_folder(state, path.to_string_lossy().to_string())
 }
 
 #[tauri::command]

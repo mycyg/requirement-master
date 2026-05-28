@@ -75,7 +75,12 @@ class Project(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     slug: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     description: Mapped[Optional[str]] = mapped_column(Text)
+    # owner_nickname is kept for display (and back-compat with rows that
+    # predate `owner_user_id`); ownership permission checks should ALWAYS
+    # use `owner_user_id`. Otherwise a re-registered nickname after admin
+    # tombstones the original user would silently inherit ownership.
     owner_nickname: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_user_id: Mapped[Optional[str]] = mapped_column(String(32), index=True)
     archived: Mapped[bool] = mapped_column(default=False, nullable=False)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
     deleted_by_nickname: Mapped[Optional[str]] = mapped_column(String(64))

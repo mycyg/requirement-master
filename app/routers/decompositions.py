@@ -314,6 +314,9 @@ async def _process_decomposition(plan_id: str, job_id: str, user_id: str) -> Non
         await publish_notification(note)
         await bus.publish(f"req:{plan.requirement_id}", "requirement.updated", {"decomposition": plan.stage})
     except Exception as exc:
+        # The exception could have been raised mid-transaction; rollback
+        # first so re-queries below get clean state rather than partial.
+        db.rollback()
         plan = db.query(RequirementTaskPlan).filter(RequirementTaskPlan.id == plan_id).first()
         job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
         # Only flip to dismissed if still in draft — if user already

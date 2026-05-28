@@ -85,6 +85,16 @@ pub async fn register_device(
     // reqwest Client and drop the cookie jar from `/api/auth/identify`. The
     // shared client is intentionally long-lived; the token is attached to each
     // request via `http::auth_headers()` which reads from config every call.
-    state.write(|cfg| { cfg.client_token = token.clone(); })?;
+    //
+    // Also clear notification/reminder dedup state — a re-onboarding flow
+    // (same nickname, new device) implies a fresh identity for the user
+    // and they should see legitimate first-time toasts again, not have
+    // them suppressed by yesterday's dedup keys. `set_config` does the
+    // same via `identity_changed` detection, but this command bypasses
+    // it by writing directly to the config.
+    state.write(|cfg| {
+        cfg.client_token = token.clone();
+        cfg.clear_dedup_state();
+    })?;
     Ok(DeviceToken { token, device_id })
 }

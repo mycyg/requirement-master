@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from auth import current_user
 from config import settings
-from db import get_db
+from db import SessionLocal, get_db
 from models import Project, ProjectDriveComment, ProjectDriveItem, ProjectDriveOperation, ProjectDriveVersion, Requirement, User
 from schemas import (
     DriveBreadcrumbOut,
@@ -44,6 +44,7 @@ from schemas import (
 )
 from services.drive_comment_agent import classify_drive_comment
 from services.file_parser import is_parseable, parse_file
+from services.knowledge import rebuild_knowledge_index
 from services.permissions import is_admin
 from services.push_bus import bus
 
@@ -208,6 +209,28 @@ def _publish_drive_changed(project_id: str, item_ids: list[str] | None = None) -
             loop.create_task(bus.publish("all", "drive.changed", data))
         except Exception:
             pass
+
+
+def _reindex_project_in_background(project_id: str) -> None:
+    """Owns its own DB session (request session already closed by the time
+    BackgroundTasks runs). Idempotent and side-effect-only."""
+    db = SessionLocal()
+    try:
+        rebuild_knowledge_index(db, project_id=project_id)
+    except Exception:
+        logger.exception("background project reindex failed for %s", project_id)
+    finally:
+        db.close()
+
+
+def schedule_project_reindex(background: BackgroundTasks, project_id: str) -> None:
+    """Async reindex after the response is sent. Doesn't block the user's
+    request (the old `_refresh_project_knowledge` sync call stalled drive
+    renames for 10s on large projects), but freshens the search index
+    within seconds instead of waiting 5 minutes for the periodic task.
+    Safe to call from every drive write; duplicates coalesce naturally
+    via SQLite's serialize-writes guarantee."""
+    background.add_task(_reindex_project_in_background, project_id)
 
 
 def _active_sibling(
@@ -656,6 +679,7 @@ async def upload_drive_chunk(project_id: str, upload_id: str, idx: int, request:
 def finalize_drive_upload(
     project_id: str,
     upload_id: str,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> DriveItemOut:
@@ -756,6 +780,7 @@ def finalize_drive_upload(
     db.refresh(item)
     shutil.rmtree(pdir, ignore_errors=True)
     _publish_drive_changed(project_id, [item.id])
+    schedule_project_reindex(background, project_id)
     return _item_out(db, item)
 
 
@@ -877,6 +902,7 @@ def preview_drive_file(item_id: str, db: Session = Depends(get_db), _: User = De
 def patch_drive_item(
     item_id: str,
     payload: DriveItemPatchIn,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> DriveItemOut:
@@ -909,6 +935,7 @@ def patch_drive_item(
     db.commit()
     db.refresh(item)
     _publish_drive_changed(item.project_id, [item.id])
+    schedule_project_reindex(background, item.project_id)
     return _item_out(db, item)
 
 
@@ -916,6 +943,7 @@ def patch_drive_item(
 def paste_drive_items(
     project_id: str,
     payload: DrivePasteIn,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> DriveOperationOut:
@@ -935,6 +963,7 @@ def paste_drive_items(
         op = _record_op(db, project_id, user, "paste_copy", {"item_ids": [i.id for i in copied]})
         db.commit()
         _publish_drive_changed(project_id, [i.id for i in copied])
+        schedule_project_reindex(background, project_id)
         return DriveOperationOut(operation_id=op.id, items=[_item_out(db, i) for i in copied])
 
     # Record BOTH old parent AND old name so undo can restore the
@@ -960,12 +989,14 @@ def paste_drive_items(
     })
     db.commit()
     _publish_drive_changed(project_id, [i.id for i in items])
+    schedule_project_reindex(background, project_id)
     return DriveOperationOut(operation_id=op.id, items=[_item_out(db, i) for i in items])
 
 
 @router.post("/drive/items/{item_id}/copy", response_model=DriveOperationOut)
 def copy_one_drive_item(
     item_id: str,
+    background: BackgroundTasks,
     target_parent_id: str | None = Query(default=None),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
@@ -977,12 +1008,14 @@ def copy_one_drive_item(
     op = _record_op(db, item.project_id, user, "paste_copy", {"item_ids": [copied.id]})
     db.commit()
     _publish_drive_changed(item.project_id, [copied.id])
+    schedule_project_reindex(background, item.project_id)
     return DriveOperationOut(operation_id=op.id, items=[_item_out(db, copied)])
 
 
 @router.post("/drive/items/{item_id}/cut", response_model=DriveItemOut)
 def cut_one_drive_item(
     item_id: str,
+    background: BackgroundTasks,
     target_parent_id: str | None = Query(default=None),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
@@ -1001,22 +1034,24 @@ def cut_one_drive_item(
     db.commit()
     db.refresh(item)
     _publish_drive_changed(item.project_id, [item.id])
+    schedule_project_reindex(background, item.project_id)
     return _item_out(db, item)
 
 
 @router.delete("/drive/items/{item_id}", response_model=DriveOperationOut)
-def delete_drive_item(item_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> DriveOperationOut:
+def delete_drive_item(item_id: str, background: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(current_user)) -> DriveOperationOut:
     item = _require_item(db, item_id)
     _require_manage_item(db, item, user)
     _soft_delete_items(db, [item], user)
     op = _record_op(db, item.project_id, user, "delete", {"item_ids": [item.id]})
     db.commit()
     _publish_drive_changed(item.project_id, [item.id])
+    schedule_project_reindex(background, item.project_id)
     return DriveOperationOut(operation_id=op.id)
 
 
 @router.post("/drive/bulk-delete", response_model=DriveOperationOut)
-def bulk_delete_drive_items(payload: DriveBulkIn, db: Session = Depends(get_db), user: User = Depends(current_user)) -> DriveOperationOut:
+def bulk_delete_drive_items(payload: DriveBulkIn, background: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(current_user)) -> DriveOperationOut:
     items = [_require_item(db, item_id) for item_id in payload.item_ids]
     if not items:
         return DriveOperationOut()
@@ -1029,11 +1064,12 @@ def bulk_delete_drive_items(payload: DriveBulkIn, db: Session = Depends(get_db),
     op = _record_op(db, project_id, user, "delete", {"item_ids": [item.id for item in items]})
     db.commit()
     _publish_drive_changed(project_id, [item.id for item in items])
+    schedule_project_reindex(background, project_id)
     return DriveOperationOut(operation_id=op.id)
 
 
 @router.post("/drive/items/{item_id}/restore", response_model=DriveItemOut)
-def restore_drive_item(item_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> DriveItemOut:
+def restore_drive_item(item_id: str, background: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(current_user)) -> DriveItemOut:
     item = _require_item(db, item_id, include_deleted=True)
     _require_manage_item(db, item, user)
     if _active_sibling(db, item.project_id, item.parent_id, item.name, exclude_id=item.id):
@@ -1043,11 +1079,12 @@ def restore_drive_item(item_id: str, db: Session = Depends(get_db), user: User =
     db.commit()
     db.refresh(item)
     _publish_drive_changed(item.project_id, [item.id])
+    schedule_project_reindex(background, item.project_id)
     return _item_out(db, item)
 
 
 @router.post("/projects/{project_id}/drive/undo", response_model=DriveOperationOut)
-def undo_drive_operation(project_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> DriveOperationOut:
+def undo_drive_operation(project_id: str, background: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(current_user)) -> DriveOperationOut:
     op = (
         db.query(ProjectDriveOperation)
         .filter(
@@ -1099,6 +1136,7 @@ def undo_drive_operation(project_id: str, db: Session = Depends(get_db), user: U
     op.undone_at = datetime.utcnow()
     db.commit()
     _publish_drive_changed(project_id, [])
+    schedule_project_reindex(background, project_id)
     return DriveOperationOut(operation_id=op.id)
 
 
@@ -1123,6 +1161,7 @@ async def create_drive_comment(
     project_id: str,
     folder_id: str,
     payload: DriveCommentCreateIn,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> DriveCommentOut:
@@ -1173,6 +1212,7 @@ async def create_drive_comment(
         comment.status = "posted"
     db.commit()
     db.refresh(comment)
+    schedule_project_reindex(background, project_id)
     await bus.publish("all", "drive.comment", {
         "project_id": project_id,
         "folder_id": folder_db_id,

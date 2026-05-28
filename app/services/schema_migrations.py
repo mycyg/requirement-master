@@ -34,6 +34,10 @@ USER_COLUMNS: dict[str, str] = {
 PROJECT_COLUMNS: dict[str, str] = {
     "deleted_at": "DATETIME",
     "deleted_by_nickname": "VARCHAR(64)",
+    # Identity-based ownership — see Project model docstring. Without this
+    # column, a re-registered nickname after admin tombstones the original
+    # owner would silently inherit the project.
+    "owner_user_id": "VARCHAR(32)",
 }
 
 
@@ -69,6 +73,22 @@ def ensure_runtime_schema(engine: Engine) -> None:
             if name not in project_existing:
                 conn.execute(text(f"ALTER TABLE projects ADD COLUMN {name} {ddl}"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_deleted_at ON projects (deleted_at)"))
+        # Backfill owner_user_id for projects created before this column existed.
+        # Match by owner_nickname against the user with that exact nickname who
+        # ISN'T soft-deleted; if there are multiple matches (impossible today —
+        # nickname is unique among active users), prefer the oldest.
+        conn.execute(text("""
+            UPDATE projects
+            SET owner_user_id = (
+                SELECT u.id FROM users u
+                WHERE u.nickname = projects.owner_nickname
+                  AND u.deleted_at IS NULL
+                ORDER BY u.created_at ASC
+                LIMIT 1
+            )
+            WHERE owner_user_id IS NULL
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_owner_user_id ON projects (owner_user_id)"))
 
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS client_devices (

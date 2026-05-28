@@ -48,6 +48,26 @@ def _require_req(db: Session, req_id: str) -> Requirement:
     return r
 
 
+def _ensure_writable_project(req: Requirement, user: User) -> None:
+    """Reject mutations on requirements whose project is archived / soft-deleted.
+
+    Read paths (list/download) use can_view_requirement_assets which already
+    enforces this (with admin-read-override per services/permissions.py). The
+    write paths here (accept / request_revision) need a parallel guard so
+    archive doesn't get silently bypassed by the submitter. Admin must
+    explicitly restore the project before mutating.
+    """
+    from services.permissions import is_admin, requirement_project_is_active
+    if requirement_project_is_active(req):
+        return
+    if is_admin(user):
+        raise HTTPException(
+            status_code=409,
+            detail="project is archived or deleted; restore it before mutating its requirements",
+        )
+    raise HTTPException(status_code=404, detail="requirement not found")
+
+
 def _require_can_view_assets(req: Requirement, user: User) -> None:
     if not can_view_requirement_assets(req, user):
         raise HTTPException(status_code=403, detail="you cannot access deliveries for this requirement")
@@ -138,6 +158,7 @@ def _iter_zip_member(path: Path, member_name: str):
 @router.post("/requirements/{req_id}/accept")
 async def accept_delivery(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
     r = _require_req(db, req_id)
+    _ensure_writable_project(r, user)
     if r.status != "delivered":
         raise HTTPException(status_code=400, detail=f"cannot accept from status {r.status}")
     if r.submitter_user_id != user.id:
@@ -183,6 +204,7 @@ async def request_revision(
     user: User = Depends(current_user),
 ) -> dict:
     r = _require_req(db, req_id)
+    _ensure_writable_project(r, user)
     if r.status != "delivered":
         raise HTTPException(status_code=400, detail=f"cannot request revision from status {r.status}")
     if r.submitter_user_id != user.id:

@@ -9,10 +9,14 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
 from auth import StreamUser, require_stream_user
+from db import SessionLocal
+from models import Requirement
+from services.permissions import can_view_requirement_record
 from services.presence import mark_stream_closed, mark_stream_open
 from services.push_bus import stream
 
@@ -58,7 +62,29 @@ async def stream_all(request: Request, user: StreamUser = Depends(require_stream
 
 @router.get("/stream/req/{req_id}")
 async def stream_one(req_id: str, request: Request, user: StreamUser = Depends(require_stream_user)) -> StreamingResponse:
-    """Per-requirement stream — for web UI watching a single requirement detail."""
+    """Per-requirement stream — for web UI watching a single requirement detail.
+
+    Gated by `can_view_requirement_record` so a user can't subscribe to comment
+    / AI / status events on private requirements (draft / clarifying /
+    summary_ready) they don't own. StreamUser carries a real User row; we
+    open a short-lived session just for the permission check, then close it
+    so the streaming generator owns no DB resources across the long-lived
+    response.
+    """
+    # `require_stream_user` resolves the cookie to an id; rehydrate the
+    # actual ORM object for the permission helper. Closed immediately
+    # after the check so the SSE generator doesn't carry the session.
+    db: Session = SessionLocal()
+    try:
+        from models import User
+        u = db.query(User).filter(User.id == user.id).first()
+        req = db.query(Requirement).filter(Requirement.id == req_id).first()
+        if not req:
+            raise HTTPException(status_code=404, detail="requirement not found")
+        if u is None or not can_view_requirement_record(req, u):
+            raise HTTPException(status_code=403, detail="cannot stream this requirement")
+    finally:
+        db.close()
     return StreamingResponse(
         _gen(request, f"req:{req_id}", user),
         media_type="text/event-stream",

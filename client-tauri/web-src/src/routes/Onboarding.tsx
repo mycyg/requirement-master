@@ -44,9 +44,14 @@ export function Onboarding() {
   }, []);
 
   const testServer = async () => {
+    const portNum = Number(port);
+    if (!Number.isFinite(portNum) || portNum < 1 || portNum > 65535) {
+      toast({ title: "端口必须是 1–65535 的整数", tone: "error" });
+      return;
+    }
     setBusy(true);
     try {
-      await invoke("set_config", { patch: { server_ip: ip, server_port: Number(port) } });
+      await invoke("set_config", { patch: { server_ip: ip, server_port: portNum } });
       // Invalidate clientFetch's cached baseUrl so any subsequent
       // direct-API call (and the test_server below uses the live config
       // via the Rust side, but future steps don't) sees the new server.

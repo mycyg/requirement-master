@@ -73,12 +73,21 @@ export function ProjectDrive() {
 
   // upload progress
   useEffect(() => {
+    // `alive` guards against fast unmount: in React StrictMode dev mode (and
+    // genuine fast navigation), this effect's cleanup can run BEFORE listen()
+    // resolves, leaving `off` undefined. The async resolve then registers a
+    // listener with no one to clean it up. Mirror FileAttachRail's pattern.
+    let alive = true;
     let off: (() => void) | undefined;
     listen<UploadProgress>("drive-upload-progress", (p) => {
+      if (!alive) return;
       setProgress(p);
-      if (p.phase === "done") setTimeout(() => setProgress(null), 600);
-    }).then((d) => { off = d; });
-    return () => { if (off) off(); };
+      if (p.phase === "done") setTimeout(() => { if (alive) setProgress(null); }, 600);
+    }).then((d) => {
+      if (!alive) { d(); return; }
+      off = d;
+    });
+    return () => { alive = false; if (off) off(); };
   }, []);
 
   const currentProject = projects?.find((p) => p.id === projectId) || null;

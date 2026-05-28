@@ -336,6 +336,10 @@ async def _process_meeting(meeting_id: str, job_id: str) -> None:
         await publish_job(job)
         await bus.publish("all", "meeting.ready", {"meeting_id": meeting.id, "project_id": meeting.project_id})
     except Exception as exc:
+        # The exception could have been raised from a partially-flushed
+        # transaction (e.g. analyze_meeting() touched the DB then raised).
+        # Roll back so the re-queries below don't carry partial state.
+        db.rollback()
         meeting = db.query(MeetingRecord).filter(MeetingRecord.id == meeting_id).first()
         job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
         if meeting:
@@ -536,10 +540,19 @@ def dismiss_meeting_insight(
         raise HTTPException(status_code=404, detail="meeting insight not found")
     if insight.meeting.uploaded_by_user_id != user.id:
         raise HTTPException(status_code=403, detail="only the meeting uploader can dismiss this insight")
-    if insight.status == "pending":
-        insight.status = "dismissed"
-        insight.confirmed_by_user_id = user.id
-        insight.confirmed_at = datetime.utcnow()
-        db.commit()
+    # Atomic CAS so a concurrent /confirm doesn't sneak past the
+    # `if status == "pending"` check and orphan a draft requirement
+    # against a dismissed insight. Mirror of confirm_meeting_insight.
+    from sqlalchemy import update as sql_update
+    cas = db.execute(
+        sql_update(MeetingInsight)
+        .where(MeetingInsight.id == insight_id, MeetingInsight.status == "pending")
+        .values(status="dismissed", confirmed_by_user_id=user.id, confirmed_at=datetime.utcnow())
+    )
+    if cas.rowcount == 0:
+        db.rollback()
         db.refresh(insight)
+        return _insight_out(insight)
+    db.commit()
+    db.refresh(insight)
     return _insight_out(insight)

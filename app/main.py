@@ -54,14 +54,24 @@ async def _periodic_knowledge_reindex() -> None:
     """
     # Allow the app to fully boot before the first big scan.
     await asyncio.sleep(60)
+    from services.knowledge import rebuild_knowledge_index
+
+    def _run_reindex_sync() -> None:
+        db = SessionLocal()
+        try:
+            rebuild_knowledge_index(db)
+        finally:
+            db.close()
+
     while True:
         try:
-            from services.knowledge import rebuild_knowledge_index
-            db = SessionLocal()
-            try:
-                rebuild_knowledge_index(db)
-            finally:
-                db.close()
+            # Offload to a worker thread — rebuild walks every requirement/
+            # chat/comment/activity/workspace/meeting/drive/delivery, reads
+            # parsed-text files from disk, computes SHA-256, and writes
+            # markdown. For a 1000-requirement project that's tens of
+            # seconds of CPU+I/O; running it on the event loop would freeze
+            # every other request handler for that window.
+            await asyncio.to_thread(_run_reindex_sync)
         except Exception:
             _logger.exception("periodic knowledge reindex failed (will retry)")
         await asyncio.sleep(300)
