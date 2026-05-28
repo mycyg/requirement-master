@@ -64,35 +64,81 @@ def _verify(raw: str | None) -> str | None:
         return None
 
 
+def _user_from_worker_token(db: Session, raw_token: str | None) -> User | None:
+    """Resolve a User from the X-YQGL-Client-Token header. The Tauri
+    desktop client's webview (WebView2) maintains a SEPARATE cookie
+    store from the Rust-side reqwest jar, so calls made via the React
+    `clientFetch` (web fetch) DO NOT carry the yqgl_id cookie that
+    Rust's identify command stored. The worker token IS reliably sent
+    by clientFetch via `headers`, so use it as a fallback auth path.
+    Without this, every clientFetch to a cookie-only route 401s —
+    Inbox silently returned empty, Clarify visibly errored."""
+    if not raw_token:
+        return None
+    token = raw_token.strip()
+    if not token:
+        return None
+    device = (
+        db.query(ClientDevice)
+        .filter(
+            ClientDevice.client_token_hash == hash_client_token(token),
+            ClientDevice.revoked_at.is_(None),
+        )
+        .first()
+    )
+    if not device:
+        return None
+    user = db.query(User).filter(
+        User.id == device.user_id, User.deleted_at.is_(None),
+    ).first()
+    # Deliberately DO NOT update device.last_seen_at here — that would hold
+    # SQLite's single-writer lock open across the entire request, and any
+    # concurrent write (e.g. the chat handler updating requirement status)
+    # blocks → "database is locked" 500. Device freshness is tracked by
+    # `_lookup_client_device` (require_local_client routes) which commits
+    # right away. For the fallback path here, presence is tracked via
+    # `touch_user` (in-memory) which the caller invokes.
+    return user
+
+
 def current_user(
     db: Session = Depends(get_db),
     yqgl_id: str | None = Cookie(default=None),
+    x_yqgl_client_token: str | None = Header(default=None, alias=LOCAL_CLIENT_HEADER),
 ) -> User:
-    token = _verify(yqgl_id)
-    if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not identified")
     # Soft-deleted users must be treated as if they don't exist for auth
     # purposes — otherwise admin's "DELETE user" is meaningless for any
     # session that already had a valid cookie.
-    user = db.query(User).filter(
-        User.cookie_token == token, User.deleted_at.is_(None),
-    ).first()
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not identified")
-    touch_user(user.id)
-    return user
+    token = _verify(yqgl_id)
+    if token:
+        user = db.query(User).filter(
+            User.cookie_token == token, User.deleted_at.is_(None),
+        ).first()
+        if user:
+            touch_user(user.id)
+            return user
+    # Fall back to worker token (used by the desktop client's webview).
+    user = _user_from_worker_token(db, x_yqgl_client_token)
+    if user:
+        touch_user(user.id)
+        return user
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not identified")
 
 
 def optional_current_user(
     db: Session = Depends(get_db),
     yqgl_id: str | None = Cookie(default=None),
+    x_yqgl_client_token: str | None = Header(default=None, alias=LOCAL_CLIENT_HEADER),
 ) -> User | None:
     token = _verify(yqgl_id)
-    if not token:
-        return None
-    user = db.query(User).filter(
-        User.cookie_token == token, User.deleted_at.is_(None),
-    ).first()
+    if token:
+        user = db.query(User).filter(
+            User.cookie_token == token, User.deleted_at.is_(None),
+        ).first()
+        if user:
+            touch_user(user.id)
+            return user
+    user = _user_from_worker_token(db, x_yqgl_client_token)
     if user:
         touch_user(user.id)
     return user
@@ -150,20 +196,30 @@ def optional_local_client(
     return device.user
 
 
-def require_stream_user(yqgl_id: str | None = Cookie(default=None)) -> StreamUser:
-    """Authenticate long-lived streams without holding a DB session open."""
+def require_stream_user(
+    yqgl_id: str | None = Cookie(default=None),
+    x_yqgl_client_token: str | None = Header(default=None, alias=LOCAL_CLIENT_HEADER),
+) -> StreamUser:
+    """Authenticate long-lived streams without holding a DB session open.
+    Accepts cookie OR worker token (desktop client's WebView2 cookie jar
+    is separate from Rust's reqwest jar; we send the worker token on
+    every clientFetch including SSE)."""
     token = _verify(yqgl_id)
-    if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not identified")
     db = SessionLocal()
     try:
-        row = db.query(User.id, User.nickname).filter(
-            User.cookie_token == token, User.deleted_at.is_(None),
-        ).first()
-        if not row:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not identified")
-        touch_user(row.id)
-        return StreamUser(id=row.id, nickname=row.nickname)
+        if token:
+            row = db.query(User.id, User.nickname).filter(
+                User.cookie_token == token, User.deleted_at.is_(None),
+            ).first()
+            if row:
+                touch_user(row.id)
+                return StreamUser(id=row.id, nickname=row.nickname)
+        # Fall back to worker token
+        user = _user_from_worker_token(db, x_yqgl_client_token)
+        if user:
+            touch_user(user.id)
+            return StreamUser(id=user.id, nickname=user.nickname)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not identified")
     finally:
         db.close()
 

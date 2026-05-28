@@ -22,15 +22,39 @@ type Health = {
 
 export function ProjectPulse() {
   const [list, setList] = useState<Health[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     clientFetch("/api/project-health")
-      .then((r) => r.json())
-      .then(setList)
-      .catch(() => setList([]));
+      .then(async (r) => {
+        if (!r.ok) {
+          // Backend returns {"detail": "..."} on errors. Without this
+          // guard we would `setList({detail: "..."})` and then `.map`
+          // on a non-array kills the whole React tree (route appeared
+          // to crash to the user).
+          const body = await r.text();
+          throw new Error(`HTTP ${r.status}: ${body.slice(0, 200)}`);
+        }
+        return r.json();
+      })
+      .then((data) => {
+        setList(Array.isArray(data) ? data : []);
+      })
+      .catch((e) => {
+        setErr(String(e));
+        setList([]);
+      });
   }, []);
 
   if (!list) return <div className="flex-1 p-6">加载中…</div>;
+  if (err) {
+    return (
+      <div className="flex-1 p-6">
+        <h1 className="text-h2 text-ink mb-1">项目快报</h1>
+        <div className="glass p-4 mt-4 text-error">{err}</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 p-6 overflow-auto">

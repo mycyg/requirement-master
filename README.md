@@ -61,9 +61,9 @@ TitleBar 左上角 chip + `Ctrl+1` / `Ctrl+2` 切换。整个 chrome（侧栏、
 
 ### 透明窗口
 
-Win11 Acrylic 真透明 + Aurora Glass token 设计：
+Win11 Acrylic 真透明 + Aurora Glass token 设计 — 透出后方桌面 / 编辑器内容：
 
-![透明窗口](screenshots/aurora/97-client-live-prod.png)
+![透明窗口 派活 Hub](screenshots/aurora/submitter/03-dispatch-hub-default.light.png)
 
 ---
 
@@ -231,7 +231,7 @@ cd web && YQGL_USE_REMOTE=1 npx playwright test
 ![待验收](screenshots/aurora/submitter/06-task-detail-delivered.light.png)
 
 ### Web 入口（带客户端下载横幅）
-![web banner](screenshots/aurora/97-client-live-prod.png)
+![web Home](screenshots/aurora/01-home.light.png)
 
 ---
 
