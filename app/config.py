@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     internal_base_url: str = "http://127.0.0.1:8080"
 
     macos_client_download_url: str = (
-        "https://github.com/mycyg/requirement-master/releases/latest/download/"
+        "https://github.com/mycyg/requirement-master/releases/download/"
+        "client-macos-v0.2.0-unsigned.5/"
         "yqgl-client-macos-universal-unsigned.dmg"
     )
     macos_client_size_bytes: int = 0
