@@ -10,6 +10,7 @@
 //! Keeping these as plain JSON pass-throughs means schema drift on the backend
 //! doesn't immediately break compilation; the frontend handles shape.
 
+use std::fs::OpenOptions;
 use std::path::PathBuf;
 
 use tauri::{AppHandle, State};
@@ -17,6 +18,7 @@ use tauri::{AppHandle, State};
 use crate::config::ConfigState;
 use crate::error::Result;
 use crate::http;
+use crate::sync::{ensure_dir_inside_root, ensure_parent_inside_root, safe_component};
 use crate::upload::{upload_file, UploadUrls};
 
 /// Clone the shared `ConfigState` for use in moved closures / futures.
@@ -475,8 +477,13 @@ pub async fn open_spec_folder(
     let code = meta.get("code").and_then(|v| v.as_str()).unwrap_or(&req_id);
 
     let sync_root = state.read().sync_root.clone();
-    let path = PathBuf::from(&sync_root).join(slug).join(code).join("spec");
+    let path = PathBuf::from(&sync_root)
+        .join(safe_component(slug, "project")?)
+        .join(safe_component(code, "requirement")?)
+        .join("spec");
+    ensure_dir_inside_root(&PathBuf::from(&sync_root), &path).await?;
     std::fs::create_dir_all(&path)?;
+    ensure_dir_inside_root(&PathBuf::from(&sync_root), &path).await?;
 
     crate::commands::shell::open_folder(path.to_string_lossy().to_string())
 }
@@ -511,15 +518,30 @@ pub async fn download_delivery(
     let code = req_meta.get("code").and_then(|v| v.as_str()).unwrap_or(&req_id).to_string();
 
     let sync_root = state.read().sync_root.clone();
-    let dest_dir = PathBuf::from(&sync_root).join(&slug).join(&code).join("deliveries");
+    let dest_dir = PathBuf::from(&sync_root)
+        .join(safe_component(&slug, "project")?)
+        .join(safe_component(&code, "requirement")?)
+        .join("deliveries");
+    ensure_dir_inside_root(&PathBuf::from(&sync_root), &dest_dir).await?;
     std::fs::create_dir_all(&dest_dir)?;
+    ensure_dir_inside_root(&PathBuf::from(&sync_root), &dest_dir).await?;
     let dest_path = dest_dir.join(format!("round-{round}.zip"));
+    ensure_parent_inside_root(&PathBuf::from(&sync_root), &dest_path).await?;
+    if let Ok(meta) = std::fs::symlink_metadata(&dest_path) {
+        if meta.file_type().is_symlink() {
+            return Err(crate::error::Error::Other("refusing to overwrite symlink delivery package".into()));
+        }
+        if meta.is_dir() {
+            return Err(crate::error::Error::Other("delivery package path is a directory".into()));
+        }
+        std::fs::remove_file(&dest_path)?;
+    }
 
     // 3. Stream the package to disk.
     let dl_url = http::url(&state, &format!("/api/deliveries/{delivery_id}/package"));
     let mut resp = http::with_auth(client.get(&dl_url), &state)
         .send().await?.error_for_status()?;
-    let mut f = std::fs::File::create(&dest_path)?;
+    let mut f = OpenOptions::new().write(true).create_new(true).open(&dest_path)?;
     while let Some(chunk) = resp.chunk().await? {
         f.write_all(&chunk)?;
     }

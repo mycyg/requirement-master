@@ -93,14 +93,22 @@ async function ensureCfg(): Promise<{ token: string; baseUrl: string }> {
 export async function clientFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const cfg = await ensureCfg();
   const headers = new Headers(init.headers || {});
-  if (cfg.token) headers.set("X-YQGL-Client-Token", cfg.token);
-  // Only absolutize when the caller passed a same-origin /api path AND we know
-  // a backend URL. Leave full URLs untouched.
+  let canAttachClientToken = !cfg.baseUrl && input.startsWith("/");
   let url = input;
-  if (cfg.baseUrl && input.startsWith("/")) {
-    url = cfg.baseUrl + input;
+  if (cfg.baseUrl) {
+    const base = new URL(cfg.baseUrl);
+    const target = new URL(input, base);
+    canAttachClientToken = target.origin === base.origin;
+    url = /^https?:\/\//i.test(input) ? input : target.toString();
   }
-  return fetch(url, { ...init, credentials: "include", headers });
+  if (cfg.token && canAttachClientToken) {
+    headers.set("X-YQGL-Client-Token", cfg.token);
+  }
+  return fetch(url, {
+    ...init,
+    credentials: canAttachClientToken ? (init.credentials ?? "include") : (init.credentials ?? "omit"),
+    headers,
+  });
 }
 
 /** Reset the cached cfg; call after re-login / device-register / settings change. */

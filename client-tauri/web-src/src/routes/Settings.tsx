@@ -118,7 +118,7 @@ export function Settings() {
           <div>
             <span className="text-caption text-ink-muted">网盘同步模式</span>
             <div className="flex gap-2 mt-1">
-              {(["off", "download", "two_way"] as const).map((m) => (
+              {(["off", "download"] as const).map((m) => (
                 <button
                   key={m}
                   onClick={() => save({ drive_sync_mode: m, drive_sync_enabled: m !== "off" })}
@@ -126,10 +126,11 @@ export function Settings() {
                     cfg.drive_sync_mode === m ? "bg-accent text-white border-accent" : "border-line text-ink-soft hover:border-accent/40"
                   }`}
                 >
-                  {m === "off" ? "关" : m === "download" ? "仅下载" : "双向"}
+                  {m === "off" ? "关" : "仅下载"}
                 </button>
               ))}
             </div>
+            <p className="mt-2 text-caption text-ink-muted">双向同步还在保险箱里打磨，当前版本先提供安全的单向下载。</p>
           </div>
           <Switch
             defaultChecked={cfg.drive_sync_paused}

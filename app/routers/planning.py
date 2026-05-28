@@ -27,7 +27,11 @@ def get_workload(
     db: Session = Depends(get_db),
     _: User = Depends(current_user),
 ) -> list[UserWorkloadOut]:
-    if project_id and not db.query(Project.id).filter(Project.id == project_id).first():
+    if project_id and not db.query(Project.id).filter(
+        Project.id == project_id,
+        Project.archived == False,  # noqa: E712
+        Project.deleted_at.is_(None),
+    ).first():
         raise HTTPException(status_code=404, detail="project not found")
     now = datetime.utcnow()
     start_dt = start or now
@@ -37,11 +41,13 @@ def get_workload(
 
     req_q = (
         db.query(Requirement)
+        .join(Project, Project.id == Requirement.project_id)
         .options(
             selectinload(Requirement.project),
             selectinload(Requirement.assignments).selectinload(RequirementAssignment.user),
             selectinload(Requirement.workspaces).selectinload(RequirementWorkspace.user),
         )
+        .filter(Project.archived == False, Project.deleted_at.is_(None))  # noqa: E712
         .filter(Requirement.status.in_(ACTIVE_STATUSES))
         .filter(or_(Requirement.due_at.is_(None), Requirement.due_at.between(start_dt, end_dt)))
     )

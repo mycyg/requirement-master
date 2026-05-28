@@ -11,6 +11,11 @@ const STEPS = [
   { key: "done", label: "完成" },
 ];
 
+function driveRootFor(syncRoot: string): string {
+  const trimmed = syncRoot.replace(/[\\/]+$/, "");
+  return trimmed.includes("\\") ? `${trimmed}\\项目网盘` : `${trimmed}/项目网盘`;
+}
+
 export function Onboarding() {
   const nav = useNavigate();
   const [step, setStep] = useState(0);
@@ -76,7 +81,7 @@ export function Onboarding() {
     try {
       await invoke("set_config", { patch: {
         sync_root: syncRoot,
-        drive_sync_root: `${syncRoot}\\项目网盘`,
+        drive_sync_root: driveRootFor(syncRoot),
         drive_sync_mode: driveMode,
         drive_sync_enabled: driveMode !== "off",
       }});
@@ -133,7 +138,7 @@ export function Onboarding() {
               <div className="flex items-center gap-2 text-ink"><UserRound className="h-4 w-4" /> 我是谁</div>
               <Input placeholder="昵称（用作团队识别）" value={nickname} onChange={(e) => setNickname(e.target.value)} />
               <div className="text-caption text-ink-faint">
-                第一次使用会创建账号；如果团队里已经有这个昵称，会直接登录到那个账号。
+                第一次使用会创建账号；如果昵称已被占用，请用已有设备登录或联系管理员处理。
               </div>
               <div className="pt-3 flex justify-between">
                 <Button variant="secondary" onClick={() => setStep(0)}>上一步</Button>

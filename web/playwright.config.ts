@@ -30,9 +30,9 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
-  // Set YQGL_USE_REMOTE=1 to skip the locally-launched uvicorn + vite servers
-  // (useful when the spec targets the prod backend at 192.168.0.224 and/or
-  // a separately-started client vite at 5174).
+  // Set YQGL_USE_REMOTE=1 to skip locally-launched uvicorn + vite servers
+  // (useful for client-only specs against a separately-started client vite
+  // at 5174, or for explicitly configured remote smoke runs).
   webServer: process.env.YQGL_USE_REMOTE === "1" ? [] : [
     {
       command: `python -m uvicorn main:app --app-dir app --host 127.0.0.1 --port ${apiPort}`,
@@ -68,6 +68,16 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "mobile",
+      use: { ...devices["Pixel 7"] },
+      testMatch: /screenshots\.spec\.ts|smoke\.spec\.ts/,
+    },
+    {
+      name: "ultrawide",
+      use: { ...devices["Desktop Chrome"], viewport: { width: 1920, height: 1080 } },
+      testMatch: /screenshots\.spec\.ts|smoke\.spec\.ts/,
     },
   ],
 });

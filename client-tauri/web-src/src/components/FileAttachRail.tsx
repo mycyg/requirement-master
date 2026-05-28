@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { File as FileIcon, FolderOpen, Loader2, Plus, RefreshCw, Watch } from "lucide-react";
 import { Badge, Button, Progress, Switch, toast } from "@yqgl/shared";
-import { invoke, useEvent } from "@/lib/tauri";
+import { invoke } from "@/lib/tauri";
 import { listen } from "@/lib/tauri";
 
 // Status values where the submitter can still legitimately add files via

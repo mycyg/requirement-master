@@ -1,7 +1,7 @@
 use tauri::{AppHandle, State};
 
 use crate::config::ConfigState;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::sync;
 
 #[tauri::command]
@@ -24,5 +24,13 @@ pub async fn trigger_drive_sync(
     state: State<'_, ConfigState>,
     project_id: String,
 ) -> Result<()> {
+    let cfg = state.inner().read();
+    if !cfg.drive_sync_enabled || cfg.drive_sync_paused || cfg.drive_sync_mode == "off" {
+        return Err(Error::Other("project drive sync is disabled or paused".into()));
+    }
+    if cfg.drive_sync_mode == "two_way" {
+        return Err(Error::Other("two-way drive sync is not available in this build; use download-only mode".into()));
+    }
+    drop(cfg);
     sync::sync_drive_download(app, ConfigState::clone(state.inner()), project_id).await
 }

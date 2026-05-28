@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, selectinload
 
 from config import settings
@@ -66,7 +67,16 @@ def _read_json(raw: str | None) -> str:
 def _requirement_visible(db: Session, req_id: str | None, user: User) -> bool:
     if not req_id:
         return True
-    req = db.query(Requirement).filter(Requirement.id == req_id).first()
+    req = (
+        db.query(Requirement)
+        .join(Project, Project.id == Requirement.project_id)
+        .filter(
+            Requirement.id == req_id,
+            Project.archived == False,  # noqa: E712
+            Project.deleted_at.is_(None),
+        )
+        .first()
+    )
     return bool(req and can_view_requirement_record(req, user))
 
 
@@ -92,6 +102,8 @@ def _source_docs(db: Session, project_id: str | None = None) -> Iterable[SourceD
 
     req_q = (
         db.query(Requirement)
+        .join(Project, Project.id == Requirement.project_id)
+        .filter(Project.archived == False, Project.deleted_at.is_(None))  # noqa: E712
         .options(selectinload(Requirement.assignments), selectinload(Requirement.workspaces))
     )
     if project_id:
@@ -123,12 +135,17 @@ def _source_docs(db: Session, project_id: str | None = None) -> Iterable[SourceD
     chat_q = (
         db.query(ChatMessage)
         .join(Requirement, Requirement.id == ChatMessage.requirement_id)
+        .join(Project, Project.id == Requirement.project_id)
         .outerjoin(User, User.id == Requirement.submitter_user_id)
-        .filter(User.deleted_at.is_(None))
+        .filter(
+            User.deleted_at.is_(None),
+            Project.archived == False,  # noqa: E712
+            Project.deleted_at.is_(None),
+        )
     )
     if project_id:
         chat_q = chat_q.filter(Requirement.project_id == project_id)
-    for m in chat_q.limit(5000).all():
+    for m in chat_q.yield_per(500):
         yield SourceDoc(
             source_type="chat",
             source_id=m.id,
@@ -139,7 +156,12 @@ def _source_docs(db: Session, project_id: str | None = None) -> Iterable[SourceD
             content=f"# Chat {m.kind}\n\nRole: {m.role}\n\n{_read_json(m.content_json)}\n\nSelected: {m.selected_option_key or ''}\n\nOther: {m.user_other_text or ''}",
         )
 
-    comment_q = db.query(Comment, Requirement).join(Requirement, Requirement.id == Comment.requirement_id)
+    comment_q = (
+        db.query(Comment, Requirement)
+        .join(Requirement, Requirement.id == Comment.requirement_id)
+        .join(Project, Project.id == Requirement.project_id)
+        .filter(Project.archived == False, Project.deleted_at.is_(None))  # noqa: E712
+    )
     if project_id:
         comment_q = comment_q.filter(Requirement.project_id == project_id)
     for c, req in comment_q.all():
@@ -153,10 +175,15 @@ def _source_docs(db: Session, project_id: str | None = None) -> Iterable[SourceD
             content=f"# 评论\n\nAuthor: {c.author_nickname}\n\n{c.body}",
         )
 
-    activity_q = db.query(ActivityLog, Requirement).join(Requirement, Requirement.id == ActivityLog.requirement_id)
+    activity_q = (
+        db.query(ActivityLog, Requirement)
+        .join(Requirement, Requirement.id == ActivityLog.requirement_id)
+        .join(Project, Project.id == Requirement.project_id)
+        .filter(Project.archived == False, Project.deleted_at.is_(None))  # noqa: E712
+    )
     if project_id:
         activity_q = activity_q.filter(Requirement.project_id == project_id)
-    for a, req in activity_q.limit(5000).all():
+    for a, req in activity_q.yield_per(500):
         yield SourceDoc(
             source_type="activity",
             source_id=a.id,
@@ -169,10 +196,10 @@ def _source_docs(db: Session, project_id: str | None = None) -> Iterable[SourceD
 
     update_q = db.query(RequirementProgressUpdate, Requirement).join(
         Requirement, Requirement.id == RequirementProgressUpdate.requirement_id
-    )
+    ).join(Project, Project.id == Requirement.project_id).filter(Project.archived == False, Project.deleted_at.is_(None))  # noqa: E712
     if project_id:
         update_q = update_q.filter(Requirement.project_id == project_id)
-    for u, req in update_q.limit(5000).all():
+    for u, req in update_q.yield_per(500):
         yield SourceDoc(
             source_type="workspace_update",
             source_id=u.id,
@@ -183,7 +210,11 @@ def _source_docs(db: Session, project_id: str | None = None) -> Iterable[SourceD
             content=f"# 工作区动态\n\nActor: {u.actor_nickname}\nKind: {u.kind}\nPhase: {u.phase or ''}\nProgress: {u.progress_percent or ''}\n\n{u.body}",
         )
 
-    meeting_q = db.query(MeetingRecord)
+    meeting_q = (
+        db.query(MeetingRecord)
+        .join(Project, Project.id == MeetingRecord.project_id)
+        .filter(Project.archived == False, Project.deleted_at.is_(None))  # noqa: E712
+    )
     if project_id:
         meeting_q = meeting_q.filter(MeetingRecord.project_id == project_id)
     for m in meeting_q.all():
@@ -196,7 +227,12 @@ def _source_docs(db: Session, project_id: str | None = None) -> Iterable[SourceD
             source_url=f"/p/{m.project_id}/meetings",
             content=f"# 会议：{m.title}\n\n## Transcript\n{m.transcript_text or ''}\n\n## Minutes\n{m.minutes_md or ''}",
         )
-    insight_q = db.query(MeetingInsight).join(MeetingRecord, MeetingRecord.id == MeetingInsight.meeting_id)
+    insight_q = (
+        db.query(MeetingInsight)
+        .join(MeetingRecord, MeetingRecord.id == MeetingInsight.meeting_id)
+        .join(Project, Project.id == MeetingRecord.project_id)
+        .filter(Project.archived == False, Project.deleted_at.is_(None))  # noqa: E712
+    )
     if project_id:
         insight_q = insight_q.filter(MeetingRecord.project_id == project_id)
     for i in insight_q.all():
@@ -213,11 +249,17 @@ def _source_docs(db: Session, project_id: str | None = None) -> Iterable[SourceD
     drive_q = (
         db.query(ProjectDriveVersion)
         .join(ProjectDriveItem, ProjectDriveItem.id == ProjectDriveVersion.item_id)
-        .filter(ProjectDriveItem.deleted_at.is_(None))
+        .join(Project, Project.id == ProjectDriveItem.project_id)
+        .filter(
+            ProjectDriveItem.deleted_at.is_(None),
+            ProjectDriveVersion.id == ProjectDriveItem.current_version_id,
+            Project.archived == False,  # noqa: E712
+            Project.deleted_at.is_(None),
+        )
     )
     if project_id:
         drive_q = drive_q.filter(ProjectDriveItem.project_id == project_id)
-    for v in drive_q.limit(5000).all():
+    for v in drive_q.yield_per(200):
         text = v.parsed_text or ""
         if v.parsed_text_path and Path(v.parsed_text_path).exists():
             try:
@@ -235,10 +277,15 @@ def _source_docs(db: Session, project_id: str | None = None) -> Iterable[SourceD
                 content=f"# 网盘文件：{v.filename}\n\n{text}",
             )
 
-    delivery_q = db.query(Delivery).join(Requirement, Requirement.id == Delivery.requirement_id)
+    delivery_q = (
+        db.query(Delivery)
+        .join(Requirement, Requirement.id == Delivery.requirement_id)
+        .join(Project, Project.id == Requirement.project_id)
+        .filter(Project.archived == False, Project.deleted_at.is_(None))  # noqa: E712
+    )
     if project_id:
         delivery_q = delivery_q.filter(Requirement.project_id == project_id)
-    for d in delivery_q.limit(5000).all():
+    for d in delivery_q.yield_per(500):
         yield SourceDoc(
             source_type="delivery",
             source_id=d.id,
@@ -253,7 +300,9 @@ def _source_docs(db: Session, project_id: str | None = None) -> Iterable[SourceD
 def rebuild_knowledge_index(db: Session, project_id: str | None = None) -> int:
     CORPUS_ROOT.mkdir(parents=True, exist_ok=True)
     count = 0
+    seen: set[tuple[str, str]] = set()
     for src in _source_docs(db, project_id=project_id):
+        seen.add((src.source_type, src.source_id))
         content_hash = _hash(src.content)
         path = CORPUS_ROOT / _safe_name(src.source_type) / f"{_safe_name(src.source_id)}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -274,6 +323,18 @@ def rebuild_knowledge_index(db: Session, project_id: str | None = None) -> int:
         row.content_hash = content_hash
         row.updated_at = datetime.utcnow()
         count += 1
+    stale_q = db.query(KnowledgeDocument)
+    if project_id:
+        stale_q = stale_q.filter(KnowledgeDocument.project_id == project_id)
+    for row in stale_q.all():
+        if (row.source_type, row.source_id) in seen:
+            continue
+        if row.corpus_path:
+            try:
+                Path(row.corpus_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        db.delete(row)
     db.commit()
     return count
 
@@ -373,6 +434,12 @@ def search_knowledge(
     # If the corpus is missing for a few seconds after a fresh write,
     # the next search will simply miss those rows — acceptable.
     doc_q = db.query(KnowledgeDocument)
+    doc_q = doc_q.outerjoin(Project, KnowledgeDocument.project_id == Project.id).filter(
+        or_(
+            KnowledgeDocument.project_id.is_(None),
+            and_(Project.archived == False, Project.deleted_at.is_(None)),  # noqa: E712
+        )
+    )
     if project_id:
         doc_q = doc_q.filter(KnowledgeDocument.project_id == project_id)
     if scope:

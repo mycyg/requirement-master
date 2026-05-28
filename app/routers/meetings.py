@@ -27,6 +27,7 @@ from schemas import (
 )
 from services.jobs import create_job, publish_job, update_job
 from services.meeting_agent import analyze_meeting
+from services.permissions import can_view_requirement_record
 from services.push_bus import bus
 
 router = APIRouter(prefix="/api", tags=["meetings"])
@@ -79,6 +80,7 @@ def _require_meeting(db: Session, meeting_id: str) -> MeetingRecord:
     )
     if not meeting:
         raise HTTPException(status_code=404, detail="meeting not found")
+    _require_project(db, meeting.project_id)
     return meeting
 
 
@@ -152,7 +154,7 @@ def init_meeting_upload(
         raise HTTPException(status_code=400, detail="total_chunks does not match configured chunk size")
     if payload.requirement_id:
         req = db.query(Requirement).filter(Requirement.id == payload.requirement_id, Requirement.project_id == project_id).first()
-        if not req:
+        if not req or not can_view_requirement_record(req, user):
             raise HTTPException(status_code=400, detail="requirement_id must belong to this project")
     upload_id = uuid.uuid4().hex
     pdir = _partial_dir(upload_id)
@@ -414,6 +416,7 @@ async def confirm_meeting_insight(
         raise HTTPException(status_code=403, detail="only the meeting uploader can confirm this insight")
     if insight.status != "pending":
         return _insight_out(insight)
+    _require_project(db, meeting.project_id)
     # Atomic CAS — double-click on "confirm" would otherwise pass the
     # `!= "pending"` check twice, both bump project.next_seq, both
     # insert duplicate Requirement rows (one 500s on uq constraint, but
@@ -429,7 +432,13 @@ async def confirm_meeting_insight(
         # Someone else won the race — return the latest state.
         db.refresh(insight)
         return _insight_out(insight)
-    db.refresh(insight)
+    # Persist the state transition before creating the draft requirement.
+    # If the later requirement-code allocation hits an IntegrityError and
+    # rolls back, the insight must not become pending again.
+    db.commit()
+    insight = db.query(MeetingInsight).filter(MeetingInsight.id == insight_id).first()
+    if not insight:
+        raise HTTPException(status_code=404, detail="meeting insight not found")
     if insight.kind in {"new_requirement", "requirement_change"}:
         # Retry on next_seq race with another insight-confirm / requirement-
         # create / drive-comment running in parallel. Without this, concurrent
@@ -466,7 +475,7 @@ async def confirm_meeting_insight(
             except IntegrityError as e:
                 db.rollback()
                 last_err = e
-                # Re-load insight after rollback since rollback wipes its state.
+                # Re-load insight after rollback since rollback wipes ORM state.
                 insight = db.query(MeetingInsight).filter(MeetingInsight.id == insight_id).first()
                 if not insight:
                     raise HTTPException(status_code=404, detail="meeting insight not found")

@@ -34,7 +34,7 @@ def main() -> None:
 
         from db import SessionLocal, engine
         from main import app
-        from models import Requirement
+        from models import Requirement, User
         due = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
 
         with TestClient(app) as alice, TestClient(app) as bob, TestClient(app) as carl, TestClient(app) as dana:
@@ -50,6 +50,9 @@ def main() -> None:
             r = dana.post("/api/auth/identify", json={"nickname": "dana"})
             expect(200, r.status_code, r.text)
             dana_id = r.json()["id"]
+            with TestClient(app) as intruder:
+                r = intruder.post("/api/auth/identify", json={"nickname": "alice"})
+                expect(409, r.status_code, r.text)
 
             def register_device(client, name: str) -> tuple[dict[str, str], str]:
                 resp = client.post(
@@ -460,6 +463,15 @@ def main() -> None:
             r = carl.get(f"/api/requirements/{assigned_id}/sync-manifest", headers=carl_local)
             expect(200, r.status_code, r.text)
             assert r.json()["acceptance_items"] and r.json()["task_plans"], r.text
+
+            db = SessionLocal()
+            try:
+                alice_user = db.query(User).filter(User.id == alice_id).first()
+                assert alice_user is not None
+                alice_user.is_admin = True
+                db.commit()
+            finally:
+                db.close()
 
             r = alice.post("/api/knowledge/reindex", json={})
             expect(200, r.status_code, r.text)

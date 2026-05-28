@@ -4,13 +4,14 @@ import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, exists, or_
+from sqlalchemy.orm import Session, aliased
 
 from auth import current_user
 from db import get_db
-from models import Project, Requirement, ScheduleEvent, User
+from models import Project, Requirement, RequirementAssignment, ScheduleEvent, User
 from schemas import ScheduleEventCreateIn, ScheduleEventOut, ScheduleEventPatchIn
+from services.permissions import PRIVATE_REQUIREMENT_STATUSES, can_view_requirement_record
 from services.schedule import decode_participants, encode_participants
 
 router = APIRouter(prefix="/api/calendar", tags=["calendar"])
@@ -40,11 +41,40 @@ def _require_event(db: Session, event_id: str) -> ScheduleEvent:
     return event
 
 
-def _validate_links(db: Session, project_id: str | None, requirement_id: str | None) -> None:
-    if project_id and not db.query(Project.id).filter(Project.id == project_id).first():
+def _validate_links(db: Session, project_id: str | None, requirement_id: str | None, user: User) -> None:
+    if project_id and not db.query(Project.id).filter(
+        Project.id == project_id,
+        Project.archived == False,  # noqa: E712
+        Project.deleted_at.is_(None),
+    ).first():
         raise HTTPException(status_code=404, detail="project not found")
-    if requirement_id and not db.query(Requirement.id).filter(Requirement.id == requirement_id).first():
-        raise HTTPException(status_code=404, detail="requirement not found")
+    if requirement_id:
+        req = (
+            db.query(Requirement)
+            .join(Project, Project.id == Requirement.project_id)
+            .filter(
+                Requirement.id == requirement_id,
+                Project.archived == False,  # noqa: E712
+                Project.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if not req or not can_view_requirement_record(req, user):
+            raise HTTPException(status_code=404, detail="requirement not found")
+        if project_id and req.project_id != project_id:
+            raise HTTPException(status_code=400, detail="requirement_id must belong to project_id")
+
+
+def _visible_event(db: Session, event: ScheduleEvent, user: User) -> bool:
+    if event.project_id:
+        project = db.query(Project).filter(Project.id == event.project_id).first()
+        if not project or project.archived or project.deleted_at:
+            return False
+    if event.requirement_id:
+        req = db.query(Requirement).filter(Requirement.id == event.requirement_id).first()
+        if not req or not can_view_requirement_record(req, user):
+            return False
+    return True
 
 
 @router.get("/events", response_model=list[ScheduleEventOut])
@@ -56,7 +86,33 @@ def list_events(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> list[ScheduleEventOut]:
-    q = db.query(ScheduleEvent)
+    event_project = aliased(Project)
+    req_project = aliased(Project)
+    assigned_exists = exists().where(and_(
+        RequirementAssignment.requirement_id == ScheduleEvent.requirement_id,
+        RequirementAssignment.user_id == user.id,
+    ))
+    q = (
+        db.query(ScheduleEvent)
+        .outerjoin(event_project, event_project.id == ScheduleEvent.project_id)
+        .outerjoin(Requirement, Requirement.id == ScheduleEvent.requirement_id)
+        .outerjoin(req_project, req_project.id == Requirement.project_id)
+        .filter(or_(ScheduleEvent.project_id.is_(None), and_(
+            event_project.archived == False,  # noqa: E712
+            event_project.deleted_at.is_(None),
+        )))
+        .filter(or_(ScheduleEvent.requirement_id.is_(None), and_(
+            Requirement.id.isnot(None),
+            req_project.archived == False,  # noqa: E712
+            req_project.deleted_at.is_(None),
+            or_(
+                ~Requirement.status.in_(PRIVATE_REQUIREMENT_STATUSES),
+                Requirement.submitter_user_id == user.id,
+                Requirement.claimed_by_user_id == user.id,
+                assigned_exists,
+            ),
+        )))
+    )
     if project_id:
         q = q.filter(ScheduleEvent.project_id == project_id)
     if start:
@@ -64,7 +120,7 @@ def list_events(
     if end:
         q = q.filter(ScheduleEvent.start_at.is_(None) | (ScheduleEvent.start_at <= end))
         q = q.filter(ScheduleEvent.end_at <= end)
-    rows = q.order_by(ScheduleEvent.end_at.asc()).limit(500).all()
+    rows = [ev for ev in q.order_by(ScheduleEvent.end_at.asc()).limit(500).all() if _visible_event(db, ev, user)]
     if mine:
         rows = [
             ev for ev in rows
@@ -79,7 +135,7 @@ def create_event(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> ScheduleEventOut:
-    _validate_links(db, payload.project_id, payload.requirement_id)
+    _validate_links(db, payload.project_id, payload.requirement_id, user)
     participants = payload.participant_user_ids or [user.id]
     event = ScheduleEvent(
         project_id=payload.project_id,
@@ -110,7 +166,7 @@ def patch_event(
         raise HTTPException(status_code=403, detail="only the creator can edit this event")
     project_id = payload.project_id if "project_id" in payload.model_fields_set else event.project_id
     requirement_id = payload.requirement_id if "requirement_id" in payload.model_fields_set else event.requirement_id
-    _validate_links(db, project_id, requirement_id)
+    _validate_links(db, project_id, requirement_id, user)
     if payload.title is not None:
         event.title = payload.title.strip()
     if "description" in payload.model_fields_set:

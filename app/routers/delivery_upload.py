@@ -13,12 +13,13 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from auth import require_local_client
 from config import settings
 from db import SessionLocal, get_db
-from models import Delivery, Requirement, RequirementAssignment, User
+from models import Delivery, Project, Requirement, RequirementAssignment, User
 from services.activity import log_activity
 from services.assignments import ensure_public_claim_assignment, sync_legacy_lead
 from services.delivery_doc import generate_doc, inspect_zip_entries, list_zip_files
@@ -59,8 +60,13 @@ def _expected_chunk_size(meta: dict, idx: int) -> int:
 def _require_req(db: Session, req_id: str) -> Requirement:
     r = (
         db.query(Requirement)
+        .join(Project, Project.id == Requirement.project_id)
         .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
-        .filter(Requirement.id == req_id)
+        .filter(
+            Requirement.id == req_id,
+            Project.archived == False,  # noqa: E712
+            Project.deleted_at.is_(None),
+        )
         .first()
     )
     if not r:
@@ -194,14 +200,13 @@ async def finalize(
                 detail=f"chunk {idx} size mismatch: got {c.stat().st_size}, expected {expected_size}",
             )
 
-    round_num = 1 + db.query(Delivery).filter(Delivery.requirement_id == req_id).count()
     out_dir = settings.data_dir / "deliveries" / req_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"round-{round_num}.zip"
+    tmp_path = out_dir / f".{upload_id}.zip.tmp"
 
     h = hashlib.sha256()
     total = 0
-    with open(out_path, "wb") as out:
+    with open(tmp_path, "wb") as out:
         for c in chunks:
             with open(c, "rb") as src:
                 while True:
@@ -211,13 +216,13 @@ async def finalize(
                     h.update(buf)
                     total += len(buf)
     if total != meta["total_size"]:
-        os.unlink(out_path)
+        tmp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=f"size mismatch: got {total}, expected {meta['total_size']}")
 
     try:
-        file_count = len(inspect_zip_entries(out_path))
+        file_count = len(inspect_zip_entries(tmp_path))
     except Exception as e:
-        os.unlink(out_path)
+        tmp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=f"invalid delivery zip: {e}")
 
     # Atomic CAS — without this, a submitter who cancelled the requirement
@@ -234,15 +239,15 @@ async def finalize(
         .values(status="delivery_doc_pending", delivered_at=datetime.utcnow())
     )
     if cas.rowcount == 0:
-        # Lost the race or status changed. Cleanup the just-written zip
-        # to avoid orphan files.
-        try: os.unlink(out_path)
-        except Exception: pass
+        tmp_path.unlink(missing_ok=True)
         db.rollback()
         r2 = db.query(Requirement).filter(Requirement.id == req_id).first()
         current = r2.status if r2 else "deleted"
         raise HTTPException(status_code=409, detail=f"deliver race: requirement is now {current}")
     db.refresh(r)
+    round_num = 1 + db.query(Delivery).filter(Delivery.requirement_id == req_id).count()
+    out_path = out_dir / f"round-{round_num}.zip"
+    os.replace(tmp_path, out_path)
     d = Delivery(
         requirement_id=req_id, round=round_num,
         package_path=str(out_path), package_size=total,
@@ -250,20 +255,29 @@ async def finalize(
         delivery_doc_md="（AI 正在撰写交付文档…）",
         submitted_by_nickname=user.nickname,
     )
-    db.add(d)
-    ensure_workspaces_for_assignments(db, r)
-    sync_workspace_to_status(db, r, user)
-    log_activity(
-        db, requirement_id=req_id, actor_nickname=user.nickname,
-        action="status_changed", detail={"to": "delivery_doc_pending", "round": round_num, "files": file_count},
-    )
-    # Submitter notification — they need to know delivery just happened, even
-    # though the AI doc isn't ready yet. The "delivered" notification fires
-    # later from _finalize_doc when status flips to delivered.
-    from services.lifecycle import queue_status_notifications, flush_status_notifications
-    pending = queue_status_notifications(db, r, "delivery_doc_pending", user)
-    db.commit()
-    db.refresh(d)
+    try:
+        db.add(d)
+        ensure_workspaces_for_assignments(db, r)
+        sync_workspace_to_status(db, r, user)
+        log_activity(
+            db, requirement_id=req_id, actor_nickname=user.nickname,
+            action="status_changed", detail={"to": "delivery_doc_pending", "round": round_num, "files": file_count},
+        )
+        # Submitter notification — they need to know delivery just happened, even
+        # though the AI doc isn't ready yet. The "delivered" notification fires
+        # later from _finalize_doc when status flips to delivered.
+        from services.lifecycle import queue_status_notifications, flush_status_notifications
+        pending = queue_status_notifications(db, r, "delivery_doc_pending", user)
+        db.commit()
+        db.refresh(d)
+    except IntegrityError:
+        db.rollback()
+        out_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=409, detail="delivery round already exists; refresh and retry")
+    except Exception:
+        db.rollback()
+        out_path.unlink(missing_ok=True)
+        raise
 
     shutil.rmtree(pdir, ignore_errors=True)
 

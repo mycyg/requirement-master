@@ -26,6 +26,10 @@ async function identify(page: Page, nickname: string) {
   await page.getByPlaceholder(/比如/).fill(nickname);
   await page.getByRole("button", { name: /进入/ }).click();
   await expect(page.getByText(nickname, { exact: true })).toBeVisible({ timeout: 10_000 });
+  const skip = page.getByRole("button", { name: /跳过引导/ });
+  if (await skip.isVisible().catch(() => false)) {
+    await skip.click();
+  }
 }
 
 function recordConsoleErrors(page: Page): string[] {
@@ -91,6 +95,7 @@ test("逐页访问 + 截图（不崩即通过）", async ({ page }) => {
     // Page must render at least a header / main content
     const body = await page.locator("body").innerText();
     expect(body.length, `Empty body at ${r.path}`).toBeGreaterThan(20);
+    await expect(page.getByRole("heading", { name: r.heading }).first(), `Missing heading at ${r.path}`).toBeVisible();
   }
 
   const filtered = errors.filter(

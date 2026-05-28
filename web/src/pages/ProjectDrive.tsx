@@ -258,6 +258,7 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
 
   const deleteSelected = async () => {
     if (!selected.length) return;
+    if (!window.confirm(`确定把选中的 ${selected.length} 项放到回收站？`)) return;
     setBusy("丢进回收站");
     try {
       await api.bulkDeleteDriveItems(selected);
@@ -353,8 +354,7 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
           // Confirm before destructive action — `Delete` is too easy to
           // hit by accident, and although files go to Trash first,
           // hitting it on a folder full of files is jarring.
-          const ok = window.confirm(`确定把选中的 ${selected.length} 项放到回收站？`);
-          if (ok) deleteSelected();
+          deleteSelected();
         }
       } else if (e.key === "F2" && selected.length === 1) {
         e.preventDefault();
@@ -458,22 +458,26 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
                     </label>
                   </>
                 )}
-                <button className="button-secondary min-h-9 px-3 py-1.5 text-xs" disabled={!selected.length} onClick={() => setClipboard({ mode: "copy", itemIds: selected })}>
-                  <Copy className="h-4 w-4" />
-                  复制
-                </button>
-                <button className="button-secondary min-h-9 px-3 py-1.5 text-xs" disabled={!selected.length || trash} onClick={() => setClipboard({ mode: "cut", itemIds: selected })}>
-                  <Scissors className="h-4 w-4" />
-                  剪切
-                </button>
-                <button className="button-secondary min-h-9 px-3 py-1.5 text-xs" disabled={!clipboard || trash} onClick={paste}>
-                  <Clipboard className="h-4 w-4" />
-                  粘贴
-                </button>
-                <button className="button-secondary min-h-9 px-3 py-1.5 text-xs" disabled={!selected.length} onClick={downloadSelected}>
-                  <Download className="h-4 w-4" />
-                  下载
-                </button>
+                {!trash && (
+                  <>
+                    <button className="button-secondary min-h-9 px-3 py-1.5 text-xs" disabled={!selected.length} onClick={() => setClipboard({ mode: "copy", itemIds: selected })}>
+                      <Copy className="h-4 w-4" />
+                      复制
+                    </button>
+                    <button className="button-secondary min-h-9 px-3 py-1.5 text-xs" disabled={!selected.length} onClick={() => setClipboard({ mode: "cut", itemIds: selected })}>
+                      <Scissors className="h-4 w-4" />
+                      剪切
+                    </button>
+                    <button className="button-secondary min-h-9 px-3 py-1.5 text-xs" disabled={!clipboard} onClick={paste}>
+                      <Clipboard className="h-4 w-4" />
+                      粘贴
+                    </button>
+                    <button className="button-secondary min-h-9 px-3 py-1.5 text-xs" disabled={!selected.length} onClick={downloadSelected}>
+                      <Download className="h-4 w-4" />
+                      下载
+                    </button>
+                  </>
+                )}
                 {trash ? (
                   <button className="button-secondary min-h-9 px-3 py-1.5 text-xs" disabled={!selected.length} onClick={restoreSelected}>
                     <ArchiveRestore className="h-4 w-4" />
@@ -494,6 +498,7 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
                     <button
                       key={mode as string}
                       className={`grid h-9 w-9 place-items-center ${view === mode ? "bg-stone-900 text-[#fffdf8]" : "text-stone-600 hover:bg-stone-900/5"}`}
+                      aria-label={mode === "list" ? "切换到列表视图" : mode === "grid" ? "切换到平铺视图" : "切换到树状视图"}
                       title={mode === "list" ? "列表" : mode === "grid" ? "平铺" : "树"}
                       onClick={() => setView(mode as ViewMode)}
                     >
@@ -508,7 +513,7 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
               <div className="flex flex-wrap items-center gap-2 border-b border-stone-200/80 px-4 py-2 text-xs">
                 {busy && <span className="pill"><Loader2 className="h-3.5 w-3.5 animate-spin" />{busy}</span>}
                 {clipboard && <span className="pill">{clipboard.mode === "copy" ? "复制" : "剪切"}了 {clipboard.itemIds.length} 项</span>}
-                {err && <span className="pill border-red-200 bg-red-50 text-red-700">{err}<button onClick={() => setErr(null)}><X className="h-3 w-3" /></button></span>}
+                {err && <span className="pill border-red-200 bg-red-50 text-red-700">{err}<button aria-label="关闭错误" onClick={() => setErr(null)}><X className="h-3 w-3" aria-hidden="true" /></button></span>}
               </div>
             )}
 
@@ -525,7 +530,7 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
                       className={`min-h-32 rounded-lg border p-3 text-left transition hover:-translate-y-0.5 hover:bg-white ${
                         selected.includes(item.id) ? "border-stone-950 bg-white" : "border-stone-200 bg-[#fffdf8]"
                       }`}
-                      onClick={(e) => e.detail === 2 ? previewItem(item) : toggleSelected(item.id)}
+                      onClick={(e) => !trash && e.detail === 2 ? previewItem(item) : toggleSelected(item.id)}
                     >
                       <div className="flex items-center justify-between">
                         {fileIcon(item)}
@@ -556,8 +561,8 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
                     <thead className="text-xs uppercase text-stone-400">
                       <tr>
                         <th className="w-10 px-2 py-2">
-                          <button onClick={() => setSelected(selected.length === drive?.items.length ? [] : (drive?.items.map((i) => i.id) ?? []))}>
-                            {selected.length && selected.length === drive?.items.length ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+                          <button aria-label="全选文件" onClick={() => setSelected(selected.length === drive?.items.length ? [] : (drive?.items.map((i) => i.id) ?? []))}>
+                            {selected.length && selected.length === drive?.items.length ? <CheckSquare className="h-4 w-4" aria-hidden="true" /> : <Square className="h-4 w-4" aria-hidden="true" />}
                           </button>
                         </th>
                         <th className="px-2 py-2">名称</th>
@@ -571,7 +576,7 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
                       {drive?.items.map((item) => (
                         <tr key={item.id} className={`group ${selected.includes(item.id) ? "bg-white" : "hover:bg-white/70"}`}>
                           <td className="px-2 py-2">
-                            <button onClick={() => toggleSelected(item.id)}>{selected.includes(item.id) ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4 text-stone-300" />}</button>
+                            <button aria-label={`选择 ${item.name}`} onClick={() => toggleSelected(item.id)}>{selected.includes(item.id) ? <CheckSquare className="h-4 w-4" aria-hidden="true" /> : <Square className="h-4 w-4 text-stone-300" aria-hidden="true" />}</button>
                           </td>
                           <td className="max-w-[360px] px-2 py-2">
                             <div className="flex min-w-0 items-center gap-2">
@@ -589,9 +594,13 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
                                   }}
                                 />
                               ) : (
+                                trash ? (
+                                  <span className="truncate font-medium text-stone-700">{item.name}</span>
+                                ) : (
                                 <button className="truncate font-medium hover:underline" onDoubleClick={() => previewItem(item)} onClick={() => item.kind === "folder" ? openFolder(item.id) : previewItem(item)}>
                                   {item.name}
                                 </button>
+                                )
                               )}
                             </div>
                           </td>
@@ -600,9 +609,10 @@ export function ProjectDrive({ explicitProjectId }: { explicitProjectId?: string
                           <td className="px-2 py-2 text-stone-500">{dateLabel(item.updated_at)}</td>
                           <td className="px-2 py-2">
                             <div className="flex gap-1">
-                              {item.kind === "file" && <button className="button-ghost min-h-8 w-8 px-0" title="预览" onClick={() => previewItem(item)}><Eye className="h-4 w-4" /></button>}
-                              {item.kind === "file" && <a className="button-ghost min-h-8 w-8 px-0" title="下载" href={api.driveDownloadUrl(item.id)}><Download className="h-4 w-4" /></a>}
-                              <button className="button-ghost min-h-8 w-8 px-0" title="重命名" onClick={() => setRenaming({ id: item.id, name: item.name })}><File className="h-4 w-4" /></button>
+                              {!trash && item.kind === "file" && <button className="button-ghost min-h-8 w-8 px-0" aria-label={`预览 ${item.name}`} title="预览" onClick={() => previewItem(item)}><Eye className="h-4 w-4" aria-hidden="true" /></button>}
+                              {!trash && item.kind === "file" && <a className="button-ghost min-h-8 w-8 px-0" aria-label={`下载 ${item.name}`} title="下载" href={api.driveDownloadUrl(item.id)}><Download className="h-4 w-4" aria-hidden="true" /></a>}
+                              {!trash && <button className="button-ghost min-h-8 w-8 px-0" aria-label={`重命名 ${item.name}`} title="重命名" onClick={() => setRenaming({ id: item.id, name: item.name })}><File className="h-4 w-4" aria-hidden="true" /></button>}
+                              {trash && <span className="text-xs text-stone-400">可恢复</span>}
                             </div>
                           </td>
                         </tr>

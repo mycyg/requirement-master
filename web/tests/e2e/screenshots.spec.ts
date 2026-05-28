@@ -5,7 +5,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 const OUT = path.resolve(process.cwd(), "..", "screenshots", "aurora");
 
@@ -21,6 +21,10 @@ async function identify(page: Page, nickname: string) {
   await page.getByPlaceholder(/比如/).fill(nickname);
   await page.getByRole("button", { name: /进入/ }).click();
   await expect(page.getByText(nickname, { exact: true })).toBeVisible({ timeout: 10_000 });
+  const skip = page.getByRole("button", { name: /跳过引导/ });
+  if (await skip.isVisible().catch(() => false)) {
+    await skip.click();
+  }
 }
 
 async function setTheme(page: Page, mode: "light" | "dark") {
@@ -33,9 +37,19 @@ async function setTheme(page: Page, mode: "light" | "dark") {
   await page.waitForTimeout(200);
 }
 
-async function shoot(page: Page, name: string) {
-  const p = path.join(OUT, name);
-  await page.screenshot({ path: p, fullPage: true });
+async function shoot(page: Page, name: string, testInfo: TestInfo) {
+  const dir = testInfo.project.name === "chromium" ? OUT : path.join(OUT, testInfo.project.name);
+  fs.mkdirSync(dir, { recursive: true });
+  const finalPath = path.join(dir, name);
+  const tmpPath = path.join(dir, `${name}.${Date.now()}.tmp.png`);
+  await page.screenshot({ path: tmpPath, fullPage: true });
+  try {
+    fs.rmSync(finalPath, { force: true });
+    fs.renameSync(tmpPath, finalPath);
+  } catch {
+    fs.copyFileSync(tmpPath, finalPath);
+    fs.rmSync(tmpPath, { force: true });
+  }
 }
 
 const SHOTS = [
@@ -49,7 +63,7 @@ const SHOTS = [
   { path: "/drive", file: "08-drive" },
 ];
 
-test("视觉巡检：每页 light + dark 截图", async ({ page }) => {
+test("视觉巡检：每页 light + dark 截图", async ({ page }, testInfo) => {
   await identify(page, `shot-${stamp()}`);
 
   for (const mode of ["light", "dark"] as const) {
@@ -58,35 +72,35 @@ test("视觉巡检：每页 light + dark 截图", async ({ page }) => {
       await page.goto(s.path);
       await page.waitForLoadState("domcontentloaded");
       await page.waitForTimeout(500);
-      await shoot(page, `${s.file}.${mode}.png`);
+      await shoot(page, `${s.file}.${mode}.png`, testInfo);
     }
   }
 });
 
-test("交互流截图：5 步 wizard + 看板下拉 + ⌘K + 主题切换", async ({ page }) => {
+test("交互流截图：5 步 wizard + 看板下拉 + ⌘K + 主题切换", async ({ page }, testInfo) => {
   await identify(page, `flow-${stamp()}`);
   await setTheme(page, "light");
 
   // Glass top nav + dropdown open
   await page.getByRole("button", { name: /看板/ }).first().click();
   await page.waitForTimeout(200);
-  await shoot(page, "20-boards-dropdown-open.light.png");
+  await shoot(page, "20-boards-dropdown-open.light.png", testInfo);
   await page.keyboard.press("Escape");
 
   // ⌘K palette
   await page.keyboard.press("Control+k").catch(() => page.keyboard.press("Meta+k"));
   await page.waitForTimeout(200);
-  await shoot(page, "21-command-menu.light.png");
+  await shoot(page, "21-command-menu.light.png", testInfo);
   await page.getByPlaceholder(/搜索命令/).fill("排期");
   await page.waitForTimeout(200);
-  await shoot(page, "22-command-menu-search.light.png");
+  await shoot(page, "22-command-menu-search.light.png", testInfo);
   await page.keyboard.press("Escape");
 
   // Dark variant
   await setTheme(page, "dark");
   await page.keyboard.press("Control+k").catch(() => page.keyboard.press("Meta+k"));
   await page.waitForTimeout(200);
-  await shoot(page, "23-command-menu.dark.png");
+  await shoot(page, "23-command-menu.dark.png", testInfo);
   await page.keyboard.press("Escape");
 
   // 5-step wizard (create project + go to wizard)
@@ -100,12 +114,12 @@ test("交互流截图：5 步 wizard + 看板下拉 + ⌘K + 主题切换", asyn
   await page.getByRole("link", { name: new RegExp(name) }).first().click();
   await page.getByRole("link", { name: /提一条新需求/ }).click();
   await page.waitForTimeout(300);
-  await shoot(page, "30-wizard-step1.light.png");
+  await shoot(page, "30-wizard-step1.light.png", testInfo);
   await page.locator("textarea").first().fill("视觉巡检需求示例");
   await page.getByRole("button", { name: /下一步/ }).click();
   await page.waitForTimeout(300);
-  await shoot(page, "31-wizard-step2-assignee.light.png");
+  await shoot(page, "31-wizard-step2-assignee.light.png", testInfo);
   await page.getByRole("button", { name: /下一步/ }).click();
   await page.waitForTimeout(300);
-  await shoot(page, "32-wizard-step3-due.light.png");
+  await shoot(page, "32-wizard-step3-due.light.png", testInfo);
 });

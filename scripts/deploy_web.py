@@ -1,4 +1,4 @@
-"""Upload web/dist/ to /srv/yqgl/web/dist/ and restart yqgl-web."""
+"""Upload web/dist/ to /srv/yqgl/web/dist/ with safe release staging."""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -26,9 +26,17 @@ try:
     print(f"uploaded {n} files")
 
     print(f"\n== Atomic swap → {REMOTE} ==")
-    # If REMOTE exists, move it out of the way (instant), then move stage in.
-    # Both renames are within the same filesystem so they're atomic.
-    sudo(c, f"rm -rf {REMOTE_OLD} && (test -d {REMOTE} && mv {REMOTE} {REMOTE_OLD} || true) && mv {REMOTE_STAGE} {REMOTE}")
+    # Keep the live path present even if a swap fails. New installs use a
+    # release-dir symlink swap; older servers with a real dist/ directory get
+    # an in-place compatibility refresh so StaticFiles never sees a missing dir.
+    sudo(c, "mkdir -p /srv/yqgl/web/releases && "
+            f"release=/srv/yqgl/web/releases/dist-$(date +%Y%m%d%H%M%S) && "
+            f"mv {REMOTE_STAGE} \"$release\" && "
+            f"if [ -L {REMOTE} ] || [ ! -e {REMOTE} ]; then "
+            f"ln -sfn \"$release\" {REMOTE}.next && mv -Tf {REMOTE}.next {REMOTE}; "
+            f"else mkdir -p {REMOTE} && tar -C \"$release\" -cf - . | tar -C {REMOTE} -xf -; fi && "
+            "find /srv/yqgl/web/releases -maxdepth 1 -type d -name 'dist-*' "
+            "-printf '%T@ %p\\n' | sort -rn | awk 'NR>5 {print $2}' | xargs -r rm -rf")
     # Clean the .old backup AFTER the swap, in case anything went wrong
     # and we need to roll back manually.
     sudo(c, f"rm -rf {REMOTE_OLD}", check=False)
@@ -36,8 +44,8 @@ try:
     print("\n== Smoke check (no restart needed for static-only changes) ==")
     # web/dist is served by StaticFiles which reads from disk on each
     # request — no service reload needed for static-only changes.
-    run(c, "curl -sS -o /dev/null -w 'health: %{http_code}\\n' http://127.0.0.1:8080/api/health", check=False)
-    run(c, "curl -sS -o /dev/null -w 'root: %{http_code}\\n' http://127.0.0.1:8080/", check=False)
-    run(c, "curl -sS -o /dev/null -w 'spa /p/123: %{http_code}\\n' http://127.0.0.1:8080/p/123", check=False)
+    run(c, "curl -fsS -o /dev/null -w 'health: %{http_code}\\n' http://127.0.0.1:8080/api/health")
+    run(c, "curl -fsS -o /dev/null -w 'root: %{http_code}\\n' http://127.0.0.1:8080/")
+    run(c, "curl -fsS -o /dev/null -w 'spa /p/123: %{http_code}\\n' http://127.0.0.1:8080/p/123")
 finally:
     c.close()

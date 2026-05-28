@@ -68,11 +68,10 @@ npx tauri build --no-bundle       # 出 target\release\yqgl-client.exe (~19MB)
 | `os error 17 ... 无法将文件移到不同的磁盘驱动器` | NSIS bundle 跨卷 rename bug，跳过 bundle 或换 Inno Setup |
 | Mica 未生效 | Win10 没有 Mica，自动回退 Acrylic |
 | Tray 不显示 | 任务栏「通知区域」需要打开图标显示 |
-| `failed to connect to 192.168.0.224` | Onboarding 重填 IP，或改 `%APPDATA%\yqgl\config.json` |
+| `failed to connect to 192.168.5.53` | Onboarding 重填 IP，或改客户端配置里的 `server_url` |
 
 ## 与旧 pywebview 客户端共存
 
-Tauri 客户端读写同一份 `%APPDATA%\yqgl\config.json`，字段同名兼容。
+Tauri 客户端会迁移旧 `%APPDATA%\yqgl\config.json`，之后读写 Tauri 标准配置目录。
 首次启动 Tauri 会复用老配置，无需重新登录或注册设备。
-默认 IP `192.168.0.224`，会自动把老配置里 `192.168.5.x` 改写到 `192.168.0.x`
-（针对旧 pywebview 客户端默认 IP 写错的兼容）。
+默认服务端使用 `192.168.5.x` 网段；团队部署入口是 `http://192.168.5.53:8080`。

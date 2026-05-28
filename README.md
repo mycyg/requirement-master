@@ -1,237 +1,237 @@
 # 需求管理大师 · yqgl
 
-> 一个 LAN 内网团队的 AI 原生需求中台：
-> **派活的人** 把需求写出来 → AI 助理帮你澄清打磨 → 投递给团队 →
-> **接活的人** 在桌面客户端接单、自动同步文件、把活做完交付 →
-> **派活的人** 在 Win11 系统右下角弹窗收到「等你验收」→ 一键通过或打回。
->
-> 全程不用追问"做完没"、不用群里 @ 谁。AI 写交付文档、文件自动同步、通知直达系统托盘。
+> 内网团队用的 AI 原生工作中台。派活的人把想法扔进来，AI 负责追问和整理；接活的人在本地工作台接单、同步文件、更新进度、交付；项目过程里的会议、网盘、知识库、排期、健康度和通知都留痕。
 
-![派活 Hub](screenshots/aurora/submitter/03-dispatch-hub-default.dark.png)
+![派活台](screenshots/aurora/submitter/03-dispatch-hub-default.dark.png)
 
-[功能亮点](#功能亮点) · [架构](#架构) · [快速开始](#快速开始) · [开发](#开发) · [技术栈](#技术栈)
+[功能](#功能) · [双端职责](#双端职责) · [快速开始](#快速开始) · [开发与测试](#开发与测试) · [部署](#部署)
 
 ---
 
-## 功能亮点
+## 功能
 
-### 双 Space 工作模式
+### 双端工作台
 
-Arc Browser 风格的双视角切换 — 同一份数据，不同的滤镜：
+- **Web 端**：派活、澄清、指定接单人、看排期/健康/知识库、验收和返工。
+- **本地端**：既能派活，也能接活；拥有本地文件、系统托盘、系统通知、项目同步和交付能力。
+- **同一个人可同时是派活人和接活人**，不引入复杂 RBAC；本地接活能力通过 client device token 校验。
 
-| Space | 主色 | 心智模型 |
+### 需求流程
+
+1. 新建项目。
+2. 提一条新需求：描述、负责人/协作者、DDL、附件。
+3. AI 澄清并生成结构化摘要。
+4. 投递到公开池或指定接单方。
+5. 本地端接活、拆解任务、更新个人工作区、交付。
+6. 派活人验收或打回。
+
+### 项目网盘
+
+- 项目级文件夹、列表/卡片视图、拖拽上传、预览、下载、批量操作。
+- PDF、Markdown、文本、代码、HTML、Office 文档文本预览。
+- 软删除、回收站、撤回。
+- 文件夹留言板：留言先经 LLM 判断，普通留言入板，需求变更会生成草稿并走澄清流程。
+- 知识库会即时索引网盘解析文本，便于 grep 搜索。
+
+### 会议纪要
+
+- 上传会议录音或文本。
+- 后台 ASR/LLM 任务有进度。
+- 自动生成纪要和新增/变更需求洞察。
+- 洞察需要人工确认，确认后生成需求草稿，不直接改原需求。
+
+### 知识库与 grep Agent
+
+- 不使用 embedding，不接向量库。
+- 后端把需求、会议、留言、工作区、网盘解析文本、交付文档生成 Markdown 语料。
+- 搜索和问答只基于受控 grep 结果；没有证据时明确说没找到。
+
+### 排期、通知与健康度
+
+- 资源排期按接单人、DDL、估算工时、阻塞、空闲/忙碌状态计算负载。
+- 通知中心保留未读/已读；本地端对关键事项弹系统通知。
+- 项目健康度聚合逾期、阻塞、无人接单、返工率、变更数、吞吐和平均周期。
+
+### 项目归档与删除
+
+- 项目可归档、恢复、软删除。
+- 归档/删除/恢复都需要二次确认项目名。
+- 删除不物理清理需求、网盘、会议和交付文件，先保护真人测试数据。
+
+---
+
+## 双端职责
+
+| 入口 | 主要用途 | 能不能接活/交付 |
 |---|---|---|
-| **接活**（默认） | 电紫 `#6B5BFF` | "我手头有什么活？" |
-| **派活** | 珊瑚 `#FF6E8E` | "我发出去的活怎么样了？" |
+| Web `http://192.168.5.53:8080/` | 派活、管理、验收、查看全局态势 | 不能 |
+| 本地工作台 | 派活 + 接活 + 文件同步 + 系统通知 + 交付 | 能 |
 
-TitleBar 左上角 chip + `Ctrl+1` / `Ctrl+2` 切换。整个 chrome（侧栏、首页、主色变量）通过 native [View Transitions API](https://developer.mozilla.org/en-US/docs/Web/API/Document/startViewTransition) 平滑形变。
-
-![Space 切换](screenshots/aurora/submitter/02-space-switcher-open.light.png)
-
-### AI 澄清流程
-
-提交人写完原始描述（"做一个团队周报模板…"）后，跳到 AI 澄清页：DeepSeek 助理用 SSE 流式问澄清问题（多选/开放式），用户答几轮后 AI 自动生成结构化 `summary_md` + `title`，提交人确认 DDL 后投递。
-
-![AI 澄清](screenshots/aurora/submitter/05-new-req-step0.light.png)
-
-### 接活闭环
-
-接单人桌面客户端：
-- **公共池 + 我的指派** 一屏看完
-- **文件同步**：需求附件自动同步到 `D:\工作需求\{项目}\{编号}\`，spec/ 文件夹可开监听自动上传
-- **交付**：选交付文件夹 → 自动 zip + 分片上传 + AI 写交付摘要
-- **系统通知**：被指派、需求更新、AI 写完交付文档 → Win11 右下角弹窗 + 托盘红点
-
-### 全流程通知
-
-提交人不再需要追问"做完没"：
-- **接走了** → normal 级通知
-- **交付了等你验收** → high 级通知，系统右下角弹窗
-- **被取消** → 双向通知（提交人和接单人）
-- 全部走 SSE per-user channel，**绝不跨用户泄露**
-
-### 管理员能力
-
-`is_admin=true` 用户在 Settings 看到管理员面板：
-- 新建 / 归档项目
-- 添加 / 撤销管理员
-- 软删用户（tombstone 昵称 + 撤销 cookie + 撤销 devices，无法自我复活）
-- 按编号删除需求（自动归档相关通知避免死链接）
-- 应急旁路：跳过 AI 直接投递
-
-### 透明窗口
-
-Win11 Acrylic 真透明 + Aurora Glass token 设计 — 透出后方桌面 / 编辑器内容：
-
-![透明窗口 派活 Hub](screenshots/aurora/submitter/03-dispatch-hub-default.light.png)
-
----
-
-## 架构
-
-```
-┌──────────────────┐         ┌──────────────────────┐
-│ Tauri 桌面客户端 │ ◀─SSE──▶│  FastAPI 后端 (8080) │
-│  (Windows)       │  HTTPS  │   + SQLite + LLM     │
-│  Aurora Glass UI │ ◀──────▶│   + 分片上传 + 通知  │
-└──────────────────┘         └──────────────────────┘
-        ▲                              ▲
-        │ tray notifications           │
-        │ spec/ folder watcher         │
-        │                              │
-┌───────┴──────────┐         ┌──────────┴───────────┐
-│ Windows OS       │         │  Web (React/Vite)    │
-│ (托盘 + 右下角)  │         │  浏览器入口 (Mac/Lin)│
-└──────────────────┘         └──────────────────────┘
-```
-
-**关键决策：**
-
-- **桌面客户端只做 Windows** — Mac 用户走 Web，避免 Tauri Mac 编译 + WebView2 不一致开销
-- **后端单 uvicorn worker + SQLite** — LAN 部署，简单可靠；多 worker / Postgres 留待真有性能压力
-- **AI 澄清强制走 LLM** — 跳过 AI 是 admin-only 应急旁路，正常流程必须 AI 澄清（避免接单人收到一句话需求）
-- **SSE 分通道** — 全局 `requirement.*` 用 `/api/push/stream`，个人 `notification.*` 用 `/api/push/stream/me`（cookie-scoped，防跨用户泄露）
+提需求页面是项目级路径：先进入某个项目，再点 **提一条新需求**；URL 形如 `/p/{project_id}/new`。
 
 ---
 
 ## 快速开始
 
-### 我是用户
+### 团队成员
 
-1. **本地浏览器**：访问 `http://<server>:8080/`
-2. **下载桌面客户端**：浏览器横幅顶部有 "下载客户端" 按钮，或直接 `http://<server>:8080/downloads/yqgl-client-setup.exe`
-3. **首次启动**：填昵称 → 选服务器地址 → 选本地工作目录 → 完成
+Web 端：
 
-### 我是部署者
+[http://192.168.5.53:8080/](http://192.168.5.53:8080/)
+
+Windows 本地端一行安装：
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "iwr -UseBasicParsing http://192.168.5.53:8080/client/install.ps1 | iex"
+```
+
+Linux/macOS 辅助脚本：
 
 ```bash
-# 后端 (Python 3.13+, FastAPI, SQLite)
-cd app
-pip install -r requirements.txt
-python -m uvicorn main:app --host 0.0.0.0 --port 8080
+curl -fsSL http://192.168.5.53:8080/client/install.sh | bash
+```
 
-# Web 前端 (React + Vite)
+安装后会生成启动脚本、桌面快捷方式 `YQGL Workbench` 和开机启动项。右下角看不到图标时，先展开系统托盘隐藏区，别急着骂电脑。
+
+### 本地端设置
+
+- 服务端地址默认 `http://192.168.5.53:8080`，可在设置里改。
+- 可设置项目保存位置、网盘同步目录、同步模式。
+- 接单状态支持空闲、忙碌、自定义。
+- DDL 提醒提前量可配置。
+
+---
+
+## 开发与测试
+
+### 开发启动
+
+```powershell
+# 后端
+python -m uvicorn main:app --app-dir app --reload --host 127.0.0.1 --port 8080
+
+# Web
+npm run dev --workspace=web
+
+# 本地端前端
+npm run dev --workspace=client-tauri -- --host 127.0.0.1 --port 5174
+```
+
+Tauri Rust 壳需要本机安装 Rust/Cargo；当前仓库的纯前端部分可以单独 build 和 E2E。
+
+### 推荐验证命令
+
+```powershell
+python -m compileall app client scripts asr_service tts_service
+python scripts\smoke_workflow.py
+npm run build
+npm run build --workspace=client-tauri
+npx tsc --noEmit -p client-tauri\web-src\tsconfig.json
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke_client_install.ps1
+```
+
+Web E2E：
+
+```powershell
+$env:YQGL_E2E_API_PORT='19180'
+$env:YQGL_E2E_WEB_PORT='16273'
+npm run e2e:web
+```
+
+客户端 E2E 截图流：
+
+```powershell
+npm run dev --workspace=client-tauri -- --host 127.0.0.1 --port 5174
+$env:YQGL_CLIENT_E2E='1'
+$env:YQGL_USE_REMOTE='1'
 cd web
-npm install
-npm run build  # → web/dist/
-
-# 部署到 /srv/yqgl/{app,web/dist,downloads}/ 后 systemd 拉起
-systemctl restart yqgl-web
+npx playwright test tests/e2e/client-routes.spec.ts tests/e2e/client-spaces.spec.ts --reporter=list
 ```
 
-参考 [DEPLOY.md](DEPLOY.md) 完整步骤。
+当前本机验证记录：
 
-### 我是开发者
-
-```bash
-# Backend (hot reload)
-cd app && uvicorn main:app --reload
-
-# Web (Vite dev with proxy)
-cd web && npm run dev
-
-# Tauri 客户端 (cargo + Vite)
-cd client-tauri && npm run tauri:dev
-```
-
-中文路径会让 cargo 编译失败 — `cd C:/dev/yqgl-ascii && npm run tauri:build` 走 ASCII 路径。
+- `python -m compileall app client scripts asr_service tts_service` 通过。
+- `python scripts\smoke_workflow.py` 通过。
+- `npm run build` 通过。
+- `npm run build --workspace=client-tauri` 通过。
+- `npx tsc --noEmit -p client-tauri\web-src\tsconfig.json` 通过。
+- `npm run e2e:web`：23 passed，2 skipped，覆盖桌面、移动端和超宽屏截图巡检。
+- 客户端 E2E：2 passed。
+- PowerShell 管道安装 smoke 通过（本地模拟 `iwr ... | iex`，并验证桌面快捷方式/开机启动项）。
+- Git Bash 语法检查 `client/install-client.sh`、`client/launch.sh` 通过。
+- 本机没有 `cargo`，因此未运行 `cargo check`。
 
 ---
 
-## 开发
+## 部署
 
-### 仓库结构
+目标服务器：
 
-```
-app/                  # FastAPI 后端
-├── routers/          # auth, requirements, chat, delivery, notifications, push, ...
-├── services/         # lifecycle, notifications, llm_agent, push_bus, ...
-├── models.py         # SQLAlchemy 2 (Mapped) — User, Requirement, Notification, ChatMessage, ...
-└── main.py           # 路由挂载 + /downloads 静态 + SPA fallback
-
-client-tauri/         # Tauri 桌面客户端 (Windows-only build)
-├── src-tauri/        # Rust：sse / upload / spec_watch / commands
-└── web-src/          # React + Aurora Glass
-    └── src/
-        ├── routes/   # Hub, HubDispatch, TaskDetail, Clarify, NewRequirement, ...
-        ├── components/ # SpaceSwitcher, ActionRailDispatch, AdminPanel, ...
-        └── lib/tauri.ts # invoke + clientFetch + SSE
-
-web/                  # 浏览器入口 (Mac / Linux 用户)
-└── src/
-    ├── pages/        # Dashboard, NewRequirement, Clarify, RequirementDetail, ...
-    └── components/   # AssigneeSelector, ClientDownloadBanner, ...
-
-shared/               # 通用包 @yqgl/shared
-└── src/
-    ├── api/          # types + client
-    ├── hooks/        # useTheme, useSpace, useChatStream, useViewerRole, ...
-    ├── ui/           # Card, Button, Modal, Drawer, StatusBadge, Tabs, ...
-    └── design/       # tokens.css (Aurora Glass), status-vocab
-
-scripts/              # Python 部署 / 测试脚本
-└── e2e_*.py          # 真后端 smoke 测试
+```text
+http://192.168.5.53:8080
 ```
 
-### 关键模块
+常用流程：
 
-| 关注点 | 文件 |
-|---|---|
-| 需求状态机 | `app/routers/requirements.py:235-248` |
-| 通知分发（claim/deliver/cancel） | `app/services/lifecycle.py` |
-| AI 澄清流（SSE 流式） | `app/routers/chat.py` + `shared/src/hooks/useChatStream.ts` |
-| 角色感知 UI | `shared/src/hooks/useViewerRole.ts` |
-| 软删用户安全（4 处 auth lookup 加 deleted_at 过滤） | `app/auth.py` |
-| 分片上传公共模块 | `client-tauri/src-tauri/src/upload.rs` |
-| spec/ 文件夹自动同步 | `client-tauri/src-tauri/src/spec_watch.rs` |
-| 双 Space + 主色变量切换 | `shared/src/hooks/useSpace.ts` + `shared/src/design/tokens.css` |
-
-### 测试
-
-```bash
-# 真后端 E2E (Python httpx)
-python scripts/e2e_client_onboarding.py   # 4-步 onboarding 链路
-python scripts/e2e_submitter_remote.py    # 完整提交人链路：create → upload → submit → claim → deliver
-
-# Web Playwright 截图回归
-cd web && YQGL_USE_REMOTE=1 npx playwright test
+```powershell
+npm run build
+python scripts\deploy.py
+python scripts\deploy_web.py
+python scripts\restart_all.py
+python scripts\verify_systemd.py
+curl http://192.168.5.53:8080/api/health
 ```
 
-测试用真后端，不 mock — 抓真实回归。
+首次部署或 `.env` 变化时：
+
+```powershell
+python scripts\deploy.py --env
+```
+
+后端依赖来自 `app/pyproject.toml`，不要再找 `requirements.txt`。ASR/TTS 是独立 systemd 服务，部署后应确认：
+
+- `yqgl-web` active + enabled
+- `yqgl-asr` active + enabled
+- `yqgl-tts` active + enabled
 
 ---
 
-## 技术栈
+## 仓库结构
 
-- **后端**: FastAPI · SQLAlchemy 2 · SQLite · DeepSeek (Anthropic-兼容 API) · SSE
-- **桌面客户端**: Tauri v2 · Rust · `notify` (file watch) · `window-vibrancy` (Acrylic)
-- **共享前端**: React 18 · Vite 5 · TypeScript 5 · Tailwind · 自研 Aurora Glass 设计 tokens
-- **测试**: Playwright (E2E + 截图回归) · Python httpx (真后端 smoke)
-
----
-
-## 路线图
-
-- [ ] Mac 桌面客户端（目前 Mac 用户走 Web）
-- [ ] 全文搜索 + 历史知识库语义检索
-- [ ] AI 助理自动完成简单需求（auto.py 已有骨架）
-- [ ] 团队负载预测 + 自动派活推荐
+```text
+app/                  FastAPI 后端、SQLAlchemy 模型、路由和服务
+web/                  浏览器派活/管理端
+client-tauri/         Tauri 本地工作台
+client/               跨平台辅助安装/启动脚本和旧托盘兼容脚本
+shared/               Web 与本地端共享 UI、hook、设计 token、类型
+scripts/              部署、远端验证、smoke、安装测试脚本
+systemd/              yqgl-web / yqgl-asr / yqgl-tts 服务文件
+screenshots/          README 与视觉回归截图
+```
 
 ---
 
 ## 截图
 
 ### 接活 Space
+
 ![接活 Hub](screenshots/aurora/client/01-hub.dark.png)
 
-### 派活 wizard
+### 派活 Space
+
+![派活 Hub](screenshots/aurora/submitter/03-dispatch-hub-default.light.png)
+
+### 新建需求
+
 ![新建需求](screenshots/aurora/submitter/05-new-req-step0.dark.png)
 
-### 待我验收
-![待验收](screenshots/aurora/submitter/06-task-detail-delivered.light.png)
+### 网盘
 
-### Web 入口（带客户端下载横幅）
-![web Home](screenshots/aurora/01-home.light.png)
+![项目网盘](screenshots/aurora/08-drive.light.png)
+
+### 健康度
+
+![项目健康度](screenshots/aurora/05-health.light.png)
 
 ---
 

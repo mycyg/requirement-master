@@ -98,13 +98,20 @@ def _health_for_project(db: Session, project: Project) -> ProjectHealthOut:
 
 @router.get("/project-health", response_model=list[ProjectHealthOut])
 def list_project_health(db: Session = Depends(get_db), _: User = Depends(current_user)) -> list[ProjectHealthOut]:
-    projects = db.query(Project).filter(Project.archived == False).order_by(Project.created_at.desc()).all()  # noqa: E712
+    projects = db.query(Project).filter(
+        Project.archived == False,  # noqa: E712
+        Project.deleted_at.is_(None),
+    ).order_by(Project.created_at.desc()).all()
     return sorted([_health_for_project(db, project) for project in projects], key=lambda row: (row.score, -row.overdue_count))
 
 
 @router.get("/projects/{project_id}/health", response_model=ProjectHealthOut)
 def get_project_health(project_id: str, db: Session = Depends(get_db), _: User = Depends(current_user)) -> ProjectHealthOut:
-    project = db.query(Project).filter(Project.id == project_id, Project.archived == False).first()  # noqa: E712
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.archived == False,  # noqa: E712
+        Project.deleted_at.is_(None),
+    ).first()
     if not project:
         raise HTTPException(status_code=404, detail="project not found")
     return _health_for_project(db, project)

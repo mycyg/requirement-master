@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use directories::ProjectDirs;
+use directories::{BaseDirs, ProjectDirs};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -61,8 +61,20 @@ pub struct Config {
 fn default_server_ip() -> String { String::new() }
 fn default_server_port() -> u16 { 8080 }
 fn default_scheme() -> String { "http".into() }
+#[cfg(target_os = "windows")]
 fn default_sync_root() -> String { r"D:\工作需求".into() }
+#[cfg(not(target_os = "windows"))]
+fn default_sync_root() -> String {
+    BaseDirs::new()
+        .map(|d| d.home_dir().join("工作需求").to_string_lossy().to_string())
+        .unwrap_or_else(|| "工作需求".into())
+}
+#[cfg(target_os = "windows")]
 fn default_drive_sync_root() -> String { r"D:\工作需求\项目网盘".into() }
+#[cfg(not(target_os = "windows"))]
+fn default_drive_sync_root() -> String {
+    PathBuf::from(default_sync_root()).join("项目网盘").to_string_lossy().to_string()
+}
 fn default_drive_sync_mode() -> String { "download".into() }
 fn default_availability() -> String { "free".into() }
 fn default_reminder_offsets() -> Vec<i64> { vec![1440, 120, 0] }
@@ -131,6 +143,20 @@ pub fn config_path() -> Result<PathBuf> { Ok(config_dir()?.join("config.json")) 
 pub fn load() -> Result<Config> {
     let path = config_path()?;
     if !path.exists() {
+        if let Some(legacy) = legacy_config_candidates().into_iter().find(|p| p.exists()) {
+            if let Ok(raw) = fs::read_to_string(&legacy) {
+                if let Ok(mut cfg) = serde_json::from_str::<Config>(&raw) {
+                    cfg.recompute_url();
+                    if let Some(parent) = path.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::copy(&legacy, &path)?;
+                    let backup = legacy.with_file_name("config.migrated-to-tauri.json");
+                    let _ = fs::copy(&legacy, backup);
+                    return Ok(cfg);
+                }
+            }
+        }
         return Ok(Config::default());
     }
     let raw = fs::read_to_string(&path)?;
@@ -152,10 +178,23 @@ pub fn load() -> Result<Config> {
             Config::default()
         }
     };
-    // NOTE: 192.168.5.x and 192.168.0.x are both valid IPs for the same server
-    // (dual-NIC, same machine on two subnets). DO NOT auto-rewrite — let the
-    // user pick whichever subnet they're on via Settings → 服务器.
+    // Keep the user's chosen server URL intact. Team installs default to the
+    // 192.168.5.x subnet; legacy configs can be corrected from Settings.
     Ok(cfg)
+}
+
+fn legacy_config_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        out.push(PathBuf::from(appdata).join("yqgl").join("config.json"));
+    }
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+        out.push(PathBuf::from(xdg).join("yqgl").join("config.json"));
+    }
+    if let Some(base) = BaseDirs::new() {
+        out.push(base.config_dir().join("yqgl").join("config.json"));
+    }
+    out
 }
 
 pub fn save(cfg: &Config) -> Result<()> {

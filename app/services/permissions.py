@@ -30,7 +30,14 @@ def is_assignee(req: Requirement, user: User) -> bool:
     return is_assigned_user(req, user)
 
 
+def requirement_project_is_active(req: Requirement) -> bool:
+    project = getattr(req, "project", None)
+    return bool(project and not project.archived and project.deleted_at is None)
+
+
 def can_view_requirement_record(req: Requirement, user: User) -> bool:
+    if not requirement_project_is_active(req):
+        return False
     if is_admin(user):
         return True
     if is_submitter(req, user) or is_assignee(req, user):
@@ -39,6 +46,8 @@ def can_view_requirement_record(req: Requirement, user: User) -> bool:
 
 
 def can_view_requirement_assets(req: Requirement, user: User) -> bool:
+    if not requirement_project_is_active(req):
+        return False
     if is_admin(user):
         return True
     if is_submitter(req, user) or is_assignee(req, user):
@@ -47,18 +56,24 @@ def can_view_requirement_assets(req: Requirement, user: User) -> bool:
 
 
 def can_ack_requirement_sync(req: Requirement, user: User) -> bool:
+    if not requirement_project_is_active(req):
+        return False
     if is_admin(user):
         return True
     return can_view_requirement_assets(req, user)
 
 
 def can_add_requirement_attachment(req: Requirement, user: User) -> bool:
+    if not requirement_project_is_active(req):
+        return False
     if is_admin(user):
         return True
     return is_submitter(req, user) and req.status in {"draft", "clarifying", "summary_ready"}
 
 
 def can_manage_requirement_assignees(req: Requirement, user: User) -> bool:
+    if not requirement_project_is_active(req):
+        return False
     if is_admin(user):
         return req.status in ASSIGNMENT_EDITABLE_STATUSES
     # Submitter can always re-dispatch their own requirement; the current lead may
@@ -72,12 +87,16 @@ def can_manage_requirement_assignees(req: Requirement, user: User) -> bool:
 
 
 def can_claim_requirement(req: Requirement, user: User) -> bool:
+    if not requirement_project_is_active(req):
+        return False
     if is_admin(user):
         return req.status == "ready"
     return req.status == "ready" and (not has_explicit_assignees(req) or is_assignee(req, user))
 
 
 def can_work_requirement(req: Requirement, user: User) -> bool:
+    if not requirement_project_is_active(req):
+        return False
     if is_admin(user):
         return True
     return is_assignee(req, user)

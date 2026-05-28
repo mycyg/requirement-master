@@ -13,7 +13,7 @@ from schemas import (
     WorkspaceItemPatchIn,
     WorkspacePatchIn,
 )
-from services.permissions import can_work_requirement, is_assignee, is_submitter
+from services.permissions import can_work_requirement, is_assignee, is_submitter, requirement_project_is_active
 from services.push_bus import bus
 from services.workspaces import (
     add_progress_update,
@@ -31,6 +31,8 @@ router = APIRouter(prefix="/api", tags=["workspaces"])
 def _require_req(db: Session, req_id: str, user: User):
     req = load_requirement_with_workspaces(db, req_id)
     if not req:
+        raise HTTPException(status_code=404, detail="requirement not found")
+    if not requirement_project_is_active(req):
         raise HTTPException(status_code=404, detail="requirement not found")
     if not (is_submitter(req, user) or is_assignee(req, user)):
         raise HTTPException(status_code=403, detail="only the requester and assignees can view workspaces")
@@ -118,6 +120,8 @@ async def create_workspace_item(
 def _require_item(db: Session, item_id: str, user: User) -> RequirementWorkspaceItem:
     item = db.query(RequirementWorkspaceItem).filter(RequirementWorkspaceItem.id == item_id).first()
     if not item:
+        raise HTTPException(status_code=404, detail="workspace item not found")
+    if not requirement_project_is_active(item.workspace.requirement):
         raise HTTPException(status_code=404, detail="workspace item not found")
     if item.workspace.user_id != user.id:
         raise HTTPException(status_code=403, detail="only the workspace owner can edit this item")

@@ -28,7 +28,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let drive_sub = SubmenuBuilder::new(app, "网盘同步")
         .item(&MenuItemBuilder::with_id("drive_off", "关").build(app)?)
         .item(&MenuItemBuilder::with_id("drive_download", "仅下载").build(app)?)
-        .item(&MenuItemBuilder::with_id("drive_two_way", "双向同步").build(app)?)
         .build()?;
 
     let pause_label = if cfg.drive_sync_paused { "▶ 恢复同步" } else { "⏸ 暂停同步" };
@@ -76,7 +75,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 "avail_custom" => { let _ = app.emit("tray-action", serde_json::json!({"action": "avail_custom"})); }
                 "drive_off" => set_drive_mode(app, "off", false),
                 "drive_download" => set_drive_mode(app, "download", true),
-                "drive_two_way" => set_drive_mode(app, "two_way", true),
                 "toggle_pause" => toggle_pause(app),
                 "settings" => navigate(app, "/settings"),
                 "quit" => { app.exit(0); }

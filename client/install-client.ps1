@@ -8,13 +8,15 @@ if (-not $installDir) { $installDir = Join-Path $env:LOCALAPPDATA "yqgl-client" 
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 
 Write-Host "Installing yqgl client to $installDir"
-if (Test-Path (Join-Path $PSScriptRoot "yqgl_tray.py")) {
-  Copy-Item -Force (Join-Path $PSScriptRoot "*") $installDir -Recurse
+$scriptRoot = $PSScriptRoot
+if (-not $scriptRoot) { $scriptRoot = (Get-Location).Path }
+if (Test-Path (Join-Path $scriptRoot "yqgl_tray.py")) {
+  Copy-Item -Force (Join-Path $scriptRoot "*") $installDir -Recurse
 } else {
-  Invoke-WebRequest "$server/client/yqgl_tray.py" -OutFile (Join-Path $installDir "yqgl_tray.py")
-  Invoke-WebRequest "$server/client/yqgl_dashboard.py" -OutFile (Join-Path $installDir "yqgl_dashboard.py")
-  Invoke-WebRequest "$server/client/requirements.txt" -OutFile (Join-Path $installDir "requirements.txt")
-  Invoke-WebRequest "$server/client/launch.ps1" -OutFile (Join-Path $installDir "launch.ps1")
+  Invoke-WebRequest -UseBasicParsing "$server/client/yqgl_tray.py" -OutFile (Join-Path $installDir "yqgl_tray.py")
+  Invoke-WebRequest -UseBasicParsing "$server/client/yqgl_dashboard.py" -OutFile (Join-Path $installDir "yqgl_dashboard.py")
+  Invoke-WebRequest -UseBasicParsing "$server/client/requirements.txt" -OutFile (Join-Path $installDir "requirements.txt")
+  Invoke-WebRequest -UseBasicParsing "$server/client/launch.ps1" -OutFile (Join-Path $installDir "launch.ps1")
 }
 
 Set-Location $installDir
@@ -40,9 +42,9 @@ $config = @{
   client_token = ""
   client_device_id = ""
   client_device_name = "$env:COMPUTERNAME"
-  project_save_root = "D:\工作需求"
-  sync_root = "D:\工作需求"
-  drive_sync_root = "D:\工作需求\项目网盘"
+  project_save_root = "D:\YQGL-Work"
+  sync_root = "D:\YQGL-Work"
+  drive_sync_root = "D:\YQGL-Work\ProjectDrive"
   drive_sync_enabled = $false
   drive_sync_mode = "download"
   availability_status = "free"
@@ -58,7 +60,7 @@ function New-YqglShortcut($shortcutPath) {
   $shortcut.WorkingDirectory = $installDir
   $shortcut.WindowStyle = 7
   $shortcut.IconLocation = "$env:SystemRoot\System32\shell32.dll,220"
-  $shortcut.Description = "需求管理大师本地工作台"
+  $shortcut.Description = "YQGL local workbench"
   $shortcut.Save()
 }
 
@@ -68,8 +70,8 @@ $startupDir = $env:YQGL_STARTUP_DIR
 if (-not $startupDir) { $startupDir = [Environment]::GetFolderPath("Startup") }
 New-Item -ItemType Directory -Force -Path $desktopDir | Out-Null
 New-Item -ItemType Directory -Force -Path $startupDir | Out-Null
-New-YqglShortcut (Join-Path $desktopDir "需求管理大师 本地工作台.lnk")
-New-YqglShortcut (Join-Path $startupDir "需求管理大师.lnk")
+New-YqglShortcut (Join-Path $desktopDir "YQGL Workbench.lnk")
+New-YqglShortcut (Join-Path $startupDir "YQGL.lnk")
 
 Write-Host "Installed. Start with:"
 Write-Host "  powershell -ExecutionPolicy Bypass -File `"$installDir\launch.ps1`""

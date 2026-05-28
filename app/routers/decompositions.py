@@ -23,7 +23,7 @@ from schemas import (
 from services.activity import log_activity
 from services.jobs import create_job, publish_job, update_job
 from services.notifications import create_notification, publish_notification
-from services.permissions import can_view_requirement_record, can_work_requirement
+from services.permissions import can_view_requirement_record, can_work_requirement, requirement_project_is_active
 from services.push_bus import bus
 from services.task_decomposition import acceptance_item_out, analyze_requirement, apply_confirmed_plan, task_plan_out
 from services.workspaces import workspace_item_out
@@ -159,6 +159,8 @@ async def confirm_decomposition(
 ) -> TaskPlanConfirmOut:
     plan = _load_plan(db, plan_id)
     req = plan.requirement
+    if not requirement_project_is_active(req):
+        raise HTTPException(status_code=404, detail="requirement not found")
     if plan.status != "draft":
         raise HTTPException(status_code=400, detail=f"cannot confirm decomposition in status {plan.status}")
     if plan.stage == "dispatch" and req.submitter_user_id != user.id:
@@ -207,6 +209,8 @@ async def dismiss_decomposition(
 ) -> TaskPlanOut:
     plan = _load_plan(db, plan_id)
     req = plan.requirement
+    if not requirement_project_is_active(req):
+        raise HTTPException(status_code=404, detail="requirement not found")
     if plan.stage == "dispatch" and req.submitter_user_id != user.id:
         raise HTTPException(status_code=403, detail="only the requester can dismiss dispatch decompositions")
     if plan.stage == "worker" and plan.target_user_id != user.id:
@@ -251,10 +255,23 @@ async def _process_decomposition(plan_id: str, job_id: str, user_id: str) -> Non
         user = db.query(User).filter(User.id == user_id).first()
         if not plan or not job or not user:
             return
+        if not requirement_project_is_active(plan.requirement):
+            update_job(db, job, status="failed", progress_percent=100, message="项目已归档或删除，已取消任务拆解")
+            plan.status = "dismissed"
+            db.commit()
+            await publish_job(job)
+            return
         update_job(db, job, status="running", progress_percent=25, message="正在分析需求、风险和验收口径")
         db.commit()
         await publish_job(job)
         result = await analyze_requirement(plan.requirement, stage=plan.stage, actor=user)
+        db.refresh(plan.requirement)
+        if not requirement_project_is_active(plan.requirement):
+            update_job(db, job, status="failed", progress_percent=100, message="项目已归档或删除，已取消任务拆解")
+            plan.status = "dismissed"
+            db.commit()
+            await publish_job(job)
+            return
         plan.summary = result.summary
         plan.risks = result.risks
         for item in list(plan.items):

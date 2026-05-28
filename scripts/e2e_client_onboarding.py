@@ -12,16 +12,18 @@ Run:
 """
 from __future__ import annotations
 
+import os
 import sys
 import platform
+import time
 
 import httpx
 
-BASE = "http://192.168.0.224:8080"
+BASE = os.environ.get("YQGL_BASE", "http://192.168.5.53:8080")
 
 
 def main() -> int:
-    nickname = sys.argv[1] if len(sys.argv) > 1 else f"e2e-onb-{platform.node()}"
+    nickname = sys.argv[1] if len(sys.argv) > 1 else f"e2e-onb-{platform.node()}-{int(time.time())}"
 
     with httpx.Client(base_url=BASE, timeout=15) as c:
         print(f"== identify({nickname!r}) ==")

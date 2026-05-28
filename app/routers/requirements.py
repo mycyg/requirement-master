@@ -26,6 +26,7 @@ from services.permissions import (
     can_view_requirement_record,
     can_work_requirement,
     is_admin,
+    requirement_project_is_active,
 )
 from services.push_bus import bus
 from services.notifications import create_notification
@@ -81,6 +82,11 @@ def _display_nickname(u: User | None) -> str:
     if u.deleted_at is not None:
         return "已删除用户"
     return u.nickname
+
+
+def _ensure_requirement_project_active(req: Requirement) -> None:
+    if not requirement_project_is_active(req):
+        raise HTTPException(status_code=404, detail="requirement not found")
 
 
 def _enrich(db: Session, r: Requirement) -> RequirementOut:
@@ -190,6 +196,7 @@ def list_requirements(
         .join(Project, Project.id == Requirement.project_id)
         .join(User, User.id == Requirement.submitter_user_id)
         .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
+        .filter(Project.archived == False, Project.deleted_at.is_(None))  # noqa: E712
     )
     if project_id:
         q = q.filter(Requirement.project_id == project_id)
@@ -222,6 +229,7 @@ def get_requirement(req_id: str, db: Session = Depends(get_db), user: User = Dep
     )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
+    _ensure_requirement_project_active(r)
     if not can_view_requirement_record(r, user):
         raise HTTPException(status_code=403, detail="you cannot view this requirement yet")
     return _enrich(db, r)
@@ -243,13 +251,7 @@ async def update_status(
     )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
-    # Refuse mutations on requirements whose project has been soft-deleted.
-    # Otherwise lifecycle notifications fire with `target_url=/r/{id}` that
-    # then 404 because the project drawer is closed. Admin can still
-    # restore the project first, then mutate.
-    proj = db.query(Project).filter(Project.id == r.project_id).first()
-    if proj and proj.deleted_at is not None and not is_admin(user):
-        raise HTTPException(status_code=400, detail="project has been deleted; ask an admin to restore it first")
+    _ensure_requirement_project_active(r)
 
     old = r.status
     new = payload.status
@@ -365,6 +367,7 @@ async def update_requirement_planning(
     )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
+    _ensure_requirement_project_active(r)
     if r.submitter_user_id != user.id and not can_work_requirement(r, user):
         raise HTTPException(status_code=403, detail="only the requester or assignees can update planning")
     if r.submitter_user_id != user.id and local_user is None:
@@ -409,6 +412,7 @@ def list_assignees(req_id: str, db: Session = Depends(get_db), user: User = Depe
     )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
+    _ensure_requirement_project_active(r)
     if not can_view_requirement_record(r, user):
         raise HTTPException(status_code=403, detail="you cannot view this requirement yet")
     return [_assignee_out(a) for a in sorted_assignments(r)]
@@ -429,6 +433,7 @@ async def update_assignees(
     )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
+    _ensure_requirement_project_active(r)
     if not can_manage_requirement_assignees(r, user):
         raise HTTPException(status_code=403, detail="only the requester can manage assignees in this status")
     assignments = replace_assignments(
@@ -487,6 +492,7 @@ async def update_requirement_schedule(
     )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
+    _ensure_requirement_project_active(r)
     if r.submitter_user_id != user.id:
         raise HTTPException(status_code=403, detail="only the requester can update DDL")
     if r.status not in {"draft", "clarifying", "summary_ready", "ready", "claimed", "doing", "revision_requested"}:
@@ -554,6 +560,7 @@ async def finalize_summary(
     )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
+    _ensure_requirement_project_active(r)
     if r.status not in {"draft", "clarifying", "summary_ready"}:
         raise HTTPException(status_code=400, detail=f"cannot finalize from status {r.status}")
 
@@ -607,6 +614,7 @@ def delete_requirement(
     r = db.query(Requirement).filter(Requirement.id == req_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
+    _ensure_requirement_project_active(r)
     if not is_admin(user):
         if r.submitter_user_id != user.id:
             raise HTTPException(status_code=403, detail="only the requester or an admin can delete")

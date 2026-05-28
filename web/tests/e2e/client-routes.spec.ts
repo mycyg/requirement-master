@@ -27,25 +27,30 @@ const ROUTES: { hash: string; file: string }[] = [
 ];
 
 async function shoot(page: Page, name: string) {
-  await page.screenshot({ path: path.join(OUT, name), fullPage: false });
+  const finalPath = path.join(OUT, name);
+  const tmpPath = path.join(OUT, `${name}.${Date.now()}.tmp.png`);
+  await page.screenshot({ path: tmpPath, fullPage: false });
+  try {
+    fs.rmSync(finalPath, { force: true });
+    fs.renameSync(tmpPath, finalPath);
+  } catch {
+    fs.copyFileSync(tmpPath, finalPath);
+    fs.rmSync(tmpPath, { force: true });
+  }
+}
+
+async function skipOnboarding(page: Page) {
+  const skip = page.getByRole("button", { name: /跳过引导/ });
+  if (await skip.count()) {
+    await skip.first().click();
+  }
 }
 
 test.use({ baseURL: CLIENT_BASE, viewport: { width: 1280, height: 800 } });
+test.skip(process.env.YQGL_CLIENT_E2E !== "1", "requires client-tauri dev server; run with YQGL_CLIENT_E2E=1");
 
-test("客户端 9 个路由：light + dark 截图", async ({ page, request }) => {
-  // Real backend identify so worker token exists.
-  const idRes = await request.post("http://192.168.5.53:8080/api/auth/identify", {
-    data: { nickname: "小光" },
-  });
-  expect(idRes.ok()).toBeTruthy();
-  const cookies = idRes.headers()["set-cookie"];
-  const cookiePart = cookies!.split(";")[0];
-  const [name, value] = cookiePart.split("=");
-  const regRes = await request.post("http://192.168.5.53:8080/api/client-devices/register", {
-    data: { device_name: "client-spec", platform: "win32" },
-    headers: { Cookie: `${name}=${value}` },
-  });
-  const clientToken = (await regRes.json()).client_token;
+test("客户端 9 个路由：light + dark 截图", async ({ page }) => {
+  const clientToken = "mock-client-token";
 
   // Mock Tauri invoke so React components don't throw.
   await page.addInitScript(([tok, nick]) => {
@@ -113,6 +118,7 @@ test("客户端 9 个路由：light + dark 截图", async ({ page, request }) =>
     const r = document.getElementById("root");
     return !!(r && r.children.length > 0);
   }, { timeout: 8000 });
+  await skipOnboarding(page);
 
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((m) => {

@@ -39,9 +39,20 @@ class IdentifyOut(BaseModel):
 
 
 @router.post("/identify", response_model=IdentifyOut)
-def identify(payload: IdentifyIn, response: Response, db: Session = Depends(get_db)) -> IdentifyOut:
+def identify(
+    payload: IdentifyIn,
+    response: Response,
+    db: Session = Depends(get_db),
+    existing_session: User | None = Depends(optional_current_user),
+) -> IdentifyOut:
     nickname = _validate_nickname(payload.nickname)
-    user, created = get_or_create_user(db, nickname)
+    existing = db.query(User).filter(User.nickname == nickname, User.deleted_at.is_(None)).first()
+    if existing and (not existing_session or existing_session.id != existing.id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="nickname already registered; use the existing device session or ask an admin to reset it",
+        )
+    user, created = (existing, False) if existing else get_or_create_user(db, nickname)
     db.commit()
     issue_cookie(response, user)
     return IdentifyOut(

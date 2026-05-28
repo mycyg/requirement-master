@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Bot, FolderOpen, Hammer, Play, PackageCheck, RefreshCw, UserCheck } from "lucide-react";
 import { invoke, useEvent } from "@/lib/tauri";
@@ -20,7 +20,6 @@ import {
   toast,
   isSubmitter,
   isAssignee as isAssigneeFn,
-  isAdmin,
   useSpace,
 } from "@yqgl/shared";
 import type { Requirement, RequirementWorkspace } from "@yqgl/shared";
@@ -79,7 +78,6 @@ export function TaskDetail() {
   const myWs = workspaces.find((w) => me && w.user_id === me.id) ?? null;
   const meIsSubmitter = isSubmitter(req, me);
   const meIsAssignee = isAssigneeFn(req, me);
-  const meIsAdmin = isAdmin(me);
   // Show worker UI when viewer is an assignee AND not viewing as a submitter
   // (unless they explicitly opt in via the "我也来做" toggle). Admins viewing
   // someone else's req act as observers — no worker UI unless they're also

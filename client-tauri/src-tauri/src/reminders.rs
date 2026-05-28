@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use serde_json::map::Map;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
@@ -32,8 +33,17 @@ async fn poll_reminders(app: &AppHandle, state: &ConfigState) -> anyhow::Result<
         return Ok(());
     }
     let list: serde_json::Value = resp.json().await?;
+    let known = state.read().known_reminders;
+    let known_map = known.as_object().cloned().unwrap_or_default();
+    let mut new_seen: Vec<(String, serde_json::Value)> = Vec::new();
     if let Some(arr) = list.as_array() {
         for r in arr {
+            let reminder_id = r.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let due_at = r.get("due_at").and_then(|v| v.as_str()).unwrap_or("");
+            let key = format!("{reminder_id}:{due_at}");
+            if known_map.contains_key(&key) {
+                continue;
+            }
             let title = r.get("title").and_then(|v| v.as_str()).unwrap_or("DDL").to_string();
             let req_id = r.get("requirement_id").and_then(|v| v.as_str()).map(String::from);
             let code = r.get("requirement_code").and_then(|v| v.as_str()).unwrap_or("");
@@ -51,7 +61,18 @@ async fn poll_reminders(app: &AppHandle, state: &ConfigState) -> anyhow::Result<
             let _ = app.emit("reminder", serde_json::json!({
                 "kind": kind, "title": title, "requirement_id": req_id,
             }));
+            new_seen.push((key, serde_json::json!(chrono::Utc::now().to_rfc3339())));
         }
+    }
+    if !new_seen.is_empty() {
+        state.write(|cfg| {
+            let mut map: Map<String, serde_json::Value> = cfg.known_reminders.as_object().cloned().unwrap_or_default();
+            for (key, value) in new_seen {
+                map.insert(key, value);
+            }
+            prune_seen_map(&mut map, 500);
+            cfg.known_reminders = serde_json::Value::Object(map);
+        })?;
     }
     Ok(())
 }
@@ -62,8 +83,17 @@ async fn poll_notifications(app: &AppHandle, state: &ConfigState) -> anyhow::Res
     let resp = http::with_auth(client.get(&url), state).send().await?;
     if !resp.status().is_success() { return Ok(()); }
     let list: serde_json::Value = resp.json().await?;
+    let known = state.read().known_notifications;
+    let known_map = known.as_object().cloned().unwrap_or_default();
+    let mut new_seen: Vec<(String, serde_json::Value)> = Vec::new();
     if let Some(arr) = list.as_array() {
         for n in arr {
+            let notification_id = n.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let updated_at = n.get("updated_at").and_then(|v| v.as_str()).unwrap_or("");
+            let key = format!("{notification_id}:{updated_at}");
+            if known_map.contains_key(&key) {
+                continue;
+            }
             let severity = n.get("severity").and_then(|v| v.as_str()).unwrap_or("normal");
             if severity == "high" || severity == "urgent" {
                 let title = n.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -72,7 +102,34 @@ async fn poll_notifications(app: &AppHandle, state: &ConfigState) -> anyhow::Res
                     .title(title).body(body).show();
             }
             let _ = app.emit("notification", n.clone());
+            if !notification_id.is_empty() {
+                new_seen.push((key, serde_json::json!(chrono::Utc::now().to_rfc3339())));
+            }
         }
     }
+    if !new_seen.is_empty() {
+        state.write(|cfg| {
+            let mut map: Map<String, serde_json::Value> = cfg.known_notifications.as_object().cloned().unwrap_or_default();
+            for (key, value) in new_seen {
+                map.insert(key, value);
+            }
+            prune_seen_map(&mut map, 1000);
+            cfg.known_notifications = serde_json::Value::Object(map);
+        })?;
+    }
     Ok(())
+}
+
+fn prune_seen_map(map: &mut Map<String, serde_json::Value>, max_entries: usize) {
+    if map.len() <= max_entries {
+        return;
+    }
+    let mut items: Vec<(String, String)> = map
+        .iter()
+        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+        .collect();
+    items.sort_by(|a, b| a.1.cmp(&b.1));
+    for (key, _) in items.into_iter().take(map.len().saturating_sub(max_entries)) {
+        map.remove(&key);
+    }
 }

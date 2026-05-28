@@ -23,6 +23,7 @@ use tracing::{info, warn};
 use crate::config::ConfigState;
 use crate::error::{Error, Result};
 use crate::http;
+use crate::sync::{ensure_dir_inside_root, safe_component};
 use crate::upload::{upload_file, UploadUrls};
 
 type DebouncerHandle = Debouncer<notify::RecommendedWatcher, FileIdMap>;
@@ -30,9 +31,14 @@ type DebouncerHandle = Debouncer<notify::RecommendedWatcher, FileIdMap>;
 static WATCHERS: Lazy<Mutex<HashMap<String, DebouncerHandle>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-pub fn spec_folder(state: &ConfigState, project_slug: &str, code: &str) -> PathBuf {
+pub fn spec_folder(state: &ConfigState, project_slug: &str, code: &str) -> Result<PathBuf> {
     let sync_root = state.read().sync_root.clone();
-    PathBuf::from(sync_root).join(project_slug).join(code).join("spec")
+    let root = PathBuf::from(sync_root);
+    let folder = root
+        .join(safe_component(project_slug, "project")?)
+        .join(safe_component(code, "requirement")?)
+        .join("spec");
+    Ok(folder)
 }
 
 pub async fn start(
@@ -52,8 +58,11 @@ pub async fn start(
         .ok_or_else(|| Error::Other("requirement missing code".into()))?
         .to_string();
 
-    let folder = spec_folder(&state, &slug, &code);
+    let folder = spec_folder(&state, &slug, &code)?;
+    let sync_root = PathBuf::from(state.read().sync_root.clone());
+    ensure_dir_inside_root(&sync_root, &folder).await?;
     std::fs::create_dir_all(&folder)?;
+    ensure_dir_inside_root(&sync_root, &folder).await?;
 
     // Already watching? Stop the old one first so we don't double-fire.
     stop_blocking(&req_id);
@@ -76,7 +85,13 @@ pub async fn start(
             let mut paths: Vec<PathBuf> = events.into_iter()
                 .flat_map(|e| e.event.paths.into_iter())
                 .filter(|p| p.is_file())
-                .filter(|p| p.starts_with(&folder_for_handler))
+                .filter(|p| {
+                    let root = match folder_for_handler.canonicalize() {
+                        Ok(v) => v,
+                        Err(_) => return false,
+                    };
+                    p.canonicalize().map(|resolved| resolved.starts_with(&root)).unwrap_or(false)
+                })
                 .collect();
             paths.sort();
             paths.dedup();

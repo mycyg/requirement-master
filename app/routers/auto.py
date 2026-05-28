@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from auth import current_user
 from config import settings
 from db import SessionLocal, get_db
-from models import Attachment, BackgroundJob, Delivery, Requirement, User
+from models import Attachment, BackgroundJob, Delivery, Project, Requirement, User
 from services.activity import log_activity
 from services.auto_agent import auto_process
 from services.jobs import create_job, publish_job, update_job
@@ -55,7 +55,16 @@ async def trigger_auto(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> dict:
-    r = db.query(Requirement).filter(Requirement.id == req_id).first()
+    r = (
+        db.query(Requirement)
+        .join(Project, Project.id == Requirement.project_id)
+        .filter(
+            Requirement.id == req_id,
+            Project.archived == False,  # noqa: E712
+            Project.deleted_at.is_(None),
+        )
+        .first()
+    )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
     if not r.summary_md:
@@ -138,7 +147,16 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
 
     db = SessionLocal()
     try:
-        r = db.query(Requirement).filter(Requirement.id == req_id).first()
+        r = (
+            db.query(Requirement)
+            .join(Project, Project.id == Requirement.project_id)
+            .filter(
+                Requirement.id == req_id,
+                Project.archived == False,  # noqa: E712
+                Project.deleted_at.is_(None),
+            )
+            .first()
+        )
         if not r:
             return
 
@@ -259,7 +277,16 @@ async def _mark_auto_failed(req_id: str, actor: str, title: str, reason: str, jo
     db = SessionLocal()
     try:
         job = None
-        r = db.query(Requirement).filter(Requirement.id == req_id).first()
+        r = (
+            db.query(Requirement)
+            .join(Project, Project.id == Requirement.project_id)
+            .filter(
+                Requirement.id == req_id,
+                Project.archived == False,  # noqa: E712
+                Project.deleted_at.is_(None),
+            )
+            .first()
+        )
         if not r:
             return
         # Same cancel-aware guard as the inline failure path above.

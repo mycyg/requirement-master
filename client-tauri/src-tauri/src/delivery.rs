@@ -73,12 +73,13 @@ pub async fn start_delivery(
 }
 
 fn zip_dir(src: &Path, out: &Path) -> Result<usize> {
+    let base = src.canonicalize()?;
     let file = File::create(out)?;
     let mut zw = zip::ZipWriter::new(file);
     let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     let mut count = 0usize;
-    walk(src, src, &mut zw, &opts, &mut count)?;
+    walk(&base, &base, &mut zw, &opts, &mut count)?;
     zw.finish()?;
     Ok(count)
 }
@@ -95,25 +96,35 @@ fn walk(
         let name = entry.file_name().to_string_lossy().to_string();
         if EXCLUDE.iter().any(|e| name == *e) { continue; }
         let path = entry.path();
-        // `strip_prefix` returns Err for paths that don't start with
-        // `base` — happens on Windows when `read_dir` returns a junction
-        // / reparse point that resolves outside the worker folder. The
-        // previous `.unwrap()` panicked the command and the user got an
-        // opaque IPC error. Skip the entry instead.
-        let rel = match path.strip_prefix(base) {
+        let ft = entry.file_type()?;
+        if ft.is_symlink() {
+            tracing::warn!("delivery walk: skipping symlink {}", path.display());
+            continue;
+        }
+        let resolved = match path.canonicalize() {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("delivery walk: skipping unreadable entry {}: {e}", path.display());
+                continue;
+            }
+        };
+        if !resolved.starts_with(base) {
+            tracing::warn!("delivery walk: skipping out-of-base entry {}", path.display());
+            continue;
+        }
+        let rel = match resolved.strip_prefix(base) {
             Ok(r) => r.to_string_lossy().replace('\\', "/"),
             Err(_) => {
                 tracing::warn!("delivery walk: skipping out-of-base entry {}", path.display());
                 continue;
             }
         };
-        let ft = entry.file_type()?;
         if ft.is_dir() {
             zw.add_directory(&rel, *opts)?;
-            walk(base, &path, zw, opts, count)?;
+            walk(base, &resolved, zw, opts, count)?;
         } else if ft.is_file() {
             zw.start_file(&rel, *opts)?;
-            let mut f = File::open(&path)?;
+            let mut f = File::open(&resolved)?;
             std::io::copy(&mut f, zw)?;
             *count += 1;
         }

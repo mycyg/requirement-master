@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from auth import current_user
 from config import settings
 from db import get_db
-from models import Attachment, Requirement, User
+from models import Attachment, Project, Requirement, User
 from schemas import AttachmentOut, ChunkInitIn, ChunkInitOut
 from services.activity import log_activity
 from services.file_parser import is_parseable, parse_file
@@ -66,7 +66,16 @@ def _full_text_path(req_id: str, att_id: str) -> Path:
 
 
 def _require_req(db: Session, req_id: str) -> Requirement:
-    r = db.query(Requirement).filter(Requirement.id == req_id).first()
+    r = (
+        db.query(Requirement)
+        .join(Project, Project.id == Requirement.project_id)
+        .filter(
+            Requirement.id == req_id,
+            Project.archived == False,  # noqa: E712
+            Project.deleted_at.is_(None),
+        )
+        .first()
+    )
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
     return r

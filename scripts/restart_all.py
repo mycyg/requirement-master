@@ -5,7 +5,7 @@ from ssh_lib import connect, sudo, run
 
 c = connect()
 try:
-    for svc in ("yqgl-asr", "yqgl-tts"):
+    for svc in ("yqgl-web", "yqgl-asr", "yqgl-tts"):
         sudo(c, f"systemctl restart {svc}", check=False)
     run(c, "sleep 12 && systemctl is-active yqgl-asr yqgl-tts yqgl-web", check=False)
     run(c, "curl -s http://127.0.0.1:8001/health | head -c 200", check=False)

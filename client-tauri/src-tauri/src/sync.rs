@@ -1,10 +1,11 @@
 //! Requirement-level + project-drive-level file sync.
 //! Mirrors `client/yqgl_tray.py:480-707` but uses reqwest + tokio + sha2.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::anyhow;
 use futures_util::StreamExt;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
@@ -76,8 +77,8 @@ pub async fn sync_requirement(
 
     let cfg = state.read();
     let root = PathBuf::from(&cfg.sync_root)
-        .join(&manifest.project_slug)
-        .join(&manifest.code);
+        .join(safe_component(&manifest.project_slug, "project")?)
+        .join(safe_component(&manifest.code, "requirement")?);
     fs::create_dir_all(&root).await?;
     let attach_dir = root.join("attachments");
     fs::create_dir_all(&attach_dir).await?;
@@ -111,7 +112,8 @@ pub async fn sync_requirement(
     // Download each file
     let total = manifest.files.len().max(1);
     for (idx, f) in manifest.files.iter().enumerate() {
-        let target = attach_dir.join(&f.name);
+        let safe_name = safe_component(&f.name, "attachment")?;
+        let target = attach_dir.join(&safe_name);
         let percent = 10 + (80 * (idx + 1) / total) as u8;
 
         // Skip if local sha matches
@@ -125,21 +127,33 @@ pub async fn sync_requirement(
             }
         }
 
-        emit_progress(&app, &req_id, "download", percent, &format!("下载：{}", f.name));
-        let dl_url = if f.download_url.starts_with("http") {
-            f.download_url.clone()
-        } else {
-            http::url(&state, &f.download_url)
-        };
+        emit_progress(&app, &req_id, "download", percent, &format!("下载：{}", safe_name));
+        let dl_url = resolve_server_url(&state, &f.download_url)?;
         // Stream the body chunk-by-chunk — `resp.bytes().await?` buffers
         // the entire file in memory and would OOM on multi-GB attachments.
         let resp = http::with_auth(client.get(&dl_url), &state).send().await?.error_for_status()?;
         let mut stream = resp.bytes_stream();
-        let mut file = fs::File::create(&target).await?;
+        let tmp = target.with_extension(format!("{}.download", upload_safe_suffix(&f.id)));
+        ensure_parent_inside_root(&attach_dir, &tmp).await?;
+        let mut file = fs::File::create(&tmp).await?;
+        let mut downloaded = Sha256::new();
         while let Some(chunk) = stream.next().await {
-            file.write_all(&chunk?).await?;
+            let chunk = chunk?;
+            downloaded.update(&chunk);
+            file.write_all(&chunk).await?;
         }
         file.flush().await?;
+        if let Some(want) = &f.sha256 {
+            let actual = hex::encode(downloaded.finalize());
+            if &actual != want {
+                let _ = fs::remove_file(&tmp).await;
+                return Err(anyhow!("sha256 mismatch for {}", safe_name).into());
+            }
+        }
+        if target.exists() {
+            fs::remove_file(&target).await?;
+        }
+        fs::rename(&tmp, &target).await?;
     }
 
     // Ack
@@ -183,7 +197,7 @@ pub async fn sync_drive_download(
 
     let cfg = state.read();
     let slug = manifest.get("project_slug").and_then(|v| v.as_str()).unwrap_or("unknown");
-    let root = PathBuf::from(&cfg.drive_sync_root).join(slug);
+    let root = PathBuf::from(&cfg.drive_sync_root).join(safe_component(slug, "project")?);
     fs::create_dir_all(&root).await?;
 
     let items = manifest.get("items").and_then(|v| v.as_array()).cloned().unwrap_or_default();
@@ -191,14 +205,16 @@ pub async fn sync_drive_download(
     for (idx, it) in items.iter().enumerate() {
         let kind = it.get("kind").and_then(|v| v.as_str()).unwrap_or("file");
         let path = it.get("path").and_then(|v| v.as_str()).unwrap_or("");
-        let abs = root.join(path.trim_start_matches('/'));
+        let rel = safe_relative_path(path)?;
+        let abs = root.join(rel);
         if kind == "folder" {
+            ensure_dir_inside_root(&root, &abs).await?;
             fs::create_dir_all(&abs).await?;
+            ensure_dir_inside_root(&root, &abs).await?;
             continue;
         }
         let url_field = it.get("download_url").and_then(|v| v.as_str()).unwrap_or("");
         if url_field.is_empty() { continue; }
-        if let Some(parent) = abs.parent() { fs::create_dir_all(parent).await?; }
 
         // sha256 cache check
         let want = it.get("sha256").and_then(|v| v.as_str()).unwrap_or("");
@@ -208,19 +224,32 @@ pub async fn sync_drive_download(
                 if actual == want { continue; }
             }
         }
-        let dl = if url_field.starts_with("http") {
-            url_field.to_string()
-        } else {
-            http::url(&state, url_field)
-        };
+        let dl = resolve_server_url(&state, url_field)?;
         // Stream chunks instead of buffering — see sync_requirement for context.
         let resp = http::with_auth(client.get(&dl), &state).send().await?.error_for_status()?;
         let mut stream = resp.bytes_stream();
-        let mut f = fs::File::create(&abs).await?;
+        let item_id = it.get("id").and_then(|v| v.as_str()).unwrap_or("item");
+        let tmp = abs.with_extension(format!("{}.download", upload_safe_suffix(item_id)));
+        ensure_parent_inside_root(&root, &tmp).await?;
+        let mut f = fs::File::create(&tmp).await?;
+        let mut downloaded = Sha256::new();
         while let Some(chunk) = stream.next().await {
-            f.write_all(&chunk?).await?;
+            let chunk = chunk?;
+            downloaded.update(&chunk);
+            f.write_all(&chunk).await?;
         }
         f.flush().await?;
+        if !want.is_empty() {
+            let actual = hex::encode(downloaded.finalize());
+            if actual != want {
+                let _ = fs::remove_file(&tmp).await;
+                return Err(anyhow!("sha256 mismatch for drive item {item_id}").into());
+            }
+        }
+        if abs.exists() {
+            fs::remove_file(&abs).await?;
+        }
+        fs::rename(&tmp, &abs).await?;
         let pct = (90 * (idx + 1) / total) as u8;
         let _ = app.emit("drive-sync-progress", serde_json::json!({
             "project_id": project_id, "phase": "download", "percent": pct,
@@ -232,10 +261,112 @@ pub async fn sync_drive_download(
     Ok(())
 }
 
-// Helper kept private to avoid leaking sha2 directly to other modules.
-fn _assert_path_is_inside(parent: &Path, child: &Path) -> anyhow::Result<()> {
-    if !child.starts_with(parent) {
-        return Err(anyhow!("path escapes root"));
+fn resolve_server_url(state: &ConfigState, raw: &str) -> anyhow::Result<String> {
+    let base = Url::parse(&http::base_url(state))?;
+    let target = if raw.starts_with("http://") || raw.starts_with("https://") {
+        Url::parse(raw)?
+    } else {
+        base.join(raw)?
+    };
+    if target.scheme() != base.scheme()
+        || target.host_str() != base.host_str()
+        || target.port_or_known_default() != base.port_or_known_default()
+    {
+        return Err(anyhow!("refusing off-server download url: {raw}"));
+    }
+    Ok(target.to_string())
+}
+
+pub(crate) async fn ensure_parent_inside_root(root: &Path, target: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(root).await?;
+    let root_canon = fs::canonicalize(root).await?;
+    let parent = target.parent().ok_or_else(|| anyhow!("path has no parent"))?;
+    let rel_parent = parent.strip_prefix(root).map_err(|_| anyhow!("path escapes sync root"))?;
+    let mut checked = root_canon.clone();
+    for comp in rel_parent.components() {
+        match comp {
+            Component::Normal(part) => {
+                let next = checked.join(part);
+                if fs::try_exists(&next).await.unwrap_or(false) {
+                    let resolved = fs::canonicalize(&next).await?;
+                    if !resolved.starts_with(&root_canon) {
+                        return Err(anyhow!("path escapes sync root"));
+                    }
+                    checked = resolved;
+                } else {
+                    fs::create_dir_all(&next).await?;
+                    let resolved = fs::canonicalize(&next).await?;
+                    if !resolved.starts_with(&root_canon) {
+                        return Err(anyhow!("path escapes sync root"));
+                    }
+                    checked = resolved;
+                }
+            }
+            _ => return Err(anyhow!("path escapes sync root")),
+        }
+    }
+    let parent_canon = fs::canonicalize(parent).await?;
+    if !parent_canon.starts_with(&root_canon) {
+        return Err(anyhow!("path escapes sync root"));
     }
     Ok(())
+}
+
+pub(crate) async fn ensure_dir_inside_root(root: &Path, target: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(root).await?;
+    let root_canon = fs::canonicalize(root).await?;
+    if fs::try_exists(target).await.unwrap_or(false) {
+        let target_canon = fs::canonicalize(target).await?;
+        if !target_canon.starts_with(&root_canon) {
+            return Err(anyhow!("path escapes sync root"));
+        }
+        return Ok(());
+    }
+    ensure_parent_inside_root(root, target).await
+}
+
+pub(crate) fn safe_component(raw: &str, fallback: &str) -> anyhow::Result<String> {
+    let cleaned = raw.trim();
+    if cleaned.chars().any(|c| matches!(c, '/' | '\\' | ':')) {
+        return Err(anyhow!("unsafe path component: {raw}"));
+    }
+    let mut comps = Path::new(cleaned).components();
+    match (comps.next(), comps.next()) {
+        (Some(Component::Normal(name)), None) => {
+            let s = name.to_string_lossy().trim().to_string();
+            if s.is_empty() || s == "." || s == ".." {
+                Err(anyhow!("unsafe path component: {raw}"))
+            } else {
+                Ok(s)
+            }
+        }
+        (None, None) if !fallback.is_empty() => Ok(fallback.to_string()),
+        _ => Err(anyhow!("unsafe path component: {raw}")),
+    }
+}
+
+pub(crate) fn safe_relative_path(raw: &str) -> anyhow::Result<PathBuf> {
+    let trimmed = raw.trim().trim_start_matches(&['/', '\\'][..]);
+    let mut out = PathBuf::new();
+    if trimmed.contains(':') {
+        return Err(anyhow!("unsafe relative path: {raw}"));
+    }
+    for part in trimmed.split(|c| c == '/' || c == '\\') {
+        let part = part.trim();
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            return Err(anyhow!("unsafe relative path: {raw}"));
+        }
+        out.push(part);
+    }
+    if out.as_os_str().is_empty() {
+        return Err(anyhow!("empty relative path"));
+    }
+    Ok(out)
+}
+
+fn upload_safe_suffix(raw: &str) -> String {
+    raw.chars().filter(|c| c.is_ascii_alphanumeric()).take(16).collect::<String>()
 }

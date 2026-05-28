@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from auth import current_user, require_local_client
 from db import get_db
-from models import Requirement, RequirementAssignment, User
+from models import Project, Requirement, RequirementAssignment, User
 from services.activity import log_activity
 from services.assignments import ensure_public_claim_assignment, sync_legacy_lead
 from services.permissions import can_ack_requirement_sync, can_claim_requirement, can_view_requirement_assets
@@ -28,9 +28,17 @@ from sqlalchemy.orm import selectinload
 router = APIRouter(prefix="/api", tags=["sync"])
 
 
+def _active_requirement_query(db: Session):
+    return (
+        db.query(Requirement)
+        .join(Project, Project.id == Requirement.project_id)
+        .filter(Project.archived == False, Project.deleted_at.is_(None))  # noqa: E712
+    )
+
+
 @router.post("/requirements/{req_id}/submit")
 async def submit(req_id: str, db: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
-    r = db.query(Requirement).filter(Requirement.id == req_id).first()
+    r = _active_requirement_query(db).filter(Requirement.id == req_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
     if not r.summary_md:
@@ -79,7 +87,7 @@ async def submit(req_id: str, db: Session = Depends(get_db), user: User = Depend
 
 @router.get("/requirements/{req_id}/sync-manifest")
 def sync_manifest(req_id: str, db: Session = Depends(get_db), user: User = Depends(require_local_client)) -> dict:
-    r = db.query(Requirement).filter(Requirement.id == req_id).first()
+    r = _active_requirement_query(db).filter(Requirement.id == req_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
     if not can_view_requirement_assets(r, user):
@@ -89,7 +97,7 @@ def sync_manifest(req_id: str, db: Session = Depends(get_db), user: User = Depen
 
 @router.post("/requirements/{req_id}/sync-ack")
 async def sync_ack(req_id: str, db: Session = Depends(get_db), user: User = Depends(require_local_client)) -> dict:
-    r = db.query(Requirement).filter(Requirement.id == req_id).first()
+    r = _active_requirement_query(db).filter(Requirement.id == req_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="requirement not found")
     if not can_ack_requirement_sync(r, user):
@@ -105,8 +113,13 @@ async def claim(req_id: str, db: Session = Depends(get_db), user: User = Depends
     # Fast permission + existence pre-check (read-only).
     r = (
         db.query(Requirement)
+        .join(Project, Project.id == Requirement.project_id)
         .options(selectinload(Requirement.assignments).selectinload(RequirementAssignment.user))
-        .filter(Requirement.id == req_id)
+        .filter(
+            Requirement.id == req_id,
+            Project.archived == False,  # noqa: E712
+            Project.deleted_at.is_(None),
+        )
         .first()
     )
     if not r:

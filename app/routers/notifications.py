@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from auth import current_user
 from db import get_db
-from models import Notification, Requirement, RequirementAssignment, RequirementWorkspace, User
+from models import Notification, Project, Requirement, RequirementAssignment, RequirementWorkspace, User
 from schemas import NotificationOut
 from services.notifications import create_notification, notification_out
 
@@ -22,7 +22,9 @@ def _ensure_due_notifications(db: Session, user: User) -> None:
     soon = now + timedelta(hours=24)
     assigned = (
         db.query(Requirement)
+        .join(Project, Project.id == Requirement.project_id)
         .join(RequirementAssignment, RequirementAssignment.requirement_id == Requirement.id)
+        .filter(Project.archived == False, Project.deleted_at.is_(None))  # noqa: E712
         .filter(RequirementAssignment.user_id == user.id)
         .filter(Requirement.status.in_(ACTIVE_STATUSES))
         .filter(Requirement.due_at.isnot(None))
@@ -61,8 +63,10 @@ def _ensure_due_notifications(db: Session, user: User) -> None:
     blocked = (
         db.query(RequirementWorkspace)
         .join(Requirement, Requirement.id == RequirementWorkspace.requirement_id)
+        .join(Project, Project.id == Requirement.project_id)
         .filter(RequirementWorkspace.user_id == user.id)
         .filter(RequirementWorkspace.blocked_reason.isnot(None))
+        .filter(Project.archived == False, Project.deleted_at.is_(None))  # noqa: E712
         .filter(Requirement.status.in_(ACTIVE_STATUSES))
         .limit(100)
         .all()
@@ -91,7 +95,15 @@ def list_notifications(
 ) -> list[NotificationOut]:
     _ensure_due_notifications(db, user)
     db.commit()
-    q = db.query(Notification).filter(Notification.user_id == user.id, Notification.archived_at.is_(None))
+    q = (
+        db.query(Notification)
+        .outerjoin(Project, Project.id == Notification.project_id)
+        .filter(Notification.user_id == user.id, Notification.archived_at.is_(None))
+        .filter(or_(Notification.project_id.is_(None), and_(
+            Project.archived == False,  # noqa: E712
+            Project.deleted_at.is_(None),
+        )))
+    )
     if status == "unread":
         q = q.filter(Notification.read_at.is_(None))
     rows = q.order_by(Notification.created_at.desc()).limit(limit).all()

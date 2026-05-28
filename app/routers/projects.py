@@ -7,6 +7,7 @@ from auth import current_user
 from db import get_db
 from models import Project, User
 from schemas import ProjectCreateIn, ProjectOut
+from services.knowledge import rebuild_knowledge_index
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -103,6 +104,7 @@ def archive_project(
     p.archived = True
     db.commit()
     db.refresh(p)
+    rebuild_knowledge_index(db, project_id=project_id)
     return _to_out(p)
 
 
@@ -119,6 +121,7 @@ def restore_project(
     p.deleted_by_nickname = None
     db.commit()
     db.refresh(p)
+    rebuild_knowledge_index(db, project_id=project_id)
     return _to_out(p)
 
 
@@ -135,4 +138,5 @@ def soft_delete_project(
         p.deleted_by_nickname = user.nickname
     db.commit()
     db.refresh(p)
+    rebuild_knowledge_index(db, project_id=project_id)
     return _to_out(p)

@@ -7,7 +7,7 @@ import type {
 
 export function isDesktopRuntime(): boolean {
   try {
-    return window.localStorage.getItem("yqgl_runtime") === "desktop";
+    return window.localStorage.getItem("yqgl_runtime") === "desktop" && Boolean((window as any).__TAURI_INTERNALS__);
   } catch {
     return false;
   }
@@ -15,6 +15,7 @@ export function isDesktopRuntime(): boolean {
 
 function localClientToken(): string | null {
   try {
+    if (!isDesktopRuntime()) return null;
     return window.localStorage.getItem("yqgl_client_token");
   } catch {
     return null;

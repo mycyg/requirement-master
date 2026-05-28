@@ -16,7 +16,7 @@ D:\需求管理大师\               # 本地工作目录
 │   ├── provision_asr.py       # 装/重装 ASR 服务
 │   ├── provision_tts.py       # 装/重装 TTS 服务
 │   ├── deploy.py              # 推 app/ 代码 + 重启 web
-│   ├── deploy_web.py          # 推 web/dist 静态资源 + 重启 web
+│   ├── deploy_web.py          # 安全发布 web/dist 静态资源（无需重启 web）
 │   ├── restart_all.py         # 重启三服务并 health 检查
 │   ├── verify_systemd.py      # 查三个 unit 的 enable/active 状态
 │   └── smoke_m*.py            # 各里程碑的 e2e 烟雾测试
@@ -53,17 +53,17 @@ python scripts/provision.py
 # 2. 准备 Python 3.13 + 验证 user-site 包齐
 python scripts/setup_py313.py
 
-# 3. ASR 服务（用 user-site torch + qwen_asr，无下载）
-python scripts/provision_asr.py
+# 3. 准备 ASR/TTS 共用依赖（torch/qwen-asr/CosyVoice 运行时）
+python scripts/install_cosy_deps.py
 
-# 4. TTS 服务（CosyVoice，自动 pip 装缺的小包）
-python scripts/install_cosy_deps.py    # 装 inflect/rich 等到 user-site
+# 4. ASR/TTS 服务
+python scripts/provision_asr.py
 python scripts/provision_tts.py
 
 # 5. 主 app 代码 + 前端构建
-python scripts/deploy.py        # 推 app/
+python scripts/deploy.py --env  # 首次部署必须同步 app/.env
 cd web && npm install && npm run build && cd ..
-python scripts/deploy_web.py    # 推 web/dist + 重启 web
+python scripts/deploy_web.py    # 安全发布 web/dist
 
 # 6. 校验
 python scripts/verify_systemd.py
@@ -84,28 +84,37 @@ python scripts/verify_systemd.py
 | 改了 `.env` | `python scripts/deploy.py --env` |
 | 改了 systemd unit | 对应 provision 脚本里有 daemon-reload + restart |
 
-每次部署完，脚本末尾会 curl `/api/health` 自检。
+每次部署完，脚本末尾会 curl `/api/health` 自检；`deploy_web.py` 只换静态文件，不重启 web。
 
 ---
 
-## 四、客户端（你自己）
+## 四、客户端
 
-### 开发模式
+团队成员推荐使用一行安装命令。Windows 会创建 `YQGL Workbench` 桌面快捷方式和开机启动项；Linux/macOS 会生成桌面入口或 `launch.sh`。
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "iwr -UseBasicParsing http://192.168.5.53:8080/client/install.ps1 | iex"
+```
+
 ```bash
-cd D:\需求管理大师\client
-pip install -r requirements.txt
-python yqgl_tray.py
+curl -fsSL http://192.168.5.53:8080/client/install.sh | bash
+```
+
+开发本地端前端：
+
+```bash
+npm run dev --workspace=client-tauri -- --host 127.0.0.1 --port 5174
 ```
 
 首次启动弹窗：
 - 服务端 IP：默认 `192.168.5.53`
 - 端口：默认 `8080`
-- 请求地址：由 IP + 端口自动生成；旧 `192.168.0.x` 会自动迁到同尾号 `192.168.5.x`
+- 请求地址：由 IP + 端口自动生成；团队内网统一使用 `192.168.5.53:8080`
 - 昵称：你自己
 - 项目保存位置：默认 `D:\工作需求`；需求文件会落到 `项目保存位置\<project>\<code>\`
 
-确认后开始托盘运行：右下角 ⚙ 形图标 = `需`字。右键菜单：
-- 打开主界面 → 浏览器开 web 前端
+确认后开始托盘运行：右下角托盘图标常驻。右键菜单：
+- 打开本地工作台
 - 打开项目保存位置
 - 立即同步所有就绪需求
 - 完成任务并上传…（弹列表选需求，然后打包+分片上传）
@@ -113,15 +122,10 @@ python yqgl_tray.py
 - 设置…
 - 退出
 
-### 打包成 .exe
-```bash
-cd D:\需求管理大师\client
-build_exe.bat
-```
-产物 `client\dist\yqgl-tray.exe` 约 30MB，双击就跑，不需用户装 Python。
+Tauri 打包需要 Rust/Cargo；中文路径下 cargo 可能失败，建议在 ASCII 路径构建。
 
 ### 开机自启
-把 `yqgl-tray.exe`（或 `launch.bat`）的快捷方式拖到：
+安装脚本已自动创建启动项；手工排障时检查：
 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`
 
 ---
@@ -169,7 +173,7 @@ sqlite3 /srv/yqgl/data/yqgl.db
 # .tables / .schema requirements / select code, status from requirements;
 
 # 重启所有
-sudo systemctl restart yqgl-asr yqgl-tts yqgl-web
+sudo systemctl restart yqgl-web yqgl-asr yqgl-tts
 
 # 清缓存（小心，会删全部 AI 自动处理工作目录与未交付包）
 # rm -rf /srv/yqgl/data/auto/*  /srv/yqgl/data/deliveries/_partial/*
