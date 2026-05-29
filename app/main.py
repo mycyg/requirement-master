@@ -128,6 +128,23 @@ async def _resume_stuck_jobs() -> None:
                     # AI doc — manual review still works).
                     req.status = "ready" if req.status == "ai_processing" else "delivered"
 
+        # Requirements stranded in `delivery_doc_pending` with NO owning job.
+        # `_finalize_doc` (delivery_upload) spawns its doc-generation task
+        # WITHOUT a BackgroundJob, so the job-driven recovery above can't reach
+        # a requirement stuck there by a crashed/failed finalize. The
+        # deliverable zip + Delivery row are already committed, so the safe
+        # terminal state is `delivered` (manual review still works; the AI doc
+        # is just missing).
+        stale_deliveries = (
+            db.query(Requirement)
+            .filter(Requirement.status == "delivery_doc_pending", Requirement.updated_at < cutoff)
+            .all()
+        )
+        for req in stale_deliveries:
+            req.status = "delivered"
+            if req.delivery_doc_ready_at is None:
+                req.delivery_doc_ready_at = datetime.utcnow()
+
         # Meetings whose analyze-task was killed mid-stream.
         stale_meetings = (
             db.query(MeetingRecord)
@@ -147,12 +164,12 @@ async def _resume_stuck_jobs() -> None:
             a.status = "failed"
             a.answer_md = (a.answer_md or "") + "\n\n（服务在生成回答时重启了，可以重新提问）"
 
-        total = len(stale_jobs) + len(stale_meetings) + len(stale_asks)
+        total = len(stale_jobs) + len(stale_deliveries) + len(stale_meetings) + len(stale_asks)
         if total:
             db.commit()
             _logger.info(
-                "resumed %d stuck record(s): %d jobs, %d meetings, %d asks",
-                total, len(stale_jobs), len(stale_meetings), len(stale_asks),
+                "resumed %d stuck record(s): %d jobs, %d deliveries, %d meetings, %d asks",
+                total, len(stale_jobs), len(stale_deliveries), len(stale_meetings), len(stale_asks),
             )
     except Exception:
         _logger.exception("startup stuck-job sweep failed")

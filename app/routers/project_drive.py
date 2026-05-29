@@ -214,8 +214,11 @@ def _drive_manifest_item(
     version_map: dict[str, ProjectDriveVersion] | None = None,
 ) -> DriveManifestItemOut:
     # Fast path: callers that pre-build the maps (manifest/changes) avoid the
-    # per-item version query and the per-ancestor path query. Fall back to the
-    # query-per-call path only when maps aren't supplied.
+    # per-item version query and the per-ancestor path query. The map-less
+    # fallback (via `_current_version` / `_item_path`) is INTENTIONAL defensive
+    # support for any future caller that renders a single manifest item without
+    # building the maps — both current callers always pass them, so it's not a
+    # hot path, just a safe default.
     if version_map is not None:
         version = version_map.get(item.current_version_id) if item.current_version_id else None
     else:
@@ -1334,12 +1337,15 @@ async def create_drive_comment(
         decision = await classify_drive_comment(project.name, folder_path, body)
     except Exception as exc:
         comment = db.query(ProjectDriveComment).filter(ProjectDriveComment.id == comment_id).first()
-        if comment:
-            comment.status = "review_failed"
-            comment.llm_kind = "review_failed"
-            comment.llm_reason = str(exc)[:1000]
-            db.commit()
-            db.refresh(comment)
+        if not comment:
+            # Committed at phase 0 above, so this is unreachable in practice;
+            # guard anyway so _comment_out never gets None.
+            raise HTTPException(status_code=500, detail="comment vanished during classification") from exc
+        comment.status = "review_failed"
+        comment.llm_kind = "review_failed"
+        comment.llm_reason = str(exc)[:1000]
+        db.commit()
+        db.refresh(comment)
         return _comment_out(comment)
 
     comment = db.query(ProjectDriveComment).filter(ProjectDriveComment.id == comment_id).first()

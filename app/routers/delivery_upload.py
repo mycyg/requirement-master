@@ -383,5 +383,56 @@ async def _finalize_doc(delivery_id: str, title: str, summary_md: str, zip_path:
             await bus.publish("all", "requirement.updated", {
                 "requirement_id": d.requirement_id, "status": "delivered",
             })
+    except Exception:
+        # The doc-write / status-flip / commit failed (disk-full, or a commit
+        # OperationalError under writer contention). The deliverable zip + the
+        # Delivery row are ALREADY committed by the finalize endpoint; this task
+        # only generates the doc, flips delivery_doc_pending→delivered, and
+        # fires the "等你验收" notification. This task carries NO job_id, so the
+        # restart sweep's job-driven recovery can't reach it — without this
+        # handler the requirement would be stranded `delivery_doc_pending`
+        # forever. Retry the critical transition in a fresh session.
+        logger.exception("delivery doc finalize failed for %s", delivery_id)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        await _recover_stranded_delivery(delivery_id, doc)
+    finally:
+        db.close()
+
+
+async def _recover_stranded_delivery(delivery_id: str, fallback_doc: str) -> None:
+    """Best-effort second attempt at the delivery_doc_pending→delivered
+    transition after `_finalize_doc`'s main block raised. Uses a fresh session
+    so a poisoned transaction can't block it. Idempotent: if the requirement
+    already moved on, it's a no-op."""
+    db = SessionLocal()
+    try:
+        d = db.query(Delivery).filter(Delivery.id == delivery_id).first()
+        if not d:
+            return
+        if not d.delivery_doc_md:
+            d.delivery_doc_md = fallback_doc
+        r = db.query(Requirement).filter(Requirement.id == d.requirement_id).first()
+        pending = []
+        if r and r.status == "delivery_doc_pending":
+            r.status = "delivered"
+            r.delivery_doc_ready_at = datetime.utcnow()
+            from services.lifecycle import queue_status_notifications
+            worker = User(id="ai-finalize", nickname=d.submitted_by_nickname or "AI 助理")
+            pending = queue_status_notifications(db, r, "delivered", worker)
+        db.commit()
+        if r:
+            from services.lifecycle import flush_status_notifications
+            await flush_status_notifications(pending)
+            await bus.publish(f"req:{d.requirement_id}", "requirement.updated", {"status": "delivered"})
+            await bus.publish("all", "requirement.updated", {
+                "requirement_id": d.requirement_id, "status": "delivered",
+            })
+    except Exception:
+        # Second failure (e.g. persistent disk-full). The requirement-status
+        # backstop sweep at startup (main._resume_stuck_jobs) will catch it.
+        logger.exception("delivery doc recovery also failed for %s", delivery_id)
     finally:
         db.close()

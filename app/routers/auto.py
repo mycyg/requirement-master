@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import shutil
 import zipfile
 from datetime import datetime
@@ -23,6 +24,7 @@ from services.jobs import create_job, publish_job, update_job
 from services.push_bus import bus
 
 router = APIRouter(prefix="/api", tags=["auto"])
+logger = logging.getLogger(__name__)
 
 
 def _workdir(req_id: str) -> Path:
@@ -265,6 +267,22 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
 
         # success → workdir already zipped; we can keep or remove
         shutil.rmtree(workdir, ignore_errors=True)
+    except Exception as e:
+        # The post-LLM finalization (zip packaging, Delivery insert, commit)
+        # had only `finally: db.close()` — a disk-full zip write or a commit
+        # OperationalError (busy_timeout exceeded under write contention) would
+        # escape this DETACHED asyncio task uncaught, stranding the requirement
+        # in `ai_processing` with a `running` job until the 15-min restart
+        # sweep. Route to a terminal state instead. _mark_auto_failed is now
+        # status-aware: if the delivery actually committed before a late-stage
+        # error it won't clobber the `delivered` requirement, only settles the
+        # job.
+        logger.exception("auto finalize failed for %s", req_id)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        await _mark_auto_failed(req_id, actor, title, f"finalize: {type(e).__name__}: {e}", job_id=job_id)
     finally:
         db.close()
 
@@ -279,10 +297,39 @@ async def _mark_auto_failed(req_id: str, actor: str, title: str, reason: str, jo
         # `_run_and_finalize` for the symmetric rationale.
         r = db.query(Requirement).filter(Requirement.id == req_id).first()
         if not r:
+            # Requirement gone (hard-deleted). Still settle the job so it isn't
+            # left `running` forever.
+            if job_id:
+                job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
+                if job and job.status not in {"succeeded", "failed"}:
+                    update_job(db, job, status="failed", progress_percent=100, message="需求已不存在", result_ref=req_id, error=reason)
+                    db.commit()
+                    await publish_job(job)
             return
-        # Same cancel-aware guard as the inline failure path above.
-        if r.status == "ai_processing":
-            r.status = "ready"
+        if r.status != "ai_processing":
+            # The requirement already left the in-flight state — either the user
+            # cancelled mid-run, or (the window this guard was hardened for) the
+            # delivery actually committed before a LATE-stage finalization error
+            # (SSE publish, job-row update). Don't write failure breadcrumbs or
+            # resurrect it; just make sure the job isn't stranded `running`,
+            # reflecting the requirement's real outcome.
+            if job_id:
+                job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).first()
+                if job and job.status not in {"succeeded", "failed"}:
+                    delivered = r.status in {"delivered", "accepted"}
+                    update_job(
+                        db, job,
+                        status="succeeded" if delivered else "failed",
+                        progress_percent=100,
+                        message="AI 处理已结束" if delivered else "AI 自动处理失败，已转人工",
+                        result_ref=req_id,
+                        error=None if delivered else reason,
+                    )
+                    db.commit()
+                    await publish_job(job)
+            return
+        # Still in-flight → revert to ready + failure breadcrumbs.
+        r.status = "ready"
         log_activity(
             db, requirement_id=req_id, actor_nickname=actor,
             action="ai_failed", detail={"reason": reason},

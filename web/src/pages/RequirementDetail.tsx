@@ -466,6 +466,7 @@ export function RequirementDetail() {
 function ChatHistory({ reqId }: { reqId: string }) {
   const [msgs, setMsgs] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
   useEffect(() => {
     let alive = true;
     setErr(null);
@@ -475,8 +476,13 @@ function ChatHistory({ reqId }: { reqId: string }) {
       // load error indistinguishable from a genuinely empty conversation.
       .catch((e) => { if (alive) setErr(String(e)); });
     return () => { alive = false; };
-  }, [reqId]);
-  if (err) return <div className="text-sm text-red-700">对话加载失败：{err}</div>;
+  }, [reqId, reloadTick]);
+  if (err) return (
+    <div className="text-sm text-red-700">
+      对话加载失败：{err}
+      <button className="ml-2 underline" onClick={() => setReloadTick((t) => t + 1)}>重试</button>
+    </div>
+  );
   if (msgs.length === 0) return <div className="empty-state">无对话</div>;
   return (
     <div className="space-y-2">
