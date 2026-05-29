@@ -61,21 +61,30 @@ export function useChatStream(req_id: string, customFetch?: ChatFetch) {
 
     const flush = () => {
       if (!event) return;
+      // Capture event/data into locals BEFORE resetting them. setState's
+      // functional updater runs asynchronously (React 18 batches updates made
+      // in this async read-loop and flushes them at await boundaries); if the
+      // updater closed over the mutable `event`/`data`, by the time React ran
+      // it those vars would have been reset to "" or reassigned by the next
+      // SSE event — so deltas got dropped / duplicated / reordered, which is
+      // exactly the garbled "thinking" stream seen in the desktop client.
+      const ev = event;
+      const d = data;
+      event = ""; data = "";
       setState((s) => {
-        if (event === "thinking") return { ...s, thinking: s.thinking + data };
-        if (event === "text") return { ...s, text: s.text + data };
-        if (event === "parsed") {
+        if (ev === "thinking") return { ...s, thinking: s.thinking + d };
+        if (ev === "text") return { ...s, text: s.text + d };
+        if (ev === "parsed") {
           try {
-            return { ...s, parsed: JSON.parse(data) as AgentParsed, running: false };
+            return { ...s, parsed: JSON.parse(d) as AgentParsed, running: false };
           } catch {
             return { ...s, error: "parsed event was not valid JSON" };
           }
         }
-        if (event === "error") return { ...s, error: data };
-        if (event === "done") return { ...s, done: true, running: false };
+        if (ev === "error") return { ...s, error: d };
+        if (ev === "done") return { ...s, done: true, running: false };
         return s;
       });
-      event = ""; data = "";
     };
 
     try {
