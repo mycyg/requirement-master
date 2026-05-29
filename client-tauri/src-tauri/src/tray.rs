@@ -14,7 +14,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let user_label = MenuItemBuilder::with_id("user", format!("用户：{nick}")).enabled(false).build(app)?;
     let open_main = MenuItemBuilder::with_id("open_main", "打开主窗口").build(app)?;
     let open_hub = MenuItemBuilder::with_id("open_hub", "打开需求大厅").build(app)?;
-    let open_current = MenuItemBuilder::with_id("open_current", "打开当前任务").build(app)?;
+    let open_current = MenuItemBuilder::with_id("open_current", "打开待办收件箱").build(app)?;
     let pull_new = MenuItemBuilder::with_id("pull_new", "立即拉新需求").build(app)?;
     let sync_drive = MenuItemBuilder::with_id("sync_drive", "立即同步网盘").build(app)?;
     let do_deliver = MenuItemBuilder::with_id("do_deliver", "完成并交付…").build(app)?;
@@ -66,7 +66,9 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             let id = ev.id.as_ref();
             match id {
                 "open_main" | "open_hub" => navigate(app, "/"),
-                "open_current" => navigate(app, "/current"),
+                // "/current" matched no route and silently redirected to the
+                // hub; point at the real 待办 inbox instead.
+                "open_current" => navigate(app, "/inbox"),
                 "pull_new" => { let _ = app.emit("tray-action", serde_json::json!({"action": "pull_new"})); }
                 "sync_drive" => { let _ = app.emit("tray-action", serde_json::json!({"action": "sync_drive"})); }
                 "do_deliver" => { let _ = app.emit("tray-action", serde_json::json!({"action": "do_deliver"})); }

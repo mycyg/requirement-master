@@ -8,6 +8,7 @@ import {
   FolderKanban,
   Folder as FolderIcon,
   Loader2,
+  Mic2,
   PackageCheck,
   Plus,
   RefreshCw,
@@ -49,7 +50,6 @@ type ProjectDelivery = {
   file_count: number;
   submitted_by_nickname: string;
   created_at: string;
-  files: { name: string; size: number }[];
 };
 
 /**

@@ -108,6 +108,10 @@ export function FloatingAssistant() {
   };
 
   const createFromDraft = async (draft: DraftPayload) => {
+    // Guard: loading={creating} only disables the button after the next
+    // render; a double-click within ~16ms slips through and would create two
+    // drafts + race two nav() calls (same guard as NewRequirement.goNext).
+    if (creating) return;
     setCreating(true);
     try {
       const projects = await invoke<{ id: string }[]>("list_my_projects");

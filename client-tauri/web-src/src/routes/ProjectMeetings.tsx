@@ -4,7 +4,7 @@ import {
   AlertCircle, ArrowLeft, CheckCircle2, FileAudio2, Loader2, Mic2, RefreshCw,
   Send, Sparkles, Trash2, UploadCloud,
 } from "lucide-react";
-import { Button, Card, EmptyState, Progress, Skeleton, StatusBadge, toast } from "@yqgl/shared";
+import { Button, Card, EmptyState, Progress, Skeleton, toast } from "@yqgl/shared";
 import type { BackgroundJob, Meeting, MeetingInsight } from "@yqgl/shared";
 import { clientFetch, clientJson, invoke } from "@/lib/tauri";
 

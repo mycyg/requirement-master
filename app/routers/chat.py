@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -20,6 +21,7 @@ from services.push_bus import bus
 from services.schedule import sync_requirement_due_event
 
 router = APIRouter(prefix="/api", tags=["chat"])
+logger = logging.getLogger("yqgl.chat")
 # Set of req_ids currently streaming a clarify turn. Replaces the previous
 # `dict[str, asyncio.Lock]` (which had two race conditions: `lock.locked()`
 # is not atomic with `await lock.acquire()` in asyncio, and popping the
@@ -148,8 +150,10 @@ async def chat_step(
                         yield _sse("parsed", parsed)
                     elif ev.kind == "error":
                         yield _sse("error", ev.data)
-            except Exception as e:
-                yield _sse("error", f"server error: {type(e).__name__}: {e}")
+            except Exception:
+                # Detail to the log; generic message on the wire (mirror assistant.py).
+                logger.exception("clarify stream failed")
+                yield _sse("error", "assistant temporarily unavailable")
 
             chat_msg_id = None
             if parsed:

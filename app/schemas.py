@@ -249,6 +249,12 @@ class RequirementPlanningUpdateIn(BaseModel):
     estimate_hours: Optional[float] = Field(default=None, ge=0, le=10000)
     estimate_confidence: Optional[str] = Field(default=None, pattern=r"^(low|medium|high)$")
     planning_note: Optional[str] = Field(default=None, max_length=5000)
+    # Draft edits (submitter-only, pre-dispatch): the desktop wizard creates the
+    # draft at the DDL step, then lets the user go back and revise the
+    # description / priority. These let those edits persist instead of being
+    # silently dropped (and the AI clarifying against stale text).
+    raw_description: Optional[str] = Field(default=None, min_length=1)
+    priority: Optional[str] = Field(default=None, pattern=r"^(low|normal|high|urgent)$")
 
 
 class RequirementOut(BaseModel):
@@ -623,8 +629,11 @@ class MeetingChunkInitOut(BaseModel):
 
 class MeetingPatchIn(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=256)
-    transcript_text: Optional[str] = None
-    minutes_md: Optional[str] = None
+    # Generous caps: long-form transcripts/minutes are intentionally large
+    # (like raw_description), but bound them so a single edit can't bloat the
+    # shared SQLite DB and every downstream read/reindex without limit.
+    transcript_text: Optional[str] = Field(default=None, max_length=2_000_000)
+    minutes_md: Optional[str] = Field(default=None, max_length=1_000_000)
 
 
 class MeetingInsightOut(BaseModel):

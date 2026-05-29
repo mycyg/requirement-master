@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Inbox, Plus, RefreshCw } from "lucide-react";
 import { Button, EmptyState, Skeleton, useSpace } from "@yqgl/shared";
 import type { Requirement } from "@yqgl/shared";
-import { invoke } from "@/lib/tauri";
+import { invoke, useEvent } from "@/lib/tauri";
 import { TaskCard } from "@/components/TaskCard";
 
 /**
@@ -14,9 +14,12 @@ import { TaskCard } from "@/components/TaskCard";
  * 「待我验收」是核心导流入口 — 这是提交人最容易遗忘的事项（已交付但还没点
  * 通过/打回），在 Sidebar 的徽章会用珊瑚渐变标出。
  */
-type DTab = "drafts" | "clarifying" | "ready" | "working" | "review" | "accepted";
+export type DTab = "drafts" | "clarifying" | "ready" | "working" | "review" | "accepted";
 
-const TABS: { id: DTab; label: string; statuses: string[] }[] = [
+// Exported so SidebarDispatch derives the same counts from the same status
+// mapping (single source of truth — no drift between the tab strip and the
+// sidebar badge).
+export const TABS: { id: DTab; label: string; statuses: string[] }[] = [
   { id: "drafts",     label: "起草中",   statuses: ["draft"] },
   { id: "clarifying", label: "待澄清",   statuses: ["clarifying", "summary_ready"] },
   { id: "ready",      label: "投递池",   statuses: ["ready"] },
@@ -46,6 +49,15 @@ export function HubDispatch() {
   };
 
   useEffect(() => { refresh(); }, []);
+
+  // Live refresh — mirror Hub.tsx. A worker delivering one of my requirements
+  // publishes requirement.updated (status=delivered) to the global `all` topic;
+  // without this the 待我验收 tab stayed stale until a manual refresh.
+  useEvent<{ event: string }>("push-event", (p) => {
+    if (p?.event === "requirement.updated" || p?.event === "requirement.ready") {
+      refresh();
+    }
+  });
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};

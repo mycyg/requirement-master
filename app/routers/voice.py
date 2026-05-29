@@ -12,12 +12,29 @@ from models import User
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
 
+# Voice clips are short; cap the body so one oversized upload can't OOM the
+# single uvicorn worker. transcribe() materializes the whole body into one
+# bytes object before forwarding to ASR, so the cap must be enforced on read
+# (every other upload path — meetings/attachments/delivery/drive — already
+# bounds its input; this was the lone exception).
+VOICE_MAX_BYTES = 25 * 1024 * 1024  # 25 MB ≈ many minutes of opus/webm
+
 
 # ---------- ASR ----------
 
 @router.post("/transcribe")
 async def transcribe(audio: UploadFile = File(...), _: User = Depends(current_user)) -> dict:
-    audio_bytes = await audio.read()
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await audio.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > VOICE_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="audio too large (max 25 MB)")
+        chunks.append(chunk)
+    audio_bytes = b"".join(chunks)
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="empty audio")
     files = {"audio": (audio.filename or "voice.webm", audio_bytes, audio.content_type or "audio/webm")}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import zipfile
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -38,7 +39,7 @@ class DeliveryOut(BaseModel):
 
 
 class RevisionIn(BaseModel):
-    reason_md: str = Field(min_length=1)
+    reason_md: str = Field(min_length=1, max_length=200_000)
 
 
 def _require_req(db: Session, req_id: str) -> Requirement:
@@ -73,14 +74,22 @@ def _require_can_view_assets(req: Requirement, user: User) -> None:
         raise HTTPException(status_code=403, detail="you cannot access deliveries for this requirement")
 
 
-def _zip_filelist(path: str) -> list[dict]:
+@lru_cache(maxsize=512)
+def _zip_filelist_cached(path: str, _sha256: str) -> tuple[tuple[str, int], ...]:
+    """Walk the package's central directory once and memoize. A delivered
+    package is immutable (content-addressed by sha256 + unique package_path),
+    so repeated GETs of the same delivery — and every historical round on a
+    requirement-detail load — need not re-open the zip and re-run
+    inspect_zip_entries' validation each time. Keyed on (path, sha256) so a
+    re-uploaded package at a reused path can never collide."""
     try:
-        return [
-            {"name": e["safe_name"], "size": e["size"]}
-            for e in inspect_zip_entries(Path(path))
-        ]
+        return tuple((e["safe_name"], e["size"]) for e in inspect_zip_entries(Path(path)))
     except Exception:
-        return []
+        return ()
+
+
+def _zip_filelist(path: str, sha256: str = "") -> list[dict]:
+    return [{"name": n, "size": s} for (n, s) in _zip_filelist_cached(path, sha256)]
 
 
 @router.get("/requirements/{req_id}/deliveries", response_model=list[DeliveryOut])
@@ -99,7 +108,7 @@ def list_deliveries(req_id: str, db: Session = Depends(get_db), user: User = Dep
             package_size=d.package_size, package_sha256=d.package_sha256,
             file_count=d.file_count, delivery_doc_md=d.delivery_doc_md,
             notes=d.notes, submitted_by_nickname=d.submitted_by_nickname,
-            created_at=d.created_at, files=_zip_filelist(d.package_path),
+            created_at=d.created_at, files=_zip_filelist(d.package_path, d.package_sha256),
         )
         for d in rows
     ]
@@ -116,7 +125,10 @@ class ProjectDeliveryOut(BaseModel):
     file_count: int
     submitted_by_nickname: str
     created_at: datetime
-    files: list[dict]
+    # NOTE: no per-file `files` list here. The project-drive deliverables view
+    # (the only consumer) renders code/title/status/round/file_count/size only,
+    # so opening every requirement's package zip on each call was pure wasted
+    # IO. Per-file names are fetched on demand via the per-delivery endpoints.
 
 
 @router.get("/projects/{project_id}/deliveries", response_model=list[ProjectDeliveryOut])
@@ -155,7 +167,7 @@ def list_project_deliveries(
             requirement_status=r.status, round=d.round,
             package_size=d.package_size, file_count=d.file_count,
             submitted_by_nickname=d.submitted_by_nickname,
-            created_at=d.created_at, files=_zip_filelist(d.package_path),
+            created_at=d.created_at,
         ))
     out.sort(key=lambda x: x.created_at, reverse=True)
     return out

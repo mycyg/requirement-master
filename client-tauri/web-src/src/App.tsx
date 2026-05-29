@@ -175,9 +175,12 @@ export function App() {
       toast({ title: "正在刷新…", tone: "info" });
       nav("/inbox");
     } else if (p?.action === "sync_drive") {
-      toast({ title: "请选择项目后点击网盘页同步按钮", tone: "info" });
+      // Take the user to the project-drive list where the per-project sync
+      // button lives, rather than dead-ending on a toast.
+      toast({ title: "选择项目后点页内「同步」按钮", tone: "info" });
+      nav("/p");
     } else if (p?.action === "do_deliver") {
-      toast({ title: "请选择要交付的需求", tone: "info" });
+      toast({ title: "在需求详情页点「交付」", tone: "info" });
       nav("/inbox");
     }
   });

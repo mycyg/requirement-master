@@ -391,6 +391,18 @@ async def update_requirement_planning(
         r.estimate_confidence = payload.estimate_confidence
     if payload.planning_note is not None:
         r.planning_note = payload.planning_note
+    # Draft text edits: submitter-only, and only while the requirement hasn't
+    # been dispatched yet (the wizard's back-and-edit flow). Locking after
+    # dispatch keeps a claimed/working requirement's text stable for assignees.
+    if payload.raw_description is not None or payload.priority is not None:
+        if user.id != r.submitter_user_id:
+            raise HTTPException(status_code=403, detail="only the requester can edit the requirement text")
+        if r.status not in {"draft", "clarifying", "summary_ready"}:
+            raise HTTPException(status_code=409, detail="requirement is already dispatched; its text is locked")
+        if payload.raw_description is not None:
+            r.raw_description = payload.raw_description.strip()
+        if payload.priority is not None:
+            r.priority = payload.priority
     log_activity(
         db,
         requirement_id=r.id,

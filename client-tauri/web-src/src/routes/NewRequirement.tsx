@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
@@ -39,6 +39,11 @@ const PRIORITY: { value: Priority; label: string; tone: string }[] = [
 
 type Project = { id: string; name: string; slug: string };
 
+type Snapshot = {
+  desc: string; priority: Priority; lead: string | null; collab: string[];
+  start: string; due: string; est: string; conf: "low" | "medium" | "high";
+};
+
 /**
  * 派活 Space 的「新建需求」5 步 wizard。结构对照 web/src/pages/NewRequirement.tsx
  * 但视觉用 Aurora Glass tokens 重写，IPC 走 invoke() 而不是 fetch()。
@@ -66,6 +71,11 @@ export function NewRequirement() {
 
   // draft state
   const [reqId, setReqId] = useState<string | null>(null);
+  // Snapshot of what's currently persisted on the server. Lets persistEdits()
+  // PATCH only the field groups that actually changed when the user navigates
+  // back and edits — so we don't re-fire assignment notifications or do
+  // redundant writes on every forward step.
+  const savedRef = useRef<Snapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
@@ -118,6 +128,40 @@ export function NewRequirement() {
     return null;
   };
 
+  const snapshot = (): Snapshot => ({
+    desc: desc.trim(), priority, lead: leadUserId, collab: [...collabIds],
+    start: startAt, due: dueAt, est: estimateHours, conf: confidence,
+  });
+
+  // After the draft exists, re-persist edits the user made by navigating back
+  // (description / priority / assignees / schedule / estimate). Without this,
+  // those edits live only in React state — the AI clarifies against the stale
+  // server-side description and the wrong assignee can stick. Only PATCHes the
+  // field groups that actually changed since the last save.
+  const persistEdits = async () => {
+    if (!reqId) return;
+    const prev = savedRef.current;
+    const cur = snapshot();
+    if (!prev || prev.desc !== cur.desc || prev.priority !== cur.priority || prev.est !== cur.est || prev.conf !== cur.conf) {
+      const body: Record<string, unknown> = { raw_description: cur.desc, priority: cur.priority };
+      if (cur.est) { body.estimate_hours = Number(cur.est); body.estimate_confidence = cur.conf; }
+      await invoke("patch_planning", { reqId, body });
+    }
+    if (!prev || prev.lead !== cur.lead || prev.collab.join(",") !== cur.collab.join(",")) {
+      await invoke("put_assignees", { reqId, leadUserId: cur.lead, collaboratorUserIds: cur.collab });
+    }
+    if (!prev || prev.start !== cur.start || prev.due !== cur.due) {
+      await invoke("patch_schedule", {
+        reqId,
+        body: {
+          start_at: cur.start ? new Date(cur.start).toISOString() : null,
+          due_at: cur.due ? new Date(cur.due).toISOString() : null,
+        },
+      });
+    }
+    savedRef.current = cur;
+  };
+
   const goNext = async () => {
     // Re-entrancy guard — `loading={busy}` on the button only disables
     // after the next render; a double-click within ~16ms slips through
@@ -146,9 +190,22 @@ export function NewRequirement() {
         }
         const r = await invoke<{ id: string; code?: string }>("create_requirement", { projectId, body });
         setReqId(r.id);
+        savedRef.current = snapshot(); // record what we just persisted
         toast({ title: `草稿已存：${r.code ?? r.id.slice(0, 8)}`, tone: "success" });
       } catch (e: any) {
         setErr(String(e));
+        setBusy(false);
+        return;
+      }
+      setBusy(false);
+    } else if (reqId) {
+      // Draft already exists — the user may have gone back and edited an
+      // earlier step. Flush the current form state before advancing.
+      setBusy(true);
+      try {
+        await persistEdits();
+      } catch (e: any) {
+        setErr(`保存修改失败：${e}`);
         setBusy(false);
         return;
       }

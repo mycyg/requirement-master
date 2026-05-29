@@ -36,7 +36,7 @@ const linkClass = (active: boolean) =>
     active ? "bg-accent-soft text-ink" : "text-ink-soft hover:bg-accent-soft/60 hover:text-ink"
   }`;
 
-export function SidebarWork({ counts }: { counts?: Record<string, number> }) {
+export function SidebarWork() {
   const [params] = useSearchParams();
   const { pathname } = useLocation();
   // Only one tab is active, and only while we're on the hub route `/`.
@@ -54,9 +54,6 @@ export function SidebarWork({ counts }: { counts?: Record<string, number> }) {
             <NavLink key={n.to} to={n.to} className={linkClass(activeTab === n.tab)}>
               {n.icon}
               <span className="flex-1 truncate">{n.label}</span>
-              {counts && counts[n.tab] != null && (
-                <span className="text-caption text-ink-faint">{counts[n.tab]}</span>
-              )}
             </NavLink>
           ))}
         </nav>

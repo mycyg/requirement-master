@@ -22,6 +22,19 @@ pub async fn start_delivery(
     req_id: String,
     folder: PathBuf,
 ) -> Result<()> {
+    // Containment guard — `folder` comes from an editable UI field. Every
+    // sibling FS command enforces that paths live inside the configured
+    // sync_root (via ensure_dir_inside_root); start_delivery was the lone
+    // exception. Refuse to package/upload anything outside the user's work
+    // tree (defense-in-depth against a fat-fingered or socially-engineered
+    // absolute path). The guard drops the config read lock before any await.
+    let sync_root = { state.read().sync_root.clone() };
+    crate::sync::ensure_dir_inside_root(Path::new(&sync_root), &folder)
+        .await
+        .map_err(|e| crate::error::Error::Other(format!(
+            "交付目录必须在同步根目录（{sync_root}）内：{e}"
+        )))?;
+
     let zip_path = std::env::temp_dir().join(format!("yqgl-delivery-{req_id}.zip"));
     zip_dir(&folder, &zip_path)?;
 

@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import { NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   CheckCircle2,
@@ -12,6 +13,9 @@ import {
   Star,
   Wrench,
 } from "lucide-react";
+import type { Requirement } from "@yqgl/shared";
+import { invoke, useEvent } from "@/lib/tauri";
+import { TABS } from "@/routes/HubDispatch";
 
 /**
  * 派活 Space 的左侧栏。布局对称于 SidebarWork，导航项映射到提交人视角：
@@ -19,6 +23,11 @@ import {
  *
  * 工单分组是 `/?dtab=...` 查询参数标签（同一 pathname `/`），激活态必须按
  * dtab 值判断，否则所有标签同时高亮。默认 dtab=review，与 HubDispatch.tsx 一致。
+ *
+ * 角标（尤其「待我验收」的珊瑚渐变）由本组件自取数据，独立于当前路由——
+ * HubDispatch 只在它是当前页时刷新，而角标需要在任何页面都实时反映「已交付待
+ * 验收」的数量。数据源与 HubDispatch 相同（list_my mine:true），状态映射复用
+ * 导出的 TABS，避免漂移。
  */
 const NAV: { to: string; dtab: string; label: string; icon: JSX.Element; emphasize?: boolean }[] = [
   { to: "/?dtab=drafts", dtab: "drafts", label: "起草中", icon: <FilePen className="h-4 w-4 text-ink-muted" /> },
@@ -34,11 +43,30 @@ const linkClass = (active: boolean) =>
     active ? "bg-accent-soft text-ink" : "text-ink-soft hover:bg-accent-soft/60 hover:text-ink"
   }`;
 
-export function SidebarDispatch({ counts }: { counts?: Record<string, number> }) {
+export function SidebarDispatch() {
   const nav = useNavigate();
   const [params] = useSearchParams();
   const { pathname } = useLocation();
   const activeTab = pathname === "/" ? params.get("dtab") || "review" : null;
+
+  const [rows, setRows] = useState<Requirement[] | null>(null);
+  const loadCounts = async () => {
+    try { setRows(await invoke<Requirement[]>("list_my", { mine: true })); }
+    catch { /* badge is best-effort — don't surface errors in the chrome */ }
+  };
+  useEffect(() => { loadCounts(); }, []);
+  // Live: a delivery (requirement.updated → delivered) bumps the 待我验收 count
+  // even when the user is on another page.
+  useEvent<{ event: string }>("push-event", (p) => {
+    if (p?.event === "requirement.updated" || p?.event === "requirement.ready") loadCounts();
+  });
+
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    if (!rows) return c;
+    for (const t of TABS) c[t.id] = rows.filter((r) => t.statuses.includes(r.status)).length;
+    return c;
+  }, [rows]);
 
   return (
     <aside
@@ -58,13 +86,13 @@ export function SidebarDispatch({ counts }: { counts?: Record<string, number> })
         <div className="text-eyebrow text-ink-faint px-2 mb-2">需求</div>
         <nav className="flex flex-col gap-0.5">
           {NAV.map((n) => {
-            const count = counts?.[n.dtab];
-            const showEmphasis = n.emphasize && count != null && count > 0;
+            const count = counts[n.dtab] ?? 0;
+            const showEmphasis = n.emphasize && count > 0;
             return (
               <NavLink key={n.to} to={n.to} className={linkClass(activeTab === n.dtab)}>
                 {n.icon}
                 <span className="flex-1 truncate">{n.label}</span>
-                {count != null && (
+                {count > 0 && (
                   <span
                     className={`text-caption ${
                       showEmphasis ? "px-1.5 py-0.5 rounded-pill text-white" : "text-ink-faint"

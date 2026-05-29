@@ -7,7 +7,7 @@ import { SidebarDispatch } from "@/components/SidebarDispatch";
  * Transitions API (triggered by `useSpace` on switch) crossfades the two
  * trees together, so we don't need any animation logic here.
  */
-export function Sidebar({ counts }: { counts?: Record<string, number> }) {
+export function Sidebar() {
   const { space } = useSpace();
-  return space === "dispatch" ? <SidebarDispatch counts={counts} /> : <SidebarWork counts={counts} />;
+  return space === "dispatch" ? <SidebarDispatch /> : <SidebarWork />;
 }

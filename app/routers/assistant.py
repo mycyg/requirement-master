@@ -144,9 +144,11 @@ async def assistant_chat(payload: AssistantChatIn, user: User = Depends(current_
                 # Never strand the user on a parse miss — surface the raw text.
                 parsed = {"action": "answer", "payload": {"answer_md": "".join(text_accum).strip() or "（暂时没有内容）"}}
             yield _sse("parsed", parsed)
-        except Exception as e:
+        except Exception:
+            # Full detail goes to the server log; the client gets a generic,
+            # user-facing message — no raw exception text on the wire.
             logger.exception("assistant stream failed")
-            yield _sse("error", f"server error: {type(e).__name__}: {e}")
+            yield _sse("error", "assistant temporarily unavailable")
         yield _sse("done", {})
 
     return StreamingResponse(
