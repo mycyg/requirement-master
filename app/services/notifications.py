@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -132,7 +133,14 @@ def publish_notification_threadsafe(row: Notification) -> None:
         loop = _asyncio.get_running_loop()
         loop.create_task(_go())
     except RuntimeError:
-        pass  # no loop reachable; row still delivered via polling
+        # No loop reachable from this thread — the row is still persisted, so
+        # it's delivered on the recipient's next poll. Log (don't silently
+        # swallow) so a systemic publish failure is observable, matching the
+        # async sibling flush_status_notifications.
+        logging.getLogger(__name__).debug(
+            "threadsafe notification publish could not reach an event loop for user %s; "
+            "falling back to poll-delivery", row.user_id,
+        )
 
 
 async def notify_users(db: Session, users: list[User], **kwargs) -> list[Notification]:
