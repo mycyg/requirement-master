@@ -43,6 +43,7 @@ export function SpeakButton({
   const [err, setErr] = useState<string | null>(null);
   const lastTriggerRef = useRef<string | undefined>(undefined);
   const myAudioRef = useRef<HTMLAudioElement | null>(null);
+  const aliveRef = useRef(true);
 
   const speak = async () => {
     if (!text.trim()) return;
@@ -59,7 +60,10 @@ export function SpeakButton({
       });
       if (!r.ok) throw new Error(`${r.status}: ${(await r.text()).slice(0, 200)}`);
       const blob = await r.blob();
-      if (myGen !== playGeneration) return;  // a newer speak() superseded us — don't play a stale clip
+      // Bail if a newer speak() superseded us OR this component unmounted
+      // mid-fetch — otherwise the clip would play on a dead component with no
+      // UI left to stop it.
+      if (myGen !== playGeneration || !aliveRef.current) return;
       const url = URL.createObjectURL(blob);
       stopCurrent();  // stop anything that started between our claim and now
       const a = new Audio(url);

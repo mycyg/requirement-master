@@ -203,20 +203,24 @@ def finalize_upload(
 
     h = hashlib.sha256()
     total = 0
-    with open(final_path, "wb") as out:
-        for c in chunks:
-            with open(c, "rb") as src:
-                while True:
-                    buf = src.read(1024 * 1024)
-                    if not buf:
-                        break
-                    out.write(buf)
-                    h.update(buf)
-                    total += len(buf)
-
-    if total != meta["total_size"]:
-        os.unlink(final_path)
-        raise HTTPException(status_code=400, detail=f"size mismatch: got {total}, expected {meta['total_size']}")
+    try:
+        with open(final_path, "wb") as out:
+            for c in chunks:
+                with open(c, "rb") as src:
+                    while True:
+                        buf = src.read(1024 * 1024)
+                        if not buf:
+                            break
+                        out.write(buf)
+                        h.update(buf)
+                        total += len(buf)
+        if total != meta["total_size"]:
+            raise HTTPException(status_code=400, detail=f"size mismatch: got {total}, expected {meta['total_size']}")
+    except BaseException:
+        # Any merge failure (disk full, size-mismatch, a kill) must not leave a
+        # half-written orphan; re-raise the original after cleanup.
+        final_path.unlink(missing_ok=True)
+        raise
 
     sha = h.hexdigest()
     att = Attachment(
@@ -274,18 +278,22 @@ async def upload_simple(
 
     h = hashlib.sha256()
     total = 0
-    with open(final_path, "wb") as out:
-        while True:
-            buf = await file.read(1024 * 1024)
-            if not buf:
-                break
-            if total + len(buf) > MAX_BYTES:
-                out.close()
-                os.unlink(final_path)
-                raise HTTPException(status_code=413, detail="file too large")
-            out.write(buf)
-            h.update(buf)
-            total += len(buf)
+    try:
+        with open(final_path, "wb") as out:
+            while True:
+                buf = await file.read(1024 * 1024)
+                if not buf:
+                    break
+                if total + len(buf) > MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="file too large")
+                out.write(buf)
+                h.update(buf)
+                total += len(buf)
+    except BaseException:
+        # Over-size, disk-full, client disconnect mid-stream — don't leave a
+        # half-written orphan.
+        final_path.unlink(missing_ok=True)
+        raise
 
     att = Attachment(
         requirement_id=r.id,

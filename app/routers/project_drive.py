@@ -886,19 +886,26 @@ def finalize_drive_upload(
 
     h = hashlib.sha256()
     total = 0
-    with open(final_path, "wb") as out:
-        for chunk in chunks:
-            with open(chunk, "rb") as src:
-                while True:
-                    buf = src.read(1024 * 1024)
-                    if not buf:
-                        break
-                    out.write(buf)
-                    h.update(buf)
-                    total += len(buf)
-    if total != meta["total_size"]:
-        os.unlink(final_path)
-        raise HTTPException(status_code=400, detail=f"size mismatch: got {total}, expected {meta['total_size']}")
+    try:
+        with open(final_path, "wb") as out:
+            for chunk in chunks:
+                with open(chunk, "rb") as src:
+                    while True:
+                        buf = src.read(1024 * 1024)
+                        if not buf:
+                            break
+                        out.write(buf)
+                        h.update(buf)
+                        total += len(buf)
+        if total != meta["total_size"]:
+            raise HTTPException(status_code=400, detail=f"size mismatch: got {total}, expected {meta['total_size']}")
+    except BaseException:
+        # Any merge failure (disk full, size-mismatch, a kill) must not leave a
+        # half-written orphan drive file. The version/item rows are still
+        # uncommitted here, so they roll back; only the on-disk blob needs
+        # cleanup. (delivery_upload uses tmp+os.replace and is already immune.)
+        final_path.unlink(missing_ok=True)
+        raise
 
     version.storage_path = str(final_path)
     version.sha256 = h.hexdigest()
