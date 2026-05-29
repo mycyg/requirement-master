@@ -63,22 +63,31 @@ export { isTauri };
  * http://127.0.0.1:5174) has a /api proxy in vite.config.ts so the leading
  * slash works there too; clientFetch keeps that path verbatim in dev.
  */
-let _cfgCache: { token: string; baseUrl: string } | null = null;
+type CfgCache = { token: string; baseUrl: string; baseObj: URL | null };
+let _cfgCache: CfgCache | null = null;
 
-async function ensureCfg(): Promise<{ token: string; baseUrl: string }> {
+// Parse the base URL once per cache fill (not per clientFetch call). The cache
+// is invalidated wholesale via resetClientTokenCache() on any settings change,
+// so baseObj can never go stale relative to baseUrl.
+function makeCache(token: string, baseUrl: string): CfgCache {
+  let baseObj: URL | null = null;
+  if (baseUrl) {
+    try { baseObj = new URL(baseUrl); } catch { baseObj = null; }
+  }
+  return { token, baseUrl, baseObj };
+}
+
+async function ensureCfg(): Promise<CfgCache> {
   if (_cfgCache) return _cfgCache;
   if (!isTauri()) {
-    _cfgCache = { token: "", baseUrl: "" };  // dev: rely on vite proxy
+    _cfgCache = makeCache("", "");  // dev: rely on vite proxy
     return _cfgCache;
   }
   try {
     const cfg = await invoke<{ client_token?: string; server_url?: string }>("get_config");
-    _cfgCache = {
-      token: cfg?.client_token ?? "",
-      baseUrl: (cfg?.server_url ?? "").replace(/\/+$/, ""),
-    };
+    _cfgCache = makeCache(cfg?.client_token ?? "", (cfg?.server_url ?? "").replace(/\/+$/, ""));
   } catch {
-    _cfgCache = { token: "", baseUrl: "" };
+    _cfgCache = makeCache("", "");
   }
   return _cfgCache;
 }
@@ -95,8 +104,8 @@ export async function clientFetch(input: string, init: RequestInit = {}): Promis
   const headers = new Headers(init.headers || {});
   let canAttachClientToken = !cfg.baseUrl && input.startsWith("/");
   let url = input;
-  if (cfg.baseUrl) {
-    const base = new URL(cfg.baseUrl);
+  if (cfg.baseObj) {
+    const base = cfg.baseObj;
     const target = new URL(input, base);
     canAttachClientToken = target.origin === base.origin;
     url = /^https?:\/\//i.test(input) ? input : target.toString();

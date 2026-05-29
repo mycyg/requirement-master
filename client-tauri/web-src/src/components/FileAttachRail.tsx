@@ -73,7 +73,11 @@ export function FileAttachRail({ reqId, reqStatus }: { reqId: string; reqStatus?
     let alive = true;
     let off: (() => void) | undefined;
     listen<UploadProgress>("upload-progress", (p) => {
-      if (p.req_id !== reqId) return;
+      // Inner alive guard: an event can land between unmount and `off()`
+      // (e.g. the "done" event fires as the user navigates away mid-upload).
+      // Without this we'd setState on an unmounted component and fire a
+      // wasted list_attachments whose result is discarded.
+      if (!alive || p.req_id !== reqId) return;
       setProgress(p);
       if (p.phase === "done") {
         setProgress(null);

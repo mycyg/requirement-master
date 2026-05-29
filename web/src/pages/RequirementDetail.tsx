@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { parseServerDate } from "@yqgl/shared";
 import { api, isDesktopRuntime } from "@/lib/api";
 import { AssigneeSelector } from "@/components/AssigneeSelector";
 import { useReqStream } from "@/hooks/useReqStream";
@@ -59,13 +60,6 @@ function visibleDetailTabs(): TabEntry[] {
 
 const DETAIL_TABS = visibleDetailTabs();
 const ASSIGNEE_MANAGE_STATUSES = new Set(["ready", "claimed", "doing", "revision_requested"]);
-
-function parseServerDate(value?: string | null): Date | null {
-  if (!value) return null;
-  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
-  const date = new Date(hasZone ? value : `${value}Z`);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
 
 function formatServerDate(value?: string | null): string {
   const date = parseServerDate(value);

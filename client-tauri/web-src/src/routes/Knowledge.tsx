@@ -27,18 +27,28 @@ export function Knowledge() {
   const [run, setRun] = useState<AskRun | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Monotonic token mirrors doAsk's askTokenRef: rapid re-search before the
+  // prior query resolves must not let a stale result overwrite the newer one.
+  const searchTokenRef = useRef(0);
+  useEffect(() => () => { searchTokenRef.current++; }, []);
+
   const doSearch = async () => {
     if (!q.trim()) return;
+    const token = ++searchTokenRef.current;
     setBusy(true);
     setHits(null);
     try {
       const r = await clientJson<{ hits?: Hit[] }>(
         `/api/knowledge/search?q=${encodeURIComponent(q.trim())}&limit=30`,
       );
+      if (token !== searchTokenRef.current) return;
       setHits(Array.isArray(r?.hits) ? r.hits : []);
     } catch {
+      if (token !== searchTokenRef.current) return;
       setHits([]);
-    } finally { setBusy(false); }
+    } finally {
+      if (token === searchTokenRef.current) setBusy(false);
+    }
   };
 
   // Token bumps each time the user re-clicks "问" or unmounts. The

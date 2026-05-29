@@ -30,6 +30,10 @@ export function Calendar() {
   const [anchor, setAnchor] = useState(new Date());
 
   useEffect(() => {
+    // `alive` doubles as a staleness guard: fast ← 上周 / 下周 → clicks fire
+    // overlapping fetches, and the previous effect's cleanup sets alive=false
+    // so its late-resolving response can't overwrite the current week's events.
+    let alive = true;
     const start = startOfWeek(anchor);
     const end = new Date(start);
     end.setDate(end.getDate() + 7);
@@ -39,8 +43,9 @@ export function Calendar() {
       mine: "true",
     });
     clientJson<Event[]>(`/api/calendar/events?${qs}`)
-      .then((rows) => setEvents(Array.isArray(rows) ? rows : []))
-      .catch(() => setEvents([]));
+      .then((rows) => { if (alive) setEvents(Array.isArray(rows) ? rows : []); })
+      .catch(() => { if (alive) setEvents([]); });
+    return () => { alive = false; };
   }, [anchor]);
 
   const start = startOfWeek(anchor);

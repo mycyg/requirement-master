@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Inbox, Plus, RefreshCw, Sparkles } from "lucide-react";
 import { invoke } from "@/lib/tauri";
@@ -16,8 +16,14 @@ export function Hub() {
 
   const [items, setItems] = useState<Requirement[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Monotonic token: fast tab-mashing fires overlapping IPC calls whose
+  // responses can arrive out of order. Only the latest request is allowed
+  // to write setItems, so a stale tab's result never lands under the
+  // current tab header.
+  const reqTokenRef = useRef(0);
 
   const refresh = async () => {
+    const token = ++reqTokenRef.current;
     setErr(null);
     try {
       let list: Requirement[];
@@ -37,9 +43,11 @@ export function Hub() {
         list = await invoke<Requirement[]>("list_my", { assignedToMe: true });
         list = list.filter((r) => ["delivered", "accepted"].includes(r.status));
       }
+      if (token !== reqTokenRef.current) return; // a newer refresh superseded us
       list.sort((a, b) => (a.due_at || "").localeCompare(b.due_at || ""));
       setItems(list);
     } catch (e: any) {
+      if (token !== reqTokenRef.current) return;
       setErr(String(e));
       setItems([]);
     }

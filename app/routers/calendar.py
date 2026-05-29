@@ -5,7 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, exists, or_
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session, aliased, selectinload
 
 from auth import current_user
 from db import get_db
@@ -82,6 +82,9 @@ def list_events(
     ))
     q = (
         db.query(ScheduleEvent)
+        # Eager-load created_by — _event_out reads `event.created_by.nickname`
+        # for every row; without this each row fires a separate User query.
+        .options(selectinload(ScheduleEvent.created_by))
         .outerjoin(event_project, event_project.id == ScheduleEvent.project_id)
         .outerjoin(Requirement, Requirement.id == ScheduleEvent.requirement_id)
         .outerjoin(req_project, req_project.id == Requirement.project_id)

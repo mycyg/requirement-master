@@ -90,15 +90,14 @@ def _require_item(db: Session, item_id: str, *, include_deleted: bool = False) -
 
 def _can_manage_project(project: Project, user: User) -> bool:
     # Identity-based ownership — mirrors projects.py::_require_owner.
-    # Without owner_user_id, a re-registered nickname could inherit drive
-    # management rights over a tombstoned user's project (same shape as
-    # the M5 fix for project lifecycle endpoints, but applied to drive
-    # mutations).
+    # A NULL owner_user_id (orphaned project whose owner was deleted) is
+    # admin-only: falling back to a raw nickname compare would let a
+    # re-registered nickname inherit drive management rights over a
+    # tombstoned user's project. The boot migration already backfilled
+    # owner_user_id for every still-active owner.
     if is_admin(user):
         return True
-    if project.owner_user_id is not None:
-        return project.owner_user_id == user.id
-    return project.owner_nickname == user.nickname
+    return project.owner_user_id is not None and project.owner_user_id == user.id
 
 
 def _require_manage_item(db: Session, item: ProjectDriveItem, user: User) -> None:

@@ -46,11 +46,24 @@ def create_notification(
             .first()
         )
         if existing:
-            # Dedupe-update overwrites content from the new event. Reset
-            # BOTH read_at and archived_at to surface the change in the
-            # user's inbox — otherwise they'd see a stale "已读 1 小时前"
-            # entry whose title/body silently mutated under them.
-            existing.title = title
+            # Change-detection guard. `_ensure_due_notifications` re-fires the
+            # SAME dedupe_key on every polled GET with identical content; if we
+            # blindly reset read_at each time, a due/overdue/blocked
+            # notification can NEVER stay read — the inbox badge sticks forever
+            # and "标为已读" looks broken. Only resurface (clear read/archived,
+            # bump updated_at, re-push) when the content actually changed.
+            new_title = title[:256]
+            content_changed = (
+                existing.title != new_title
+                or existing.body != body
+                or existing.severity != severity
+                or existing.target_url != target_url
+                or existing.project_id != project_id
+                or existing.requirement_id != requirement_id
+            )
+            if not content_changed:
+                return existing
+            existing.title = new_title
             existing.body = body
             existing.severity = severity
             existing.target_url = target_url

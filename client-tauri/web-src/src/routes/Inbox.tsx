@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell, BellOff, Inbox as InboxIcon } from "lucide-react";
 import { Button, Card, EmptyState, Badge, parseServerDate } from "@yqgl/shared";
@@ -20,12 +20,19 @@ export function Inbox() {
   const nav = useNavigate();
   const [items, setItems] = useState<Notif[]>([]);
   const [view, setView] = useState<"unread" | "all">("unread");
+  // Monotonic token: the view-toggle refresh and the SSE-triggered refresh
+  // both converge on setItems. Without a guard, a slow unread-fetch can land
+  // after a fast all-fetch and show the wrong list under the active tab.
+  const reqTokenRef = useRef(0);
 
   const refresh = async () => {
+    const token = ++reqTokenRef.current;
     try {
       const list = await clientJson<Notif[]>(`/api/notifications?status=${view}`);
+      if (token !== reqTokenRef.current) return;
       setItems(Array.isArray(list) ? list : []);
     } catch {
+      if (token !== reqTokenRef.current) return;
       setItems([]);
     }
   };

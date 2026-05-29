@@ -41,18 +41,11 @@ def list_projects(
     # Non-admins must not enumerate OTHER people's archived/deleted projects
     # — that leaks ownership records of work someone deliberately removed.
     # They can still see THEIR OWN archived/deleted projects (restore UX).
-    # Identity-based filter mirrors `_require_owner`: prefer owner_user_id
-    # (set on all post-migration rows) and only fall back to nickname for
-    # legacy rows where owner_user_id is still NULL. A recycled nickname
-    # would otherwise see the previous owner's archived projects.
+    # Identity-based filter mirrors `_require_owner`: owner_user_id only.
+    # NULL-owner (orphaned) projects are invisible to non-admins — a recycled
+    # nickname must not see the previous owner's archived/deleted projects.
     if state in ("archived", "deleted", "all") and not is_admin(user):
-        from sqlalchemy import and_, or_
-        q = q.filter(
-            or_(
-                Project.owner_user_id == user.id,
-                and_(Project.owner_user_id.is_(None), Project.owner_nickname == user.nickname),
-            )
-        )
+        q = q.filter(Project.owner_user_id == user.id)
     rows = q.order_by(Project.created_at.desc()).all()
     return [_to_out(p) for p in rows]
 
@@ -100,16 +93,15 @@ def _require_owner(p: Project, user: User) -> None:
     from services.permissions import is_admin  # local import to avoid cycle
     if is_admin(user):
         return
-    # Identity-based ownership check. Fallback to nickname match ONLY for
-    # legacy rows that predate the `owner_user_id` column AND where the
-    # nickname still uniquely identifies that user (no soft-deletion has
-    # claimed it yet). Otherwise reject — a recycled nickname must not
-    # inherit ownership of someone else's project.
-    if p.owner_user_id is not None:
-        if p.owner_user_id != user.id:
-            raise HTTPException(status_code=403, detail="only the project owner can change project state")
-        return
-    if p.owner_nickname != user.nickname:
+    # Identity-based ownership ONLY. The boot-time migration backfills
+    # owner_user_id for every project whose owner is still an active user
+    # (matched by nickname). So after startup, a NULL owner_user_id means
+    # the original owner is gone (deleted → nickname tombstoned to
+    # `_deleted_…`, no longer matchable). We must NOT fall back to a raw
+    # nickname compare in that case: a re-registered nickname would
+    # silently inherit a stranger's project. Orphaned (NULL-owner) projects
+    # are admin-only to manage.
+    if p.owner_user_id is None or p.owner_user_id != user.id:
         raise HTTPException(status_code=403, detail="only the project owner can change project state")
 
 
