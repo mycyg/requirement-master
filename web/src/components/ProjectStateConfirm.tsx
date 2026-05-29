@@ -54,6 +54,14 @@ export function ProjectStateConfirm({
     setValue("");
   }, [project.id, action]);
 
+  // ESC cancels the confirm (only when not mid-submit, so a slow archive
+  // can't be half-abandoned). Matches the X button affordance.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onCancel(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onCancel]);
+
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-stone-950/30 px-4 backdrop-blur-sm" role="dialog" aria-modal="true">
       <section className="w-full max-w-lg rounded-lg border border-stone-200 bg-[#fffdf8] p-5 shadow-2xl">

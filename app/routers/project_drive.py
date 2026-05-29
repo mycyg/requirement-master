@@ -1334,25 +1334,60 @@ async def create_drive_comment(
 
     comment.llm_kind = decision.kind
     comment.llm_reason = decision.reason
+    comment_id = comment.id
     if decision.kind == "requirement_change":
-        project.next_seq += 1
-        code = f"{project.slug.upper()}-{project.next_seq:03d}"
-        draft = Requirement(
-            code=code,
-            project_id=project.id,
-            submitter_user_id=user.id,
-            title=decision.title,
-            raw_description=decision.draft_description or body,
-            priority="normal",
-            status="draft",
-        )
-        db.add(draft)
-        db.flush()
-        comment.status = "draft_created"
-        comment.draft_requirement_id = draft.id
+        # Phase 1: persist the comment as "posted" NOW, before allocating the
+        # draft requirement. The code-allocation below can hit the `code`
+        # UNIQUE constraint under concurrency; if that rolled back an
+        # un-committed comment, the user's text would be silently lost.
+        comment.status = "posted"
+        db.commit()
+        # Phase 2: allocate the draft requirement with the same 5-try
+        # IntegrityError retry the other two next_seq writers use
+        # (create_requirement, confirm_meeting_insight). Two concurrent
+        # requirement_change comments on one project would otherwise compute
+        # the same SLUG-NNN and the loser would 500 (and lose its comment).
+        from sqlalchemy.exc import IntegrityError
+        last_err: Exception | None = None
+        draft_id: str | None = None
+        for _ in range(5):
+            proj = _require_project(db, project_id)
+            proj.next_seq += 1
+            code = f"{proj.slug.upper()}-{proj.next_seq:03d}"
+            draft = Requirement(
+                code=code,
+                project_id=proj.id,
+                submitter_user_id=user.id,
+                title=decision.title,
+                raw_description=decision.draft_description or body,
+                priority="normal",
+                status="draft",
+            )
+            db.add(draft)
+            try:
+                db.flush()
+                draft_id = draft.id
+                break
+            except IntegrityError as e:
+                db.rollback()
+                last_err = e
+        # Re-load the comment (rollback in the loop expires ORM state); it was
+        # committed in phase 1 so it always exists.
+        comment = db.query(ProjectDriveComment).filter(ProjectDriveComment.id == comment_id).first()
+        if draft_id is not None:
+            comment.status = "draft_created"
+            comment.draft_requirement_id = draft_id
+            db.commit()
+        else:
+            # Couldn't allocate a code after retries — leave the comment safely
+            # "posted" (never lost) rather than 500-ing. Surfaces in logs.
+            logger.warning(
+                "create_drive_comment: could not allocate requirement code for project %s: %s",
+                project_id, last_err,
+            )
     else:
         comment.status = "posted"
-    db.commit()
+        db.commit()
     db.refresh(comment)
     schedule_project_reindex(background, project_id)
     await bus.publish("all", "drive.comment", {
