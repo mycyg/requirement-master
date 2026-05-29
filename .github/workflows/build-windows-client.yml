@@ -1,0 +1,67 @@
+name: Build Windows Client
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "client-windows-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-nsis:
+    name: Windows x64 NSIS installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Rust
+        run: rustup default stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck shared package
+        run: npm run build --workspace=shared
+
+      # NSIS is the only bundle target in tauri.conf.json. Building on a
+      # windows-latest runner sidesteps the local "cross-drive rename" NSIS
+      # bug (tauri-apps/tauri#13125) we hit on the dev box (repo on D:, temp
+      # on C:) — the runner has a single volume.
+      - name: Build Windows NSIS installer
+        run: npm run tauri:build --workspace=client-tauri -- --bundles nsis
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: yqgl-client-windows-x64-nsis
+          if-no-files-found: error
+          path: client-tauri/src-tauri/target/release/bundle/nsis/*-setup.exe
+
+      - name: Publish Windows release asset
+        if: startsWith(github.ref, 'refs/tags/client-windows-v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          setup="$(find client-tauri/src-tauri/target/release/bundle/nsis -name '*-setup.exe' -type f | head -n 1)"
+          test -n "$setup"
+          asset="yqgl-client-windows-x64-setup.exe"
+          cp "$setup" "$asset"
+          notes="Tauri v2 Windows x64 NSIS installer (Rust frosted-glass client). Unsigned internal build — SmartScreen may warn on first run: click 'More info' -> 'Run anyway'."
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$asset" --clobber
+            gh release edit "$GITHUB_REF_NAME" --latest=false
+          else
+            gh release create "$GITHUB_REF_NAME" "$asset" --title "$GITHUB_REF_NAME" --notes "$notes" --latest=false
+          fi
