@@ -25,10 +25,10 @@ class Settings(BaseSettings):
 
     macos_client_download_url: str = (
         "https://github.com/mycyg/requirement-master/releases/download/"
-        "client-macos-v0.2.0-unsigned.5/"
+        "client-macos-v0.3.1/"
         "yqgl-client-macos-universal-unsigned.dmg"
     )
-    macos_client_size_bytes: int = 13419400
+    macos_client_size_bytes: int = 13427287
 
     cors_allow_origins: list[str] = ["*"]
 
