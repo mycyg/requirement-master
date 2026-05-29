@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Bot, FolderOpen, Hammer, Play, PackageCheck, RefreshCw, UserCheck } from "lucide-react";
-import { invoke, useEvent } from "@/lib/tauri";
+import { invoke, useEvent, clientFetch } from "@/lib/tauri";
 import {
   Avatar,
   AvatarGroup,
@@ -22,10 +22,12 @@ import {
   isAssignee as isAssigneeFn,
   parseServerDate,
   useSpace,
+  useReqStream,
 } from "@yqgl/shared";
 import type { Requirement, RequirementWorkspace } from "@yqgl/shared";
 import { DeliveryWizard } from "@/components/DeliveryWizard";
 import { ActionRailDispatch } from "@/components/ActionRailDispatch";
+import { AILiveView } from "@/components/AILiveView";
 
 export function TaskDetail() {
   const { id = "" } = useParams();
@@ -73,6 +75,16 @@ export function TaskDetail() {
       refresh();
     }
   });
+
+  // Per-requirement SSE: granular ai.* worker events live only on the
+  // `req:<id>` topic (the global all/user client stream doesn't carry them).
+  // Drives the live "AI 正在做什么" view and refreshes the page when the
+  // worker transitions out of ai_processing.
+  const { events: aiEvents, latestStatus } = useReqStream(id, clientFetch);
+  useEffect(() => {
+    if (latestStatus) refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestStatus]);
 
   if (!req) {
     return (
@@ -224,7 +236,7 @@ export function TaskDetail() {
               leftIcon={<UserCheck className="h-3.5 w-3.5" />}
               onClick={() => setWorkerView(true)}
             >
-              我也来做（切到接单人视角）
+              我也参与（切到接单视角）
             </Button>
             <span className="text-caption text-ink-faint">你既是发起人也是负责人</span>
           </div>
@@ -266,6 +278,12 @@ export function TaskDetail() {
         )}
       </Card>
 
+      {req.status === "ai_processing" && (
+        <div className="mb-5">
+          <AILiveView events={aiEvents} />
+        </div>
+      )}
+
       <div className="grid grid-cols-1 xl:grid-cols-[1.5fr_1fr] gap-5">
         {/* Left column */}
         <div className="space-y-5">
@@ -296,7 +314,7 @@ export function TaskDetail() {
 
           {workspaces.length > 0 && (
             <Card>
-              <h3 className="text-h4 text-ink mb-3">队友进度（只读）</h3>
+              <h3 className="text-h4 text-ink mb-3">协作者进度（只读）</h3>
               <div className="space-y-2">
                 {workspaces.filter((w) => !me || w.user_id !== me.id).map((w) => (
                   <div key={w.id} className="glass-sunken p-3 flex items-center gap-3">

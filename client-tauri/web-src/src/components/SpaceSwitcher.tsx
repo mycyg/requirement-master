@@ -15,7 +15,7 @@ const VARIANTS: Variant[] = [
   {
     id: "work",
     label: "接活",
-    hint: "我手头有什么活",
+    hint: "我接的需求",
     swatch: "linear-gradient(135deg, #6B5BFF 0%, #8b7bff 100%)",
     hotkey: "Ctrl+1",
     Icon: Briefcase,
@@ -23,7 +23,7 @@ const VARIANTS: Variant[] = [
   {
     id: "dispatch",
     label: "派活",
-    hint: "我发出去的活怎么样了",
+    hint: "我派出去的需求",
     swatch: "linear-gradient(135deg, #FF6E8E 0%, #ffa3b9 100%)",
     hotkey: "Ctrl+2",
     Icon: Send,

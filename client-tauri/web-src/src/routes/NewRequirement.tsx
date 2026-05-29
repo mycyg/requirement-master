@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
   ArrowLeft,
@@ -48,6 +48,7 @@ type Project = { id: string; name: string; slug: string };
  */
 export function NewRequirement() {
   const nav = useNavigate();
+  const [searchParams] = useSearchParams();
   const [step, setStep] = useState(0);
 
   // form state
@@ -84,12 +85,27 @@ export function NewRequirement() {
   };
 
   useEffect(() => {
-    invoke<Project[]>("list_my_projects")
-      .then((rows) => {
+    // When opened as "基于此新建后续" (?parent_req_id=...), preselect the
+    // parent requirement's project so the follow-up lands in the same place.
+    const parentId = searchParams.get("parent_req_id");
+    (async () => {
+      try {
+        const rows = await invoke<Project[]>("list_my_projects");
         setProjects(rows);
-        if (rows.length > 0 && !projectId) setProjectId(rows[0].id);
-      })
-      .catch((e) => setErr(`项目列表加载失败：${e}`));
+        let preselect = rows.length > 0 ? rows[0].id : "";
+        if (parentId) {
+          try {
+            const parent = await invoke<{ project_id?: string }>("get_requirement", { reqId: parentId });
+            if (parent?.project_id && rows.some((r) => r.id === parent.project_id)) {
+              preselect = parent.project_id;
+            }
+          } catch { /* parent lookup is best-effort */ }
+        }
+        if (preselect && !projectId) setProjectId(preselect);
+      } catch (e: any) {
+        setErr(`项目列表加载失败：${e}`);
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -122,12 +122,12 @@ export function HubDispatch() {
           description={emptyDesc(dtab)}
           action={
             <div className="flex flex-wrap items-center justify-center gap-2">
-              {dtab === "drafts" || dtab === "ready" || dtab === "clarifying" ? (
+              {dtab === "drafts" || dtab === "ready" || dtab === "clarifying" || dtab === "accepted" ? (
                 <Button variant="accent" size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={() => nav("/r/new")}>
-                  新建一条
+                  新建需求
                 </Button>
               ) : null}
-              {dtab === "working" || dtab === "review" || dtab === "accepted" ? (
+              {dtab === "working" || dtab === "review" ? (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -164,7 +164,7 @@ function emptyTitle(t: DTab): string {
 
 function emptyDesc(t: DTab): string {
   return {
-    drafts: "点右上「新建需求」起一条。",
+    drafts: "点右上角「新建需求」开始。",
     clarifying: "需求已经投递出去，或还没创建。",
     ready: "投递后等接单人接走，会出现在这里。",
     working: "你发起的需求里没有正在被人做的。",

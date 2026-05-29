@@ -170,7 +170,7 @@ export function App() {
 
   useEvent<any>("tray-action", (p) => {
     if (p?.action === "pull_new") {
-      toast({ title: "正在拉新需求…", tone: "info" });
+      toast({ title: "正在刷新…", tone: "info" });
       nav("/inbox");
     } else if (p?.action === "sync_drive") {
       toast({ title: "请选择项目后点击网盘页同步按钮", tone: "info" });

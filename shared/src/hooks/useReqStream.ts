@@ -6,8 +6,15 @@ export type PushEvent = { event: string; data: any; at: number };
  * Subscribe to /api/push/stream/req/<id> SSE and accumulate events.
  * Use the returned `latestStatus` for live status changes (it's
  * updated whenever a requirement.updated event arrives).
+ *
+ * `customFetch` lets the Tauri desktop client pass its `clientFetch`
+ * (which prepends the backend base URL + auth) — the webview origin is
+ * `tauri://localhost`, so a bare relative `fetch('/api/...')` would 404.
+ * The browser app omits it and uses native same-origin fetch.
  */
-export function useReqStream(reqId: string | undefined) {
+export type ReqStreamFetch = (input: string, init?: RequestInit) => Promise<Response>;
+
+export function useReqStream(reqId: string | undefined, customFetch?: ReqStreamFetch) {
   const [events, setEvents] = useState<PushEvent[]>([]);
   const [latestStatus, setLatestStatus] = useState<string | null>(null);
 
@@ -19,8 +26,9 @@ export function useReqStream(reqId: string | undefined) {
 
     (async () => {
       try {
-        const r = await fetch(`/api/push/stream/req/${reqId}`, {
-          credentials: "include",
+        const doFetch: ReqStreamFetch =
+          customFetch ?? ((u, init) => fetch(u, { ...init, credentials: "include" }));
+        const r = await doFetch(`/api/push/stream/req/${reqId}`, {
           signal: ctrl.signal,
         });
         if (!r.ok || !r.body) return;

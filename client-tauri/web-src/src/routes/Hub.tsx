@@ -67,8 +67,8 @@ export function Hub() {
   });
 
   const title = useMemo(() => ({
-    public: "在抓",
-    mine: "找我的",
+    public: "公共池",
+    mine: "派给我的",
     active: "进行中",
     revision: "待返工",
     delivered: "近期交付",
@@ -87,7 +87,7 @@ export function Hub() {
   const startDoing = async (id: string) => {
     try {
       await invoke("patch_status", { reqId: id, status: "doing" });
-      toast({ title: "开始做了", tone: "info" });
+      toast({ title: "已开始", tone: "info" });
       refresh();
     } catch (e: any) {
       toast({ title: "状态切换失败", description: String(e), tone: "error" });
@@ -121,16 +121,16 @@ export function Hub() {
         <EmptyState
           icon={<Inbox className="h-8 w-8" />}
           title={
-            tab === "public" ? "公共池暂时没有新单" :
-            tab === "mine" ? "没人指派活给你" :
-            tab === "active" ? "手上没有进行中的活" :
-            tab === "revision" ? "没有待返工的活" :
+            tab === "public" ? "公共池暂时没有可接的需求" :
+            tab === "mine" ? "还没有指派给你的需求" :
+            tab === "active" ? "手上没有进行中的需求" :
+            tab === "revision" ? "没有待返工的需求" :
             "近期没有交付记录"
           }
           description={
-            tab === "public" ? "等队友把需求投递过来。或者去派活面板自己起一条。" :
-            tab === "mine" ? "可以去「在抓」看看公共池里有没有合适的活。" :
-            tab === "active" ? "去「找我的」或「在抓」看看，挑一条开做。" :
+            tab === "public" ? "有人投递后会出现在这里；也可以切到「派活」自己提一条。" :
+            tab === "mine" ? "去「公共池」看看有没有可接的。" :
+            tab === "active" ? "从「公共池」或「派给我的」接一条开始。" :
             tab === "revision" ? "你目前没有需要返工的需求。" :
             "完成的需求会出现在这里。"
           }
@@ -141,7 +141,7 @@ export function Hub() {
               </Button>
               {(tab === "mine" || tab === "active") && (
                 <Button variant="secondary" size="sm" onClick={() => setParams({ tab: "public" })}>
-                  去「在抓」逛逛
+                  去公共池看看
                 </Button>
               )}
               {tab === "public" && (
@@ -151,12 +151,12 @@ export function Hub() {
                   leftIcon={<Plus className="h-4 w-4" />}
                   onClick={() => { setSpace("dispatch"); nav("/r/new"); }}
                 >
-                  我自己起一条
+                  自己提一条
                 </Button>
               )}
               {tab === "delivered" && (
                 <Button variant="secondary" size="sm" leftIcon={<Sparkles className="h-4 w-4" />} onClick={() => setParams({ tab: "active" })}>
-                  看进行中的活
+                  看进行中的需求
                 </Button>
               )}
             </div>
@@ -171,7 +171,7 @@ export function Hub() {
               action={
                 r.status === "ready" ? (
                   <Button variant="accent" size="sm" onClick={(e) => { e.stopPropagation(); claim(r.id); }}>
-                    {tab === "public" ? "抢这单" : "接这单"}
+                    接单
                   </Button>
                 ) : r.status === "claimed" ? (
                   <Button variant="accent" size="sm" onClick={(e) => { e.stopPropagation(); startDoing(r.id); }}>

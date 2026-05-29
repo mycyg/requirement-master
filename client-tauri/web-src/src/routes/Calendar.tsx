@@ -116,7 +116,7 @@ export function Calendar() {
                 leftIcon={<Plus className="h-4 w-4" />}
                 onClick={() => nav("/r/new")}
               >
-                起一条需求（自带截止）
+                新建需求（自带截止时间）
               </Button>
             }
           />

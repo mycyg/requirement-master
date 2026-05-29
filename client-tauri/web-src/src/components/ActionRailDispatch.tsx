@@ -7,6 +7,7 @@ import {
   FileText,
   FolderOpen,
   PackageOpen,
+  Plus,
   Rocket,
   RotateCcw,
   Send,
@@ -186,9 +187,19 @@ export function ActionRailDispatch({ req, me, onChange }: Props) {
           <span className="text-body-sm text-ink-muted self-center">已打回，等接单人重做。</span>
         )}
         {req.status === "accepted" && (
-          <span className="inline-flex items-center gap-1.5 text-body-sm text-success">
-            <Check className="h-4 w-4" /> 已通过验收
-          </span>
+          <>
+            <span className="inline-flex items-center gap-1.5 text-body-sm text-success">
+              <Check className="h-4 w-4" /> 已通过验收
+            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<Plus className="h-3.5 w-3.5" />}
+              onClick={() => nav(`/r/new?parent_req_id=${req.id}`)}
+            >
+              基于此新建后续
+            </Button>
+          </>
         )}
         {/* Delete: submitter can delete while still private; admin always */}
         {(meIsAdmin || (meIsSubmitter && ["draft", "clarifying", "summary_ready", "cancelled"].includes(req.status))) && (
