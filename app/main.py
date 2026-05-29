@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from config import settings
 from db import engine
 from models import Base
+from routers import assistant as assistant_router
 from routers import attachments as attachments_router
 from routers import auth as auth_router
 from routers import auto as auto_router
@@ -237,6 +238,7 @@ app.include_router(project_drive_router.router)
 app.include_router(requirements_router.router)
 app.include_router(attachments_router.router)
 app.include_router(chat_router.router)
+app.include_router(assistant_router.router)
 app.include_router(voice_router.router)
 app.include_router(sync_router.router)
 app.include_router(push_router.router)

@@ -32,6 +32,7 @@ import { MyWorkload } from "@/routes/MyWorkload";
 import { Knowledge } from "@/routes/Knowledge";
 import { ProjectPulse } from "@/routes/ProjectPulse";
 import { Calendar } from "@/routes/Calendar";
+import { FloatingAssistant } from "@/components/FloatingAssistant";
 import { invoke, useEvent, isTauri, clientJson, resetClientTokenCache } from "@/lib/tauri";
 
 /**
@@ -269,6 +270,7 @@ export function App() {
       ) : (
         // Flat routing avoids the v6 "nested <Routes> under /*" pitfall
         // where the child Routes re-match the full pathname.
+        <>
         <div className="flex flex-1 min-h-0">
           <Sidebar />
           <div className="flex-1 min-w-0 min-h-0 flex flex-col">
@@ -291,6 +293,8 @@ export function App() {
             </Routes>
           </div>
         </div>
+        <FloatingAssistant />
+        </>
       )}
       <ToastHost />
     </div>
