@@ -74,15 +74,21 @@ def ensure_runtime_schema(engine: Engine) -> None:
                 conn.execute(text(f"ALTER TABLE projects ADD COLUMN {name} {ddl}"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_deleted_at ON projects (deleted_at)"))
         # Backfill owner_user_id for projects created before this column existed.
-        # Match by owner_nickname against the user with that exact nickname who
-        # ISN'T soft-deleted; if there are multiple matches (impossible today —
-        # nickname is unique among active users), prefer the oldest.
+        # Match by owner_nickname against the active user with that nickname —
+        # but ONLY if that user was created no later than the project itself.
+        # Without the created_at guard, this UPDATE runs every boot and could
+        # re-inherit a legacy NULL-owner project to a NEWLY-registered user who
+        # happens to reuse a deleted owner's nickname (delete_user tombstones
+        # users.nickname but not projects.owner_nickname). The original owner
+        # always predates their project, so `u.created_at <= projects.created_at`
+        # admits the real owner and rejects a later recycled-nickname account.
         conn.execute(text("""
             UPDATE projects
             SET owner_user_id = (
                 SELECT u.id FROM users u
                 WHERE u.nickname = projects.owner_nickname
                   AND u.deleted_at IS NULL
+                  AND u.created_at <= projects.created_at
                 ORDER BY u.created_at ASC
                 LIMIT 1
             )
