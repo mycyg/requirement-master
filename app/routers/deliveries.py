@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from auth import current_user
 from db import get_db
-from models import Delivery, Requirement, RevisionRequest, User
+from models import Delivery, Project, Requirement, RevisionRequest, User
 from services.activity import log_activity
 from services.delivery_doc import inspect_zip_entries
 from services.lifecycle import flush_status_notifications, queue_status_notifications
@@ -103,6 +103,62 @@ def list_deliveries(req_id: str, db: Session = Depends(get_db), user: User = Dep
         )
         for d in rows
     ]
+
+
+class ProjectDeliveryOut(BaseModel):
+    delivery_id: str
+    requirement_id: str
+    requirement_code: str
+    requirement_title: str | None
+    requirement_status: str
+    round: int
+    package_size: int
+    file_count: int
+    submitted_by_nickname: str
+    created_at: datetime
+    files: list[dict]
+
+
+@router.get("/projects/{project_id}/deliveries", response_model=list[ProjectDeliveryOut])
+def list_project_deliveries(
+    project_id: str, db: Session = Depends(get_db), user: User = Depends(current_user),
+) -> list[ProjectDeliveryOut]:
+    """Read-only deliverables view for the project drive: the latest delivery
+    of every requirement in this project that has produced one. Team-visible,
+    mirroring the project drive's own visibility (active project + any
+    identified user) — deliverables are shared project output, not per-user
+    private assets."""
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.archived == False,  # noqa: E712
+        Project.deleted_at.is_(None),
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+
+    rows = (
+        db.query(Delivery, Requirement)
+        .join(Requirement, Requirement.id == Delivery.requirement_id)
+        .filter(Requirement.project_id == project_id)
+        .order_by(Delivery.requirement_id, Delivery.round.desc())
+        .all()
+    )
+    out: list[ProjectDeliveryOut] = []
+    seen: set[str] = set()
+    for d, r in rows:
+        if d.requirement_id in seen:
+            continue  # keep only the latest round per requirement
+        seen.add(d.requirement_id)
+        out.append(ProjectDeliveryOut(
+            delivery_id=d.id, requirement_id=d.requirement_id,
+            requirement_code=r.code, requirement_title=r.title,
+            requirement_status=r.status, round=d.round,
+            package_size=d.package_size, file_count=d.file_count,
+            submitted_by_nickname=d.submitted_by_nickname,
+            created_at=d.created_at, files=_zip_filelist(d.package_path),
+        ))
+    out.sort(key=lambda x: x.created_at, reverse=True)
+    return out
 
 
 @router.get("/deliveries/{delivery_id}/package")

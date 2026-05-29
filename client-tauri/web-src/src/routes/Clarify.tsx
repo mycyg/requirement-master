@@ -18,6 +18,8 @@ import type {
   SummarizePayload,
 } from "@yqgl/shared";
 import { invoke, clientFetch } from "@/lib/tauri";
+import { VoiceButton } from "@/components/VoiceButton";
+import { SpeakButton } from "@/components/SpeakButton";
 
 /**
  * 派活 Space 的 AI 澄清页面 — 移植自 [web/src/pages/Clarify.tsx] but Aurora-Glass
@@ -256,7 +258,10 @@ function QuestionCard({ parsed, onAnswer }: { parsed: AgentParsed; onAnswer: (b:
     const p = parsed.payload;
     return (
       <Card variant="glass" padding="lg">
-        <div className="text-h4 text-ink leading-7">{p.question}</div>
+        <div className="flex items-start justify-between gap-2">
+          <div className="text-h4 text-ink leading-7">{p.question}</div>
+          <SpeakButton text={p.question} autoTriggerKey={p.question} />
+        </div>
         <div className="mt-4 space-y-2">
           {p.options.map((o) => (
             <button
@@ -271,7 +276,10 @@ function QuestionCard({ parsed, onAnswer }: { parsed: AgentParsed; onAnswer: (b:
         </div>
         {p.allow_other && (
           <div className="mt-4">
-            <div className="text-eyebrow text-ink-muted mb-1">其他</div>
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-eyebrow text-ink-muted">其他</div>
+              <VoiceButton onText={(t) => setOther((o) => (o.trim() ? `${o.trim()} ${t}` : t))} />
+            </div>
             <div className="flex gap-2">
               <Input
                 placeholder="写一个自己的答案"
@@ -300,7 +308,10 @@ function QuestionCard({ parsed, onAnswer }: { parsed: AgentParsed; onAnswer: (b:
     const p = parsed.payload;
     return (
       <Card variant="glass" padding="lg">
-        <div className="text-h4 text-ink leading-7">{p.question}</div>
+        <div className="flex items-start justify-between gap-2">
+          <div className="text-h4 text-ink leading-7">{p.question}</div>
+          <SpeakButton text={p.question} autoTriggerKey={p.question} />
+        </div>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
           <Textarea
             autosize
@@ -319,6 +330,9 @@ function QuestionCard({ parsed, onAnswer }: { parsed: AgentParsed; onAnswer: (b:
           >
             发送
           </Button>
+        </div>
+        <div className="mt-2">
+          <VoiceButton onText={(t) => setOpen((o) => (o.trim() ? `${o.trim()} ${t}` : t))} />
         </div>
         {err && <div className="mt-3 text-body-sm text-error"><AlertCircle className="inline h-4 w-4 mr-1.5" />{err}</div>}
       </Card>

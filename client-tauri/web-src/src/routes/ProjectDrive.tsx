@@ -3,15 +3,17 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   CloudUpload,
+  Download,
   File as FileIcon,
   FolderKanban,
   Folder as FolderIcon,
   Loader2,
+  PackageCheck,
   Plus,
   RefreshCw,
 } from "lucide-react";
-import { Button, Card, EmptyState, Progress, Skeleton, toast } from "@yqgl/shared";
-import { invoke, listen } from "@/lib/tauri";
+import { Button, Card, EmptyState, Progress, Skeleton, StatusBadge, toast } from "@yqgl/shared";
+import { invoke, listen, clientJson } from "@/lib/tauri";
 
 type Project = { id: string; name: string; slug: string };
 
@@ -36,6 +38,20 @@ type UploadProgress = {
   total: number;
 };
 
+type ProjectDelivery = {
+  delivery_id: string;
+  requirement_id: string;
+  requirement_code: string;
+  requirement_title: string | null;
+  requirement_status: string;
+  round: number;
+  package_size: number;
+  file_count: number;
+  submitted_by_nickname: string;
+  created_at: string;
+  files: { name: string; size: number }[];
+};
+
 /**
  * 派活 Space 的「项目网盘」路由。两种入口形态：
  *  - /p              → 项目列表，点一个进入它的网盘
@@ -52,6 +68,8 @@ export function ProjectDrive() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
+  const [deliveries, setDeliveries] = useState<ProjectDelivery[] | null>(null);
+  const [dlBusy, setDlBusy] = useState<string | null>(null);
 
   useEffect(() => {
     invoke<Project[]>("list_my_projects")
@@ -70,6 +88,26 @@ export function ProjectDrive() {
       .catch((e) => { if (alive) { setErr(String(e)); setItems([]); } });
     return () => { alive = false; };
   }, [projectId]);
+
+  // Read-only deliverables for this project (latest delivery per requirement).
+  useEffect(() => {
+    if (!projectId) { setDeliveries(null); return; }
+    let alive = true;
+    clientJson<ProjectDelivery[]>(`/api/projects/${projectId}/deliveries`)
+      .then((d) => { if (alive) setDeliveries(d); })
+      .catch(() => { if (alive) setDeliveries([]); });
+    return () => { alive = false; };
+  }, [projectId]);
+
+  const downloadDelivery = async (d: ProjectDelivery) => {
+    setDlBusy(d.delivery_id);
+    try {
+      const res = await invoke<{ saved_path?: string }>("download_delivery", { reqId: d.requirement_id });
+      toast({ title: "已下载到本地", description: res?.saved_path || "", tone: "success" });
+    } catch (e: any) {
+      toast({ title: "下载失败", description: String(e), tone: "error" });
+    } finally { setDlBusy(null); }
+  };
 
   // upload progress
   useEffect(() => {
@@ -181,6 +219,14 @@ export function ProjectDrive() {
         </div>
         <div className="flex gap-2">
           <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<Mic2 className="h-3.5 w-3.5" />}
+            onClick={() => nav(`/p/${projectId}/meetings`)}
+          >
+            会议纪要
+          </Button>
+          <Button
             variant="ghost"
             size="sm"
             leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
@@ -251,6 +297,41 @@ export function ProjectDrive() {
             </li>
           ))}
         </ul>
+      )}
+
+      {deliveries && deliveries.length > 0 && (
+        <div className="mt-6">
+          <div className="flex items-center gap-2 mb-3">
+            <PackageCheck className="h-4 w-4 text-success" />
+            <h2 className="text-h4 text-ink">交付物</h2>
+            <span className="text-caption text-ink-faint">只读 · 来自需求交付</span>
+          </div>
+          <ul className="glass-quiet divide-y divide-line/60 rounded-md overflow-hidden">
+            {deliveries.map((d) => (
+              <li key={d.delivery_id} className="flex items-center justify-between px-4 py-3 gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-caption text-ink-faint">{d.requirement_code}</span>
+                    <StatusBadge status={d.requirement_status} size="sm" />
+                  </div>
+                  <div className="text-body-sm text-ink truncate">{d.requirement_title || "(未命名)"}</div>
+                  <div className="text-caption text-ink-muted">
+                    第 {d.round} 轮 · {d.file_count} 个文件 · {(d.package_size / 1024).toFixed(0)} KB · {d.submitted_by_nickname}
+                  </div>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  leftIcon={<Download className="h-3.5 w-3.5" />}
+                  loading={dlBusy === d.delivery_id}
+                  onClick={() => downloadDelivery(d)}
+                >
+                  下载
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );

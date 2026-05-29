@@ -23,6 +23,7 @@ import { HubDispatch } from "@/routes/HubDispatch";
 import { NewRequirement } from "@/routes/NewRequirement";
 import { Clarify } from "@/routes/Clarify";
 import { ProjectDrive } from "@/routes/ProjectDrive";
+import { ProjectMeetings } from "@/routes/ProjectMeetings";
 import { TaskDetail } from "@/routes/TaskDetail";
 import { Inbox } from "@/routes/Inbox";
 import { Onboarding } from "@/routes/Onboarding";
@@ -278,6 +279,7 @@ export function App() {
               <Route path="/r/:id" element={<TaskDetail />} />
               <Route path="/p" element={<ProjectDrive />} />
               <Route path="/p/:projectId" element={<ProjectDrive />} />
+              <Route path="/p/:projectId/meetings" element={<ProjectMeetings />} />
               <Route path="/inbox" element={<Inbox />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/me/workload" element={<MyWorkload />} />

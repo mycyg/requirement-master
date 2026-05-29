@@ -17,6 +17,7 @@ import { Button, Card, Input, Modal, Stepper, Textarea, toast, type Step } from 
 import { invoke } from "@/lib/tauri";
 import { AssigneeSelector } from "@/components/AssigneeSelector";
 import { FileAttachRail } from "@/components/FileAttachRail";
+import { VoiceButton } from "@/components/VoiceButton";
 
 type Priority = "low" | "normal" | "high" | "urgent";
 
@@ -276,7 +277,10 @@ export function NewRequirement() {
           {step === 1 && (
             <div className="space-y-4">
               <div>
-                <label className="text-eyebrow text-ink-muted block mb-2">想说的事</label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-eyebrow text-ink-muted">想说的事</label>
+                  <VoiceButton onText={(t) => setDesc((d) => (d.trim() ? `${d.trim()}\n${t}` : t))} />
+                </div>
                 <Textarea
                   rows={8}
                   placeholder="比如：做一个团队周报模板，每周自动汇总每个人的进度…"
@@ -285,7 +289,7 @@ export function NewRequirement() {
                   autoFocus
                 />
                 <div className="text-caption text-ink-faint mt-2">
-                  简单描述就行 — 接单人接走后还能跟你确认细节。
+                  简单描述就行 — 接单人接走后还能跟你确认细节。也可以「按住说话」语音输入。
                 </div>
               </div>
 
