@@ -17,6 +17,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+    import resource  # POSIX only; absent on Windows (dev). Used to cap the
+    # blast radius of LLM-driven run_command on the Linux prod box.
+except ImportError:  # pragma: no cover - Windows dev
+    resource = None  # type: ignore[assignment]
+
 from anthropic import AsyncAnthropic
 
 from config import settings
@@ -248,6 +254,37 @@ def _tool_delete_path(workdir: Path, path: str) -> str:
     return f"deleted {path}"
 
 
+def _set_rlimit(which, value: int) -> None:
+    if resource is None:
+        return
+    try:
+        _soft, hard = resource.getrlimit(which)
+        cap = value if hard == resource.RLIM_INFINITY else min(value, hard)
+        resource.setrlimit(which, (cap, cap))
+    except (ValueError, OSError):
+        pass  # best-effort; never block the run on a platform quirk
+
+
+def _sandbox_rlimits() -> None:
+    """preexec_fn (POSIX) — runs in the forked child just before exec. The
+    path-prefix enforcement only governs the *tool* layer; once a real
+    interpreter runs it can open absolute paths. These per-process caps bound
+    the blast radius so an LLM-driven (or prompt-injected) script can't
+    exhaust memory, write a disk-filling file, or leak file descriptors. CPU
+    is a backstop below typical wall-clock; the asyncio per-command timeout is
+    still the primary kill. RLIMIT_NPROC is deliberately NOT set — it is
+    per-UID and would risk failing exec on a busy server. Network egress is
+    NOT blocked here (would need a netns); that residual is accepted under the
+    trusted-LAN, opt-in, authenticated-author threat model and documented in
+    prompts/auto_agent.md."""
+    if resource is None:
+        return
+    _set_rlimit(resource.RLIMIT_CPU, 120)                      # CPU seconds
+    _set_rlimit(resource.RLIMIT_AS, 2 * 1024 * 1024 * 1024)    # 2 GiB address space
+    _set_rlimit(resource.RLIMIT_FSIZE, 256 * 1024 * 1024)      # 256 MiB single-file write
+    _set_rlimit(resource.RLIMIT_NOFILE, 512)                   # open file descriptors
+
+
 def _tool_run_command(workdir: Path, args: list[str], cwd: str = ".", timeout_s: int | None = None) -> str:
     if not args:
         return "[error] args must not be empty"
@@ -285,6 +322,7 @@ def _tool_run_command(workdir: Path, args: list[str], cwd: str = ".", timeout_s:
             text=True,
             errors="replace",
             timeout=timeout,
+            preexec_fn=_sandbox_rlimits if resource is not None else None,
         )
     except subprocess.TimeoutExpired as exc:
         out = (exc.stdout or "") + "\n" + (exc.stderr or "")
@@ -434,7 +472,12 @@ async def run_auto(
                         elif name == "run_command":
                             raw_args = inp.get("args", [])
                             args = [str(x) for x in raw_args] if isinstance(raw_args, list) else []
-                            content = _tool_run_command(
+                            # Off the event loop — subprocess.run blocks up to
+                            # 60s; running it inline would freeze every SSE
+                            # stream, health check, and request for that whole
+                            # window. The other tools are sub-ms fs ops.
+                            content = await asyncio.to_thread(
+                                _tool_run_command,
                                 workdir,
                                 args,
                                 str(inp.get("cwd", ".")),

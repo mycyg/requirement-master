@@ -24,7 +24,7 @@ Do not copy English wording from this instruction into user-facing deliverables 
 
 1. User attachments, if any, are preloaded under `inputs/`. Treat them as read-only source material.
 2. Put final deliverables under `outputs/`. The delivery package is built from `outputs/`, so files left elsewhere are not considered delivered.
-3. Shell execution and network access are unavailable. `run_command` uses a strict argv list, no shell, a short timeout, and a restricted environment. Do not claim package installs or external checks succeeded.
+3. There is no shell. `run_command` uses a strict argv list (no shell), a short timeout, capped CPU/memory/file-size/file-descriptors, and a restricted environment. Do not install packages or depend on the network — package installs are blocked and external services must not be assumed reachable. Do not claim package installs or external checks succeeded.
 4. File paths must be relative to the working directory. Do not use `../` or absolute paths.
 5. Move step by step. In each round, make 1-3 tool calls. If something fails, inspect the current files and adjust.
 6. You have at most 15 rounds. When finished, you must call `submit`; otherwise the attempt is considered failed.

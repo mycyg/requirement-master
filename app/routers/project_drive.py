@@ -1321,20 +1321,30 @@ async def create_drive_comment(
     )
     db.add(comment)
     db.flush()
+    comment_id = comment.id
     folder_path = _folder_path(db, project_id, folder_db_id)
+    # Commit the pending_llm row BEFORE the multi-second LLM call. SQLite is a
+    # single writer; holding this transaction (and a pooled connection) open
+    # across the classify round-trip would block EVERY other write app-wide
+    # for the full LLM latency. The meeting/decomposition agents avoid this by
+    # running the model in a background task with no open txn; this synchronous
+    # endpoint must commit-then-classify instead.
+    db.commit()
     try:
         decision = await classify_drive_comment(project.name, folder_path, body)
     except Exception as exc:
-        comment.status = "review_failed"
-        comment.llm_kind = "review_failed"
-        comment.llm_reason = str(exc)[:1000]
-        db.commit()
-        db.refresh(comment)
+        comment = db.query(ProjectDriveComment).filter(ProjectDriveComment.id == comment_id).first()
+        if comment:
+            comment.status = "review_failed"
+            comment.llm_kind = "review_failed"
+            comment.llm_reason = str(exc)[:1000]
+            db.commit()
+            db.refresh(comment)
         return _comment_out(comment)
 
+    comment = db.query(ProjectDriveComment).filter(ProjectDriveComment.id == comment_id).first()
     comment.llm_kind = decision.kind
     comment.llm_reason = decision.reason
-    comment_id = comment.id
     if decision.kind == "requirement_change":
         # Phase 1: persist the comment as "posted" NOW, before allocating the
         # draft requirement. The code-allocation below can hit the `code`
