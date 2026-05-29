@@ -845,19 +845,43 @@ def finalize_drive_upload(
         db.add(item)
         db.flush()
 
-    version_no = (db.query(ProjectDriveVersion).filter(ProjectDriveVersion.item_id == item.id).count() or 0) + 1
-    version = ProjectDriveVersion(
-        item_id=item.id,
-        version_no=version_no,
-        filename=item.name,
-        mime=meta.get("mime"),
-        size_bytes=meta["total_size"],
-        storage_path="",
-        sha256="",
-        created_by_user_id=user.id,
-    )
-    db.add(version)
-    db.flush()
+    # Allocate version_no with the same IntegrityError retry the other
+    # monotonic allocators use (Delivery.round, next_seq). Two concurrent
+    # `replace` finalizes on one file would otherwise both compute
+    # count()+1 = N and the loser would 500 on the
+    # uq_project_drive_version_no constraint. The flush here is BEFORE the
+    # file merge below, so a retry costs nothing on disk. The collision is
+    # only reachable on `replace` (existing committed item); `upload_new`
+    # items have unique names → distinct item_id → version_no=1, never races.
+    from sqlalchemy.exc import IntegrityError
+    item_id = item.id
+    version = None
+    for _attempt in range(5):
+        version_no = (db.query(ProjectDriveVersion).filter(ProjectDriveVersion.item_id == item_id).count() or 0) + 1
+        candidate = ProjectDriveVersion(
+            item_id=item_id,
+            version_no=version_no,
+            filename=item.name,
+            mime=meta.get("mime"),
+            size_bytes=meta["total_size"],
+            storage_path="",
+            sha256="",
+            created_by_user_id=user.id,
+        )
+        db.add(candidate)
+        try:
+            db.flush()
+            version = candidate
+            break
+        except IntegrityError:
+            db.rollback()
+            # rollback expires ORM state; re-load the (committed, for replace)
+            # item so the rest of the handler has a live object.
+            item = db.query(ProjectDriveItem).filter(ProjectDriveItem.id == item_id).first()
+            if not item:
+                raise HTTPException(status_code=409, detail="drive item changed during upload; please retry")
+    if version is None:
+        raise HTTPException(status_code=409, detail="version allocation race; please retry")
     final_path = _drive_file_path(project_id, item.id, version.id, item.name)
 
     h = hashlib.sha256()

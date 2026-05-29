@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Archive, ArrowLeft, ArrowRight, CalendarClock, ClipboardList, HardDrive, HeartPulse, Mic2, Plus, RotateCcw, Search, Trash2, UserRound, Users } from "lucide-react";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -18,19 +18,25 @@ export function ProjectView() {
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
+  // Monotonic token: switching projects fast (or refresh-after-action racing
+  // the [id] effect) could land a stale project's data. Only the latest wins.
+  const refreshTokenRef = useRef(0);
   const refresh = async () => {
     if (!id) return;
+    const token = ++refreshTokenRef.current;
     try {
       const [nextProject, nextReqs] = await Promise.all([
         api.getProject(id),
         api.listRequirements({ project_id: id }),
       ]);
+      if (token !== refreshTokenRef.current) return;
       setProject(nextProject);
       setReqs(nextReqs);
       setLoadErr(null);
     } catch (e: any) {
       // Without this, a 404 (project doesn't exist / was deleted) left
       // project null forever and the user saw "加载中…" with no recovery.
+      if (token !== refreshTokenRef.current) return;
       setLoadErr(String(e));
     }
   };

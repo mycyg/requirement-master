@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Bot,
@@ -43,16 +43,24 @@ export function Dashboard() {
   const [connected, setConnected] = useState(false);
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Monotonic token: refresh fires from 3 sources (6s interval, SSE event,
+  // tab-return) that can overlap; the 7-status fan-out makes reordering likely.
+  // Only the latest refresh writes items, so the board never flickers to a
+  // stale snapshot.
+  const refreshTokenRef = useRef(0);
 
   const refresh = async () => {
+    const token = ++refreshTokenRef.current;
     try {
       const groups = await Promise.all(DASHBOARD_STATUSES.map((s) => api.listRequirements({ status: s })));
+      if (token !== refreshTokenRef.current) return;
       const all = groups.flat();
       const map = new Map(all.map((r) => [r.id, r]));
       setItems([...map.values()].sort(byUrgency));
       setLastSync(new Date());
       setErr(null);
     } catch (e: any) {
+      if (token !== refreshTokenRef.current) return;
       setErr(String(e));
     }
   };

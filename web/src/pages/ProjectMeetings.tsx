@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   AlertCircle, CalendarClock, CheckCircle2, FileAudio2, HardDrive, Loader2, Mic2, RefreshCw,
@@ -29,9 +29,13 @@ export function ProjectMeetings() {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  // Monotonic token: fast project switch could land a stale project's meetings.
+  const loadTokenRef = useRef(0);
   const load = useCallback(async () => {
     if (!projectId) return;
+    const token = ++loadTokenRef.current;
     const [projects, rows] = await Promise.all([api.listProjects(), api.listMeetings(projectId)]);
+    if (token !== loadTokenRef.current) return;
     setProject(projects.find((p) => p.id === projectId) ?? null);
     setMeetings(rows);
     setActive((current) => {

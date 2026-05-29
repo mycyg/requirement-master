@@ -257,22 +257,30 @@ def finalize_meeting_upload(
     db.add(meeting)
     db.flush()
     out_path = _meeting_dir(project_id, meeting.id) / meta["filename"]
+    # Validate every chunk size BEFORE opening the output, so a bad chunk
+    # can't abort mid-write and strand a half-merged orphan audio file
+    # (the per-chunk raise used to fire inside the open() block).
+    for idx, chunk in enumerate(chunks):
+        if chunk.stat().st_size != _expected_chunk_size(meta, idx):
+            raise HTTPException(status_code=400, detail=f"chunk {idx} size mismatch")
     total = 0
-    with open(out_path, "wb") as out:
-        for idx, chunk in enumerate(chunks):
-            expected_size = _expected_chunk_size(meta, idx)
-            if chunk.stat().st_size != expected_size:
-                raise HTTPException(status_code=400, detail=f"chunk {idx} size mismatch")
-            with open(chunk, "rb") as src:
-                while True:
-                    buf = src.read(1024 * 1024)
-                    if not buf:
-                        break
-                    out.write(buf)
-                    total += len(buf)
-    if total != meta["total_size"]:
+    try:
+        with open(out_path, "wb") as out:
+            for chunk in chunks:
+                with open(chunk, "rb") as src:
+                    while True:
+                        buf = src.read(1024 * 1024)
+                        if not buf:
+                            break
+                        out.write(buf)
+                        total += len(buf)
+        if total != meta["total_size"]:
+            raise HTTPException(status_code=400, detail=f"size mismatch: got {total}, expected {meta['total_size']}")
+    except BaseException:
+        # Any merge failure (disk full, size-mismatch, a kill) must not leave
+        # a half-written orphan; re-raise the original after cleanup.
         out_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail=f"size mismatch: got {total}, expected {meta['total_size']}")
+        raise
     meeting.audio_path = str(out_path)
     update_job(db, job, status="running", progress_percent=10, message="准备转写会议录音", result_ref=meeting.id)
     db.commit()

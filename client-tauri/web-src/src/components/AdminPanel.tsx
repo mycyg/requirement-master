@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Crown,
   FolderKanban,
@@ -175,10 +175,15 @@ function UsersSection({ meId }: { meId: string }) {
   const [search, setSearch] = useState("");
   const [updating, setUpdating] = useState<string | null>(null);
 
+  // Monotonic token: the 200ms-debounced type-ahead can have a slow earlier
+  // list_users land after a faster later one, painting stale results under the
+  // current query. Only the latest request writes state.
+  const reqTokenRef = useRef(0);
   const refresh = useCallback((q = search) => {
+    const token = ++reqTokenRef.current;
     invoke<UserRow[]>("list_users", { search: q })
-      .then(setUsers)
-      .catch((e) => toast({ title: "用户列表失败", description: String(e), tone: "error" }));
+      .then((rows) => { if (token === reqTokenRef.current) setUsers(rows); })
+      .catch((e) => { if (token === reqTokenRef.current) toast({ title: "用户列表失败", description: String(e), tone: "error" }); });
   }, [search]);
 
   useEffect(() => {

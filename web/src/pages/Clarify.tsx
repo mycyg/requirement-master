@@ -65,10 +65,15 @@ export function Clarify() {
   const [loadedReqId, setLoadedReqId] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const autoStartedRef = useRef<string | null>(null);
+  // Monotonic token: refresh runs on [reqId] change AND on every stream `done`.
+  // A slow earlier load (or a different reqId after navigation) must not
+  // overwrite a newer one's req/history/attachments.
+  const refreshTokenRef = useRef(0);
   const stream = useChatStream(reqId || "");
 
   const refresh = async () => {
     if (!reqId) return;
+    const token = ++refreshTokenRef.current;
     setLoadedReqId(null);
     setLoadErr(null);
     try {
@@ -77,6 +82,7 @@ export function Clarify() {
         api.listAttachments(reqId),
         api.listChatMessages(reqId),
       ]);
+      if (token !== refreshTokenRef.current) return;
       setReq(nextReq);
       setAttachments(nextAttachments);
       setHistory(nextHistory);
@@ -84,6 +90,7 @@ export function Clarify() {
     } catch (e: any) {
       // Without this, a 401 / 404 left loadedReqId null forever and the
       // page stuck at "加载中…" with no escape.
+      if (token !== refreshTokenRef.current) return;
       setLoadErr(String(e));
     }
   };

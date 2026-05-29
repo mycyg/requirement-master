@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, CalendarClock, Filter, UserRound } from "lucide-react";
 import { parseServerDate } from "@yqgl/shared";
@@ -21,23 +21,30 @@ export function PlanningPage() {
   const [err, setErr] = useState<string | null>(null);
   const selectedProject = useMemo(() => projects.find((item) => item.id === projectId), [projects, projectId]);
 
+  // Monotonic token: rapid project-filter switching can land a slow earlier
+  // workload response after a faster later one, painting the wrong project's
+  // numbers. Only the latest load writes state.
+  const loadTokenRef = useRef(0);
   const load = async () => {
+    const token = ++loadTokenRef.current;
     setLoading(true); setErr(null);
     try {
       const [projectRows, workloadRows] = await Promise.all([
         api.listProjects(),
         api.workload({ project_id: projectId || null }),
       ]);
+      if (token !== loadTokenRef.current) return;
       setProjects(projectRows);
       setRows(workloadRows);
     } catch (e: any) {
+      if (token !== loadTokenRef.current) return;
       setErr(String(e));
     } finally {
-      setLoading(false);
+      if (token === loadTokenRef.current) setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, [projectId]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [projectId]);
 
   const totalHours = rows.reduce((sum, row) => sum + row.estimate_hours, 0);
   const overloaded = rows.filter((row) => row.load_percent >= 100).length;

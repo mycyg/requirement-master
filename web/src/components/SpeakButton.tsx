@@ -4,6 +4,13 @@ import { useSettings } from "@/hooks/useSettings";
 
 let currentAudio: HTMLAudioElement | null = null;  // module-level: only one plays at a time
 let currentAudioUrl: string | null = null;
+// Monotonic generation: each speak() claims one synchronously. Two SpeakButtons
+// (e.g. several on the Clarify screen) racing their TTS fetches would otherwise
+// each assign `currentAudio` after their await resolved — the later assignment
+// clobbered the earlier audio's reference without stopping it, leaving two
+// overlapping voices, one of them unstoppable. After the fetch we bail if a
+// newer speak() superseded us.
+let playGeneration = 0;
 
 function stopCurrent() {
   if (currentAudio) {
@@ -35,11 +42,13 @@ export function SpeakButton({
   const [playing, setPlaying] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const lastTriggerRef = useRef<string | undefined>(undefined);
+  const myAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const speak = async () => {
     if (!text.trim()) return;
     setErr(null);
     setBusy(true);
+    const myGen = ++playGeneration;  // claim "latest" synchronously, before any await
     stopCurrent();
     try {
       const r = await fetch("/api/voice/tts", {
@@ -50,15 +59,19 @@ export function SpeakButton({
       });
       if (!r.ok) throw new Error(`${r.status}: ${(await r.text()).slice(0, 200)}`);
       const blob = await r.blob();
+      if (myGen !== playGeneration) return;  // a newer speak() superseded us — don't play a stale clip
       const url = URL.createObjectURL(blob);
+      stopCurrent();  // stop anything that started between our claim and now
       const a = new Audio(url);
       currentAudio = a;
       currentAudioUrl = url;
+      myAudioRef.current = a;
       a.onended = () => {
         setPlaying(false);
         URL.revokeObjectURL(url);
         if (currentAudio === a) currentAudio = null;
         if (currentAudioUrl === url) currentAudioUrl = null;
+        if (myAudioRef.current === a) myAudioRef.current = null;
       };
       a.onpause = () => setPlaying(false);
       a.onplay = () => setPlaying(true);
@@ -69,6 +82,12 @@ export function SpeakButton({
       setBusy(false);
     }
   };
+
+  // Unmount: if this component's clip is the one currently playing, stop it
+  // so navigating away mid-speech doesn't leave a disembodied voice running.
+  useEffect(() => () => {
+    if (myAudioRef.current && currentAudio === myAudioRef.current) stopCurrent();
+  }, []);
 
   // Autoplay when autoTriggerKey changes
   useEffect(() => {

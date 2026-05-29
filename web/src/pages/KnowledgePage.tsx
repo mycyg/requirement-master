@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Bot, ExternalLink, FileSearch, Filter, Search, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
@@ -45,22 +45,33 @@ export function KnowledgePage() {
     }
   };
 
+  // Token bumped on each ask() and on unmount. The 8×900ms poll loop would
+  // otherwise keep calling getKnowledgeRun + setRun for ~7s after the user
+  // navigated away (setState-after-unmount) or fired a second ask. Mirrors the
+  // Tauri Knowledge twin's askTokenRef.
+  const askTokenRef = useRef(0);
+  useEffect(() => () => { askTokenRef.current += 1; }, []);
+
   const ask = async () => {
     if (!question.trim()) return;
+    const myToken = ++askTokenRef.current;
     setBusy(true); setErr(null);
     try {
       const created = await api.askKnowledge({ question: question.trim(), project_id: projectId || null });
       let next = await api.getKnowledgeRun(created.id);
+      if (askTokenRef.current !== myToken) return;
       setRun(next);
       for (let i = 0; i < 8 && next.status === "running"; i += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 900));
+        if (askTokenRef.current !== myToken) return;  // superseded / unmounted
         next = await api.getKnowledgeRun(created.id);
+        if (askTokenRef.current !== myToken) return;
         setRun(next);
       }
     } catch (e: any) {
-      setErr(String(e));
+      if (askTokenRef.current === myToken) setErr(String(e));
     } finally {
-      setBusy(false);
+      if (askTokenRef.current === myToken) setBusy(false);
     }
   };
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Bot, FolderOpen, Hammer, Play, PackageCheck, RefreshCw, UserCheck } from "lucide-react";
 import { invoke, useEvent } from "@/lib/tauri";
@@ -41,19 +41,26 @@ export function TaskDetail() {
   // see worker UI. Default false avoids "wait why is there a 接单 button on
   // my own requirement" confusion.
   const [workerView, setWorkerView] = useState(false);
+  // Monotonic token (parity with the web RequirementDetail twin). refresh fires
+  // on mount + every push-event + after each claim/start/deliver action, so a
+  // slow earlier load could otherwise overwrite a newer one's state.
+  const refreshTokenRef = useRef(0);
 
   const refresh = async () => {
     if (!id) return;
+    const token = ++refreshTokenRef.current;
     try {
       const [r, ws, identity] = await Promise.all([
         invoke<Requirement>("get_requirement", { reqId: id }),
         invoke<RequirementWorkspace[]>("list_workspaces", { reqId: id }).catch(() => []),
         invoke<{ id: string; nickname: string; is_admin?: boolean } | null>("me").catch(() => null),
       ]);
+      if (token !== refreshTokenRef.current) return;  // superseded by a newer refresh
       setReq(r);
       setWorkspaces(ws);
       setMe(identity);
     } catch (e: any) {
+      if (token !== refreshTokenRef.current) return;
       toast({ title: "加载失败", description: String(e), tone: "error" });
     }
   };

@@ -239,7 +239,8 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
             # requirement is still in `ai_processing` — the user could have
             # cancelled mid-AI (cancelled is terminal); blindly writing
             # `ready` would resurrect a cancelled requirement.
-            if r.status == "ai_processing":
+            reverted_to_ready = r.status == "ai_processing"
+            if reverted_to_ready:
                 r.status = "ready"
             log_activity(
                 db, requirement_id=req_id, actor_nickname=actor,
@@ -253,15 +254,23 @@ async def _run_and_finalize(req_id: str, title: str, summary_md: str, actor: str
                     update_job(db, job, status="failed", progress_percent=100, message="AI 自动处理失败，已转人工", result_ref=req_id, error=outcome.reason)
                     db.commit()
                     await publish_job(job)
+            # ai.failed is req-scoped (only the submitter's RequirementDetail
+            # stream sees it) — safe to send regardless of the revert.
             await bus.publish(f"req:{req_id}", "ai.failed", {
                 "reason": outcome.reason, "notes": outcome.notes,
             })
-            await bus.publish(f"req:{req_id}", "requirement.updated", {"status": "ready"})
-            await bus.publish("all", "requirement.updated", {"requirement_id": req_id, "status": "ready"})
-            await bus.publish("all", "requirement.ready", {
-                "requirement_id": req_id, "title": title, "ai_failed": True,
-                "reason": outcome.reason,
-            })
+            # The "ready" broadcasts (esp. `requirement.ready`, which pops a
+            # "新工单来了" toast + OS notification on EVERY desktop worker) must
+            # fire ONLY when we actually reverted to ready. If the user
+            # cancelled mid-AI, re-announcing it as new claimable work would be
+            # a false org-wide notification for a dead requirement.
+            if reverted_to_ready:
+                await bus.publish(f"req:{req_id}", "requirement.updated", {"status": "ready"})
+                await bus.publish("all", "requirement.updated", {"requirement_id": req_id, "status": "ready"})
+                await bus.publish("all", "requirement.ready", {
+                    "requirement_id": req_id, "title": title, "ai_failed": True,
+                    "reason": outcome.reason,
+                })
             # leave workdir for inspection; don't delete on failure
             return
 
