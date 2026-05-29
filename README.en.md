@@ -105,14 +105,19 @@ Requirements are project-scoped — open a project first, then click "New requir
 http://192.168.5.53:8080/p/<projectId>/new
 ```
 
-**Windows one-liner:**
+**Windows** — two ways, take your pick:
+
+Easiest: open http://192.168.5.53:8080/ and hit **Windows 客户端** in the download banner up top — that's the NSIS installer (the real Rust/Tauri client, not the old Python tray). Double-click to install.
+
+Prefer the terminal? One PowerShell line does the same:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -c "iwr -UseBasicParsing http://192.168.5.53:8080/client/install.ps1 | iex"
 ```
 
-You get a `YQGL Workbench` shortcut, autostart, local config, and a resident tray icon.
-Can't find the tray icon? Click that little hidden-icons arrow in the corner first — it's not slacking, Windows just tucked it away.
+It drops a 需求管理大师 shortcut in the Start Menu and on the Desktop, writes your server config, and parks a tray icon.
+- First launch gets stopped by SmartScreen (unsigned internal build) — click **More info → Run anyway**.
+- Can't find the tray icon? Click that little hidden-icons arrow in the corner first — Windows just tucked it away.
 
 **macOS native build** — already published. Just hit the **macOS 客户端** button in the download banner at the top of the web app. Windows folks click Windows, Mac folks click macOS; stop shoving `.exe` files into a Mac and chanting incantations.
 

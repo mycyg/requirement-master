@@ -105,14 +105,19 @@ http://192.168.5.53:8080/
 http://192.168.5.53:8080/p/<项目ID>/new
 ```
 
-**Windows 一行装**：
+**Windows**——两种方式随便挑：
+
+最省事：浏览器开 http://192.168.5.53:8080/ ，顶部下载横幅点 **Windows 客户端**，下到的是 NSIS 安装包（Rust/Tauri 真客户端，不是老 Python 托盘），双击装。
+
+嫌点鼠标麻烦的，PowerShell 一行装（效果一样）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -c "iwr -UseBasicParsing http://192.168.5.53:8080/client/install.ps1 | iex"
 ```
 
-装完给你：桌面快捷方式 `YQGL Workbench`、开机自启、本地配置、托盘常驻。
-托盘里找不到图标？先点开右下角那个隐藏小箭头——它不是没上班，是 Windows 把它藏起来摸鱼了。
+装完在开始菜单和桌面都有「需求管理大师」快捷方式，服务器配置自动写好，托盘常驻。
+- 第一次打开被 SmartScreen 拦很正常（未签名内网包）：点「更多信息 → 仍要运行」。
+- 托盘里找不到图标？先点开右下角那个隐藏小箭头——它不是没上班，是 Windows 把它藏起来摸鱼了。
 
 **macOS 原生包**——已经发布了，直接去 Web 顶部那条下载横幅点 **macOS 客户端** 就行。Windows 老哥点 Windows，Mac 老哥点 macOS，别再把 `.exe` 硬塞进 Mac 里念经了。
 
