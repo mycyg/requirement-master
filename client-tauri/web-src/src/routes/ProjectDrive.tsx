@@ -184,7 +184,12 @@ export function ProjectDrive() {
             variant="ghost"
             size="sm"
             leftIcon={<RefreshCw className="h-3.5 w-3.5" />}
-            onClick={() => invoke<DriveList>("list_drive_root", { projectId }).then((d) => setItems(d.items ?? []))}
+            onClick={() => {
+              setErr(null);
+              invoke<DriveList>("list_drive_root", { projectId })
+                .then((d) => setItems(d.items ?? []))
+                .catch((e) => setErr(String(e)));
+            }}
           >
             刷新
           </Button>

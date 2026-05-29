@@ -24,6 +24,7 @@ export function SettingsDialog({
   const { settings, update } = useSettings();
   const [voices, setVoices] = useState<string[]>([]);
   const [voicesErr, setVoicesErr] = useState<string | null>(null);
+  const [voicesLoaded, setVoicesLoaded] = useState(false);
   const [availabilityStatus, setAvailabilityStatus] = useState<"free" | "busy" | "custom">("free");
   const [availabilityText, setAvailabilityText] = useState("");
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
@@ -33,6 +34,7 @@ export function SettingsDialog({
     if (!open) return;
     setVoicesErr(null);
     setVoices([]);
+    setVoicesLoaded(false);
     let alive = true;
     (async () => {
       try {
@@ -58,6 +60,11 @@ export function SettingsDialog({
         else setVoicesErr("无法读取 TTS 音色，服务可能没启动。");
       } catch {
         if (alive) setVoicesErr("无法读取 TTS 音色，服务可能没启动。");
+      } finally {
+        // Mark the fetch settled so the UI can distinguish "still loading"
+        // from "loaded but the server returned an empty voice list" — the
+        // latter previously showed a permanent "加载中…".
+        if (alive) setVoicesLoaded(true);
       }
     })();
     return () => { alive = false; };
@@ -169,7 +176,9 @@ export function SettingsDialog({
               <p className="mt-2 text-xs text-red-700">{voicesErr}</p>
             ) : (
               <div className="mt-2 space-y-1">
-                {voices.length === 0 && <p className="text-xs text-stone-400">加载中…</p>}
+                {voices.length === 0 && (
+                  <p className="text-xs text-stone-400">{voicesLoaded ? "暂无可用音色" : "加载中…"}</p>
+                )}
                 {voices.map((v) => (
                   <label key={v} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 hover:bg-stone-900/5">
                     <input

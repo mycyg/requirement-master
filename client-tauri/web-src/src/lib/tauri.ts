@@ -46,7 +46,12 @@ export function useEvent<T = unknown>(event: string, handler: (payload: T) => vo
   useEffect(() => {
     let alive = true;
     let dispose: (() => void) | null = null;
-    listen<T>(event, (p) => { if (alive) handlerRef.current(p); }).then((d) => { dispose = d; });
+    listen<T>(event, (p) => { if (alive) handlerRef.current(p); }).then((d) => {
+      // If the component unmounted before listen() resolved, dispose
+      // immediately — otherwise cleanup already ran with dispose=null and
+      // this subscription would leak across every fast mount/unmount.
+      if (!alive) d(); else dispose = d;
+    });
     return () => {
       alive = false;
       if (dispose) dispose();
