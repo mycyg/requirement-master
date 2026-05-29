@@ -22,6 +22,7 @@ import {
   Users,
 } from "lucide-react";
 import { useIdentity } from "./hooks/useIdentity";
+import { useNotificationToasts } from "./hooks/useNotificationToasts";
 import { NicknameDialog } from "./components/NicknameDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { ClientDownloadBanner } from "./components/ClientDownloadBanner";
@@ -124,6 +125,8 @@ function Shell({
 }) {
   const nav = useNavigate();
   const { open, setOpen, close } = useCommandMenu();
+  // Live notification toasts (parity with the Tauri client's /stream/me).
+  useNotificationToasts();
 
   const commands: CommandItem[] = [
     { id: "home", label: "回到项目首页", group: "导航", searchText: "首页 项目 home", onSelect: () => nav("/") },

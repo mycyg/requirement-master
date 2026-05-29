@@ -86,6 +86,8 @@ python scripts/verify_systemd.py
 
 每次部署完，脚本末尾会 curl `/api/health` 自检；`deploy_web.py` 只换静态文件，不重启 web。
 
+> ⚠️ **`yqgl-web` 必须单 worker（`--workers 1`）**。SSE 推送总线、在线状态表、AI 澄清并发槽、后台任务去重都是**进程内单例**；开第二个 worker 会脑裂——worker A 发的 SSE 事件到不了连在 worker B 的客户端（静默，无报错），在线/去重也各算各的。要横向扩容必须先上共享 broker（Redis pub/sub）再加 worker。
+
 ---
 
 ## 四、客户端

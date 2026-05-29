@@ -6,6 +6,12 @@ After=network.target
 User=mycyg
 WorkingDirectory=/srv/yqgl/app
 EnvironmentFile=/srv/yqgl/app/.env
+# --workers 1 is MANDATORY, not a capacity choice. The SSE push bus, the
+# presence map, the asyncio in-flight-chat slot guard, and the background-task
+# dedup state are all in-process singletons. A 2nd worker would split-brain
+# them: SSE events published by worker A never reach a client connected to
+# worker B (silent — no error), and presence/dedup would be per-worker. Scale
+# with a shared broker (Redis pub/sub) BEFORE raising this.
 ExecStart=/srv/yqgl/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8080 --workers 1 --timeout-keep-alive 120
 Restart=on-failure
 RestartSec=5

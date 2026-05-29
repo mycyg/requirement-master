@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Inbox, Plus, RefreshCw, Sparkles } from "lucide-react";
-import { invoke } from "@/lib/tauri";
+import { invoke, useEvent } from "@/lib/tauri";
 import { TaskCard } from "@/components/TaskCard";
 import { Button, EmptyState, Skeleton, toast, useSpace } from "@yqgl/shared";
 import type { Requirement } from "@yqgl/shared";
@@ -54,6 +54,17 @@ export function Hub() {
   };
 
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [tab]);
+
+  // Live-refresh on requirement lifecycle events. The Rust client forwards the
+  // global `all` SSE topic as `push-event`; without this the "在抓" tab never
+  // showed newly-dispatched work appearing (the toast fired but the list stayed
+  // stale until a manual refresh). requirement.ready / requirement.updated both
+  // arrive via `all`. Debounced implicitly by refresh's own token guard.
+  useEvent<{ event: string }>("push-event", (p) => {
+    if (p?.event === "requirement.ready" || p?.event === "requirement.updated") {
+      refresh();
+    }
+  });
 
   const title = useMemo(() => ({
     public: "在抓",

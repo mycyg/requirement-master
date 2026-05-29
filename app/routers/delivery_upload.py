@@ -376,9 +376,16 @@ async def _finalize_doc(delivery_id: str, title: str, summary_md: str, zip_path:
             if r:
                 from services.lifecycle import flush_status_notifications
                 await flush_status_notifications(pending)
-            await bus.publish(f"req:{d.requirement_id}", "delivery.doc_ready", {
-                "delivery_id": d.id, "round": d.round,
-            })
+            # delivery.doc_ready is published to BOTH `req:{id}` (web's
+            # per-requirement stream) AND `all` (the only stream the Tauri
+            # client opens). Without the `all` copy the desktop DeliveryWizard
+            # waits for an event it never receives and hangs on "等 AI 写交付
+            # 文档" forever. The payload carries only ids (PII-free), so it's
+            # safe on the global topic. It fires once per delivery, so the
+            # extra web-Dashboard refresh is negligible.
+            doc_ready_payload = {"delivery_id": d.id, "round": d.round, "requirement_id": d.requirement_id}
+            await bus.publish(f"req:{d.requirement_id}", "delivery.doc_ready", doc_ready_payload)
+            await bus.publish("all", "delivery.doc_ready", doc_ready_payload)
             await bus.publish(f"req:{d.requirement_id}", "requirement.updated", {"status": "delivered"})
             await bus.publish("all", "requirement.updated", {
                 "requirement_id": d.requirement_id, "status": "delivered",
@@ -426,6 +433,9 @@ async def _recover_stranded_delivery(delivery_id: str, fallback_doc: str) -> Non
         if r:
             from services.lifecycle import flush_status_notifications
             await flush_status_notifications(pending)
+            doc_ready_payload = {"delivery_id": d.id, "round": d.round, "requirement_id": d.requirement_id}
+            await bus.publish(f"req:{d.requirement_id}", "delivery.doc_ready", doc_ready_payload)
+            await bus.publish("all", "delivery.doc_ready", doc_ready_payload)
             await bus.publish(f"req:{d.requirement_id}", "requirement.updated", {"status": "delivered"})
             await bus.publish("all", "requirement.updated", {
                 "requirement_id": d.requirement_id, "status": "delivered",
