@@ -12,6 +12,7 @@ import {
   UserCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { parseServerDate } from "@yqgl/shared";
 import { api } from "@/lib/api";
 import type { Activity } from "@/lib/types";
 
@@ -33,11 +34,27 @@ const ACTION_META: Record<string, { label: string; Icon: LucideIcon }> = {
 
 export function ActivityTimeline({ reqId }: { reqId: string }) {
   const [items, setItems] = useState<Activity[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
-    api.listActivity(reqId).then(setItems);
-  }, [reqId]);
+    let alive = true;
+    setErr(null);
+    setItems(null);
+    api.listActivity(reqId)
+      .then((rows) => { if (alive) setItems(rows); })
+      // Without this catch, a failed load left items=null forever and the
+      // tab spun on "加载中…" with no error or retry.
+      .catch((e) => { if (alive) { setErr(String(e)); setItems([]); } });
+    return () => { alive = false; };
+  }, [reqId, reloadTick]);
 
+  if (err) return (
+    <div className="text-sm text-red-700">
+      动态加载失败：{err}
+      <button className="ml-2 underline" onClick={() => setReloadTick((t) => t + 1)}>重试</button>
+    </div>
+  );
   if (!items) return <div className="text-stone-500">加载中…</div>;
   if (items.length === 0) return <div className="empty-state">还没有动态。</div>;
 
@@ -56,7 +73,7 @@ export function ActivityTimeline({ reqId }: { reqId: string }) {
             <div className="text-sm">
               <span className="font-semibold text-stone-900">{meta.label}</span>
               <span className="ml-2 text-xs text-stone-500">by <b>{a.actor_nickname}</b></span>
-              <span className="ml-2 text-xs text-stone-400">{new Date(a.created_at + "Z").toLocaleString("zh-CN")}</span>
+              <span className="ml-2 text-xs text-stone-400">{parseServerDate(a.created_at)?.toLocaleString("zh-CN")}</span>
             </div>
             {detail && Object.keys(detail).length > 0 && (
               <pre className="mt-2 overflow-auto whitespace-pre-wrap rounded-lg border border-stone-200 bg-[#fffdf8] p-3 text-xs text-stone-500">{JSON.stringify(detail, null, 2)}</pre>

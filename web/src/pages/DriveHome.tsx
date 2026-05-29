@@ -6,10 +6,19 @@ import type { Project } from "@/lib/types";
 
 export function DriveHome() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
-    api.listProjects().then(setProjects);
-  }, []);
+    let alive = true;
+    setErr(null);
+    api.listProjects()
+      .then((rows) => { if (alive) setProjects(rows); })
+      // Without the catch, a failed load silently rendered "还没有项目" — a load
+      // error looked identical to a brand-new install with no projects.
+      .catch((e) => { if (alive) setErr(String(e)); });
+    return () => { alive = false; };
+  }, [reloadTick]);
 
   return (
     <main className="narrow-container">
@@ -23,7 +32,14 @@ export function DriveHome() {
       </p>
 
       <ul className="paper-surface mt-8 divide-y divide-stone-200/80 overflow-hidden">
-        {projects.length === 0 && <li className="empty-state m-4">还没有项目，先建一个项目再用网盘。</li>}
+        {err ? (
+          <li className="m-4 text-sm text-red-700">
+            项目加载失败：{err}
+            <button className="ml-2 underline" onClick={() => setReloadTick((t) => t + 1)}>重试</button>
+          </li>
+        ) : projects.length === 0 ? (
+          <li className="empty-state m-4">还没有项目，先建一个项目再用网盘。</li>
+        ) : null}
         {projects.map((project) => (
           <li key={project.id} className="group px-4 py-4 transition hover:bg-white sm:px-5">
             <Link to={`/p/${project.id}/drive`} className="flex items-center justify-between gap-3">

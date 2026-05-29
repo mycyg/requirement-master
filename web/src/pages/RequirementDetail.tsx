@@ -465,7 +465,18 @@ export function RequirementDetail() {
 
 function ChatHistory({ reqId }: { reqId: string }) {
   const [msgs, setMsgs] = useState<any[]>([]);
-  useEffect(() => { api.listChatMessages(reqId).then(setMsgs); }, [reqId]);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setErr(null);
+    api.listChatMessages(reqId)
+      .then((rows) => { if (alive) setMsgs(rows); })
+      // Without the catch a failed load silently showed "无对话" — making a
+      // load error indistinguishable from a genuinely empty conversation.
+      .catch((e) => { if (alive) setErr(String(e)); });
+    return () => { alive = false; };
+  }, [reqId]);
+  if (err) return <div className="text-sm text-red-700">对话加载失败：{err}</div>;
   if (msgs.length === 0) return <div className="empty-state">无对话</div>;
   return (
     <div className="space-y-2">

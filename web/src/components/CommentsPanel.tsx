@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AlertCircle, MessageSquare, Send } from "lucide-react";
+import { parseServerDate } from "@yqgl/shared";
 import { api } from "@/lib/api";
 import type { Comment } from "@/lib/types";
 import { VoiceButton } from "@/components/VoiceButton";
@@ -9,8 +10,14 @@ export function CommentsPanel({ reqId }: { reqId: string }) {
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
-  const refresh = () => api.listComments(reqId).then(setItems);
+  const refresh = () => {
+    setLoadErr(null);
+    // Without the catch, a failed load silently rendered "还没有评论" — a load
+    // error was indistinguishable from a genuinely empty comment list.
+    return api.listComments(reqId).then(setItems).catch((e) => setLoadErr(String(e)));
+  };
   useEffect(() => { refresh(); }, [reqId]);
 
   const send = async () => {
@@ -30,12 +37,19 @@ export function CommentsPanel({ reqId }: { reqId: string }) {
   return (
     <div className="space-y-4">
       <ul className="space-y-3">
-        {items.length === 0 && <li className="empty-state">还没有评论</li>}
+        {loadErr ? (
+          <li className="text-sm text-red-700">
+            评论加载失败：{loadErr}
+            <button className="ml-2 underline" onClick={refresh}>重试</button>
+          </li>
+        ) : items.length === 0 ? (
+          <li className="empty-state">还没有评论</li>
+        ) : null}
         {items.map((c) => (
           <li key={c.id} className="paper-surface p-4">
             <div className="text-xs">
               <b className="text-stone-900">{c.author_nickname}</b>
-              <span className="ml-2 text-stone-400">{new Date(c.created_at + "Z").toLocaleString("zh-CN")}</span>
+              <span className="ml-2 text-stone-400">{parseServerDate(c.created_at)?.toLocaleString("zh-CN")}</span>
             </div>
             <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-stone-700">{c.body}</div>
           </li>

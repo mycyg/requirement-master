@@ -188,12 +188,43 @@ def _item_path(db: Session, item: ProjectDriveItem) -> str:
     return "/".join(reversed(names))
 
 
-def _drive_manifest_item(db: Session, item: ProjectDriveItem) -> DriveManifestItemOut:
-    version = _current_version(db, item)
+def _item_path_from_map(item: ProjectDriveItem, item_map: dict[str, ProjectDriveItem]) -> str:
+    """Same as _item_path but walks an in-memory {id: item} map instead of
+    issuing one query per ancestor. Used by the manifest/changes endpoints
+    which the desktop client polls every 45s per project — the per-hop DB
+    walk was the dominant cost (≈D queries × N items). Guards against a
+    cyclic parent chain (shouldn't happen, but a corrupted row must not
+    spin forever)."""
+    names = [item.name]
+    seen = {item.id}
+    parent_id = item.parent_id
+    while parent_id and parent_id in item_map and parent_id not in seen:
+        seen.add(parent_id)
+        parent = item_map[parent_id]
+        names.append(parent.name)
+        parent_id = parent.parent_id
+    return "/".join(reversed(names))
+
+
+def _drive_manifest_item(
+    db: Session,
+    item: ProjectDriveItem,
+    *,
+    item_map: dict[str, ProjectDriveItem] | None = None,
+    version_map: dict[str, ProjectDriveVersion] | None = None,
+) -> DriveManifestItemOut:
+    # Fast path: callers that pre-build the maps (manifest/changes) avoid the
+    # per-item version query and the per-ancestor path query. Fall back to the
+    # query-per-call path only when maps aren't supplied.
+    if version_map is not None:
+        version = version_map.get(item.current_version_id) if item.current_version_id else None
+    else:
+        version = _current_version(db, item)
+    path = _item_path_from_map(item, item_map) if item_map is not None else _item_path(db, item)
     return DriveManifestItemOut(
         id=item.id,
         parent_id=item.parent_id,
-        path=_item_path(db, item),
+        path=path,
         name=item.name,
         kind=item.kind,
         size_bytes=version.size_bytes if version else None,
@@ -204,6 +235,32 @@ def _drive_manifest_item(db: Session, item: ProjectDriveItem) -> DriveManifestIt
         deleted_at=item.deleted_at,
         download_url=f"/api/drive/files/{item.id}/download" if item.kind == "file" and not item.deleted_at else None,
     )
+
+
+# Generous safety ceiling for a single project's drive. Not a silent LIMIT —
+# we log if a project ever exceeds it (which would mean the manifest is
+# incomplete and sync would miss files), so it surfaces rather than rotting.
+_MANIFEST_MAX_ITEMS = 50000
+
+
+def _build_manifest_maps(
+    db: Session, project_id: str, rows: list[ProjectDriveItem]
+) -> tuple[dict[str, ProjectDriveItem], dict[str, ProjectDriveVersion]]:
+    """Build {id: item} (for path-walking, ALL project items incl. ancestors of
+    changed rows) + {version_id: version} (only the versions the rows reference)
+    in two queries total, replacing the old ≈(D+1)×N per-row queries."""
+    item_map = {
+        i.id: i
+        for i in db.query(ProjectDriveItem).filter(ProjectDriveItem.project_id == project_id).all()
+    }
+    version_ids = [r.current_version_id for r in rows if r.current_version_id]
+    version_map: dict[str, ProjectDriveVersion] = {}
+    if version_ids:
+        version_map = {
+            v.id: v
+            for v in db.query(ProjectDriveVersion).filter(ProjectDriveVersion.id.in_(version_ids)).all()
+        }
+    return item_map, version_map
 
 
 def _publish_drive_changed(project_id: str, item_ids: list[str] | None = None) -> None:
@@ -576,11 +633,21 @@ def drive_manifest(project_id: str, db: Session = Depends(get_db), _: User = Dep
         .order_by(ProjectDriveItem.parent_id, ProjectDriveItem.name)
         .all()
     )
+    if len(rows) > _MANIFEST_MAX_ITEMS:
+        logger.warning(
+            "drive manifest for project %s has %d items (> %d cap); "
+            "sync clients poll this every 45s — consider the incremental /changes endpoint",
+            project_id, len(rows), _MANIFEST_MAX_ITEMS,
+        )
+    # Two queries (all items + referenced versions), then render in-memory.
+    # Previously this was ≈(depth+1)×N queries — the dominant cost of the
+    # client's 45s drive-sync poll on large/aged drives.
+    item_map, version_map = _build_manifest_maps(db, project_id, rows)
     return DriveManifestOut(
         project_id=project_id,
         project_slug=project.slug,
         cursor=datetime.utcnow(),
-        items=[_drive_manifest_item(db, item) for item in rows],
+        items=[_drive_manifest_item(db, item, item_map=item_map, version_map=version_map) for item in rows],
     )
 
 
@@ -602,11 +669,14 @@ def drive_changes(
         .order_by(ProjectDriveItem.updated_at.asc())
         .all()
     )
+    # Path-walking needs the FULL item tree (a changed row's ancestors may be
+    # unchanged and absent from `rows`), so build the maps over all items.
+    item_map, version_map = _build_manifest_maps(db, project_id, rows)
     return DriveManifestOut(
         project_id=project_id,
         project_slug=project.slug,
         cursor=datetime.utcnow(),
-        items=[_drive_manifest_item(db, item) for item in rows],
+        items=[_drive_manifest_item(db, item, item_map=item_map, version_map=version_map) for item in rows],
     )
 
 

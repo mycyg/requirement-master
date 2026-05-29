@@ -27,6 +27,7 @@ export function SettingsDialog({
   const [availabilityStatus, setAvailabilityStatus] = useState<"free" | "busy" | "custom">("free");
   const [availabilityText, setAvailabilityText] = useState("");
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -109,17 +110,22 @@ export function SettingsDialog({
             />
             <button
               className="button-secondary mt-3 min-h-9 px-3 py-1.5 text-xs"
+              disabled={statusBusy}
               onClick={async () => {
+                if (statusBusy) return;
+                setStatusBusy(true);
                 setStatusMsg(null);
                 try {
                   await api.updateMyStatus({ availability_status: availabilityStatus, availability_text: availabilityText || null });
                   setStatusMsg("状态已更新");
                 } catch (e: any) {
                   setStatusMsg(String(e));
+                } finally {
+                  setStatusBusy(false);
                 }
               }}
             >
-              保存接单状态
+              {statusBusy ? "保存中..." : "保存接单状态"}
             </button>
             {statusMsg && <p className="mt-2 text-xs text-stone-500">{statusMsg}</p>}
           </div>

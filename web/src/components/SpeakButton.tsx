@@ -93,6 +93,7 @@ export function SpeakButton({
         type="button"
         className={`button-secondary min-h-0 ${sz} text-xs`}
         title={`朗读 (${settings.ttsVoice})`}
+        aria-label={playing ? "停止朗读" : "朗读"}
         disabled={busy}
         onClick={playing ? stopCurrent : speak}
       >

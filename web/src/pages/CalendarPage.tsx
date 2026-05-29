@@ -185,7 +185,7 @@ export function CalendarPage() {
                     </div>
                   </div>
                   {event.event_type !== "requirement_due" && (
-                    <button className="button-ghost min-h-8 w-8 px-0" disabled={busy} title="删除" onClick={() => remove(event)}>
+                    <button className="button-ghost min-h-8 w-8 px-0" disabled={busy} title="删除" aria-label="删除日程" onClick={() => remove(event)}>
                       <Trash2 className="h-4 w-4" aria-hidden="true" />
                     </button>
                   )}

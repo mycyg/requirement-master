@@ -164,6 +164,10 @@ function Shell({
         <Route path="/p/:id/new" element={<NewRequirement />} />
         <Route path="/r/:id" element={<RequirementDetail />} />
         <Route path="/r/:id/clarify" element={<Clarify />} />
+        {/* Catch-all: an unknown URL (stale bookmark, mistyped path, or a
+            deep-link to a route that no longer exists) renders a friendly
+            not-found with a way back instead of a blank white page. */}
+        <Route path="*" element={<NotFound />} />
       </Routes>
       <CommandMenu open={open} onClose={close} items={commands} />
     </div>
@@ -238,6 +242,19 @@ function TopNav({
         </div>
       </div>
     </header>
+  );
+}
+
+function NotFound() {
+  return (
+    <main className="narrow-container">
+      <div className="paper-surface mt-10 p-8 text-center">
+        <p className="eyebrow">404</p>
+        <h1 className="mt-2 text-2xl font-semibold text-stone-950">这个页面不存在</h1>
+        <p className="mt-3 text-sm text-stone-500">链接可能过期了，或者地址打错了。</p>
+        <Link to="/" className="button-primary mt-6 inline-flex">回到项目首页</Link>
+      </div>
+    </main>
   );
 }
 
