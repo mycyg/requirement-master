@@ -16,22 +16,26 @@ export function VoiceButton({ onText }: { onText: (text: string) => void }) {
   const mediaRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
-  // Press intent. getUserMedia can take seconds (permission prompt on first
-  // use); if the user releases (or the component unmounts) before it resolves
-  // we must NOT open a live mic with nobody holding the button — that was a
-  // "hot mic records until the next tap" bug.
-  const wantRecordingRef = useRef(false);
+  // Monotonic press generation. getUserMedia can take seconds (permission
+  // prompt); a boolean "is recording wanted" flag CANNOT tell which press a
+  // resolving stream belongs to — rapid press→release→press let the first
+  // start()'s stream open a recorder that the second press could no longer
+  // stop (hot mic + leaked track). Each start() claims a generation; stop()
+  // and unmount bump it; a resolving start() whose generation is stale closes
+  // its own stream and bails. (SpeakButton uses the same pattern.)
+  const recordGenRef = useRef(0);
 
   const start = async () => {
     setErr(null);
-    wantRecordingRef.current = true;
+    const myGen = ++recordGenRef.current;
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("当前浏览器不支持录音");
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!wantRecordingRef.current) {
-        // Released / unmounted during the permission prompt — close the mic.
+      if (myGen !== recordGenRef.current) {
+        // Superseded by a release or a newer press during the prompt — close
+        // THIS stream so it never becomes an unstoppable hot mic.
         stream.getTracks().forEach((t) => t.stop());
         return;
       }
@@ -41,7 +45,7 @@ export function VoiceButton({ onText }: { onText: (text: string) => void }) {
       mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
+        if (streamRef.current === stream) streamRef.current = null;
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
         setBusy(true);
         try {
@@ -65,13 +69,12 @@ export function VoiceButton({ onText }: { onText: (text: string) => void }) {
       mediaRef.current = mr;
       setRecording(true);
     } catch (e: any) {
-      wantRecordingRef.current = false;
-      setErr(String(e));
+      if (myGen === recordGenRef.current) setErr(String(e));
     }
   };
 
   const stop = () => {
-    wantRecordingRef.current = false;
+    recordGenRef.current++;  // supersede any in-flight start()
     if (mediaRef.current) {
       mediaRef.current.stop();  // onstop releases the stream tracks
       mediaRef.current = null;
@@ -84,10 +87,10 @@ export function VoiceButton({ onText }: { onText: (text: string) => void }) {
     setRecording(false);
   };
 
-  // Unmount: stop any active recorder and release mic tracks so navigating
-  // away mid-record never leaves the mic open.
+  // Unmount: supersede any in-flight start(), stop any active recorder, and
+  // release mic tracks so navigating away mid-record never leaves the mic open.
   useEffect(() => () => {
-    wantRecordingRef.current = false;
+    recordGenRef.current++;
     try { mediaRef.current?.stop(); } catch { /* ignore */ }
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
