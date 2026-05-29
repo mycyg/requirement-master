@@ -50,3 +50,4 @@ Thumbs.db
 _probe*.py
 web/test-results/
 web/playwright-report/
+visual_tmp/
