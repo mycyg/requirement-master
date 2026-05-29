@@ -186,6 +186,8 @@ export function App() {
   // while waiting for someone to deliver.
   useEvent<any>("push-event", (p) => {
     if (p?.event === "requirement.ready") {
+      // Org-wide is intentional here: every desktop user is a worker who
+      // wants to know new claimable work hit the public pool.
       const title = `新工单来了 ${p.data?.code ?? ""}`;
       const body = p.data?.title ?? "";
       toast({
@@ -196,10 +198,13 @@ export function App() {
         } : undefined,
       });
       osNotify(title, body);
-    } else if (p?.event === "delivery.doc_ready") {
-      toast({ title: "AI 助理写完交付文档了", tone: "success" });
-      osNotify("AI 助理写完交付文档了", "可以查验交付物了");
     }
+    // NOTE: no global `delivery.doc_ready` handler. That event is now also
+    // published to `all` (so the DeliveryWizard, which has its own scoped
+    // listener, completes), but a delivery-doc completion is only relevant to
+    // the submitter — who receives a user-scoped `delivered` notification.created
+    // below — and the delivering worker, who sees the wizard's own toast. A
+    // global OS popup to every desktop user on every delivery would be noise.
   });
 
   // notification.created is per-user; fires the moment the backend creates

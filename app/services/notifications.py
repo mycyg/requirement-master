@@ -104,6 +104,37 @@ async def publish_notification(row: Notification) -> None:
     await bus.publish(f"user:{row.user_id}", "notification.created", payload)
 
 
+def publish_notification_threadsafe(row: Notification) -> None:
+    """Sync-context bridge to `publish_notification`. SYNC endpoints (e.g.
+    `create_requirement`, which runs in FastAPI's threadpool and has a
+    retry loop that can't be async) create notification rows but can't
+    `await` the SSE push — so the recipient's `/stream/me` never got the
+    live event and the "你被指派到 …" toast only appeared on the next poll.
+    This schedules the async publish onto the running event loop from the
+    worker thread (anyio bridge), with a same-loop fallback. Best-effort:
+    the row is already persisted, so a publish miss just degrades to
+    poll-delivery, never data loss. Capture the payload BEFORE crossing the
+    thread boundary so we never touch a Session-bound ORM object off-thread."""
+    import asyncio as _asyncio
+    payload = notification_out(row).model_dump(mode="json")
+    topic = f"user:{row.user_id}"
+
+    async def _go() -> None:
+        await bus.publish(topic, "notification.created", payload)
+
+    try:
+        from anyio import from_thread
+        from_thread.run(_go)
+        return
+    except Exception:
+        pass
+    try:
+        loop = _asyncio.get_running_loop()
+        loop.create_task(_go())
+    except RuntimeError:
+        pass  # no loop reachable; row still delivered via polling
+
+
 async def notify_users(db: Session, users: list[User], **kwargs) -> list[Notification]:
     rows: list[Notification] = []
     for user in users:

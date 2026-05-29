@@ -29,7 +29,7 @@ from services.permissions import (
     requirement_project_is_active,
 )
 from services.push_bus import bus
-from services.notifications import create_notification
+from services.notifications import create_notification, publish_notification, publish_notification_threadsafe
 from services.lifecycle import queue_status_notifications, flush_status_notifications
 from services.schedule import sync_requirement_due_event
 from services.workspaces import ensure_workspaces_for_assignments, sync_workspace_to_status
@@ -141,6 +141,9 @@ def create_requirement(
             status="draft",
         )
         db.add(r)
+        # Reset per attempt — a rollback below discards these rows, so a retry
+        # must not carry stale notification objects forward.
+        notes_to_publish: list = []
         try:
             db.flush()
             if payload.lead_user_id or payload.collaborator_user_ids:
@@ -154,7 +157,7 @@ def create_requirement(
                 ensure_workspaces_for_assignments(db, r)
                 assigned_ids = {payload.lead_user_id, *payload.collaborator_user_ids} - {None}
                 for assignee in db.query(User).filter(User.id.in_(assigned_ids)).all():
-                    create_notification(
+                    note = create_notification(
                         db,
                         assignee,
                         type="assigned",
@@ -166,11 +169,19 @@ def create_requirement(
                         requirement_id=r.id,
                         dedupe_key=f"assigned:{r.id}:{assignee.id}",
                     )
+                    notes_to_publish.append(note)
             log_activity(db, requirement_id=r.id, actor_nickname=user.nickname, action="created", detail={"code": code})
             if r.due_at:
                 sync_requirement_due_event(db, r, user)
             db.commit()
             db.refresh(r)
+            # Live-push the assignment notifications now that they're committed.
+            # This is a SYNC endpoint (threadpool, retry loop) so it can't await
+            # publish_notification — the threadsafe bridge schedules it onto the
+            # event loop. Without this the assignee's /stream/me never got the
+            # live "你被指派到 …" event (it only showed on the next poll).
+            for note in notes_to_publish:
+                publish_notification_threadsafe(note)
             return _enrich(db, r)
         except IntegrityError:
             db.rollback()
@@ -456,10 +467,11 @@ async def update_assignees(
     )
     if r.due_at:
         sync_requirement_due_event(db, r, user)
+    notes_to_publish = []
     for assignment in assignments:
         if not assignment.user:
             continue
-        create_notification(
+        notes_to_publish.append(create_notification(
             db,
             assignment.user,
             type="assigned",
@@ -470,8 +482,13 @@ async def update_assignees(
             project_id=r.project_id,
             requirement_id=r.id,
             dedupe_key=f"assigned:{r.id}:{assignment.user_id}",
-        )
+        ))
     db.commit()
+    # Live-push the (re)assignment notifications — async endpoint, so await
+    # directly. content-change guard in create_notification means a no-op
+    # re-assign produces an unchanged row whose publish is harmless.
+    for note in notes_to_publish:
+        await publish_notification(note)
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status, "assignees": len(assignments)})
     await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status, "assignees": len(assignments)})
     return [_assignee_out(a) for a in assignments]
@@ -500,9 +517,10 @@ async def update_requirement_schedule(
     r.start_at = payload.start_at
     r.due_at = payload.due_at
     sync_requirement_due_event(db, r, user)
+    notes_to_publish = []
     for assignment in r.assignments:
         if assignment.user:
-            create_notification(
+            notes_to_publish.append(create_notification(
                 db,
                 assignment.user,
                 type="due_changed",
@@ -513,7 +531,7 @@ async def update_requirement_schedule(
                 project_id=r.project_id,
                 requirement_id=r.id,
                 dedupe_key=f"due_changed:{r.id}:{assignment.user_id}:{payload.due_at.isoformat() if payload.due_at else 'none'}",
-            )
+            ))
     log_activity(
         db,
         requirement_id=r.id,
@@ -523,6 +541,8 @@ async def update_requirement_schedule(
     )
     db.commit()
     db.refresh(r)
+    for note in notes_to_publish:
+        await publish_notification(note)
     await bus.publish(f"req:{r.id}", "requirement.updated", {"status": r.status, "due_at": r.due_at.isoformat() if r.due_at else None})
     await bus.publish("all", "requirement.updated", {"requirement_id": r.id, "status": r.status})
     return _enrich(db, r)
