@@ -87,9 +87,12 @@ export function SpeakButton({
     }
   };
 
-  // Unmount: if this component's clip is the one currently playing, stop it
-  // so navigating away mid-speech doesn't leave a disembodied voice running.
+  // Unmount: flip aliveRef so an in-flight speak() fetch that resolves after
+  // unmount bails instead of playing on a dead component, AND if this
+  // component's clip is the one currently playing, stop it so navigating away
+  // mid-speech doesn't leave a disembodied voice running.
   useEffect(() => () => {
+    aliveRef.current = false;
     if (myAudioRef.current && currentAudio === myAudioRef.current) stopCurrent();
   }, []);
 
